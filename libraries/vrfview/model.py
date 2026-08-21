@@ -12,9 +12,16 @@ Read directly: event times, event groups, actor net IDs, round numbers, the
 map's internal path, the match id, the recording timestamp, the match length,
 and the player loadouts -- a subject UUID and an agent UUID per roster slot.
 
+Read too, but only where the build is one vrfnet can de-obfuscate, and only
+through vrfview.tracks: each pawn's agent codename and its position, heading
+and pitch over time.  Those are as read as a kill event is -- they come off the
+wire, not from a derivation -- but they are not in a plain chunk, so a replay
+that was never handed a track set simply has none, and says so in
+`Replay.position_source` rather than pretending the match had no positions.
+
 Not in the file, and therefore either absent or marked inferred: player names,
 Riot IDs, team assignment, attacker/defender sides, round win-loss results,
-agent identity per actor, and every kind of position.
+health, armour and credits.
 
 The map name and the agent names are external knowledge: they are UUIDs and
 asset paths here, and vrfview.names resolves them against Riot's published
@@ -36,6 +43,7 @@ order used here no round has a repeat victim.
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass, field
 
 TEAM_A = "A"
@@ -52,15 +60,37 @@ SPIKE_PLANTED = "planted"
 SPIKE_DEFUSED = "defused"
 SPIKE_EXPLODED = "exploded"
 
+# Movement arrives at about 100 Hz per pawn, which is two orders more than a
+# 60 fps scrubber can show and about 2.4 million samples over a full match.
+# vrfview.tracks thins it to this rate on the way in; the loss at a walking
+# 300 uu/s is some 30 uu, well under the radius of the dot that draws it.
+POSITION_HZ = 10
+
+# Two samples further apart than this are a gap in the record rather than a
+# straight line worth drawing, and past MAX_HOLD_MS a lone sample stops
+# standing in for the present altogether.  See Track.at.
+MAX_INTERPOLATE_MS = 1000
+MAX_HOLD_MS = 2000
+
 
 @dataclass(frozen=True)
 class Player:
-    """One actor net ID that appeared in a kill, with its inferred team."""
+    """
+    One actor net ID that appeared in a kill, with its inferred team.
+
+    `codename` is Riot's internal name for the agent this pawn is -- `Hunter`,
+    `Wushu` -- read from the actor's archetype path by vrfview.tracks.  `agent`
+    is the public name vrfview.names looks that codename up as.  They are kept
+    apart for the same reason `map_path` and `map_name` are: one is in the
+    file and the other is a join against a catalogue that may not be there.
+    """
 
     actor_id: int
     team: str = TEAM_UNKNOWN
     label: str = ""
     merged_from: tuple[int, ...] = ()
+    codename: str = ""
+    agent: str = ""
 
     @property
     def known_team(self) -> bool:
@@ -69,6 +99,11 @@ class Player:
     @property
     def display(self) -> str:
         return f"{self.label} #{self.actor_id}" if self.label else f"#{self.actor_id}"
+
+    @property
+    def identity(self) -> str:
+        """The best name this player has: agent, else codename, else label."""
+        return self.agent or self.codename or self.display
 
 
 @dataclass(frozen=True)
@@ -93,6 +128,104 @@ class Loadout:
     @property
     def display(self) -> str:
         return self.agent or f"unresolved {self.character_id or '?'}"
+
+
+@dataclass(frozen=True)
+class Position:
+    """
+    Where one actor was at one instant, in the map's own Unreal units.
+
+    `yaw` and `pitch` are degrees in 0..360, straight from the movement
+    record's packed angle dword.  There is no interpolation flag: a Position
+    handed back by `Track.at` carries the timestamp it was actually measured
+    at when it is a held sample, and the requested time when it is an
+    interpolation between two, so its own `t_ms` says how fresh it is.
+    """
+
+    t_ms: int
+    actor_id: int
+    x: float
+    y: float
+    z: float
+    yaw: float = 0.0
+    pitch: float = 0.0
+
+
+def _lerp(a: float, b: float, f: float) -> float:
+    return a + (b - a) * f
+
+
+def _lerp_angle(a: float, b: float, f: float) -> float:
+    """Shortest arc, so a heading crossing 0/360 does not spin the long way."""
+    delta = (b - a + 180.0) % 360.0 - 180.0
+    return (a + delta * f) % 360.0
+
+
+@dataclass(frozen=True)
+class Track:
+    """
+    One actor's whole decoded trajectory, in time order.
+
+    Sampling is not uniform -- the game emits movement in bursts and stops
+    emitting for an actor that has nothing to say -- so `at` has to decide
+    between three answers, and the two constants above it are where that
+    judgement lives.  Interpolating across a long gap would draw a straight
+    line through a wall; refusing to hold a position for even a moment would
+    make an actor flicker.  So: interpolate across a short gap, hold a lone
+    sample briefly, and past that report no position at all rather than a
+    stale one dressed as current.
+    """
+
+    actor_id: int
+    samples: tuple[Position, ...] = ()
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    @property
+    def span_ms(self) -> tuple[int, int]:
+        if not self.samples:
+            return (0, 0)
+        return (self.samples[0].t_ms, self.samples[-1].t_ms)
+
+    @property
+    def bounds(self) -> tuple[float, float, float, float]:
+        """(min x, max x, min y, max y) -- the extent this actor covered."""
+        if not self.samples:
+            return (0.0, 0.0, 0.0, 0.0)
+        xs = [p.x for p in self.samples]
+        ys = [p.y for p in self.samples]
+        return (min(xs), max(xs), min(ys), max(ys))
+
+    def at(self, t_ms: int) -> Position | None:
+        """Where this actor was at `t_ms`, or None if that is not known."""
+        if not self.samples:
+            return None
+        i = bisect_left(self.samples, t_ms, key=lambda p: p.t_ms)
+        before = self.samples[i - 1] if i > 0 else None
+        after = self.samples[i] if i < len(self.samples) else None
+        if after is not None and after.t_ms == t_ms:
+            return after
+        if (
+            before is not None
+            and after is not None
+            and after.t_ms - before.t_ms <= MAX_INTERPOLATE_MS
+        ):
+            f = (t_ms - before.t_ms) / (after.t_ms - before.t_ms)
+            return Position(
+                t_ms=t_ms,
+                actor_id=self.actor_id,
+                x=_lerp(before.x, after.x, f),
+                y=_lerp(before.y, after.y, f),
+                z=_lerp(before.z, after.z, f),
+                yaw=_lerp_angle(before.yaw, after.yaw, f),
+                pitch=_lerp(before.pitch, after.pitch, f),
+            )
+        candidates = [p for p in (before, after) if p is not None]
+        nearest = min(candidates, key=lambda p: abs(p.t_ms - t_ms))
+        if abs(nearest.t_ms - t_ms) <= MAX_HOLD_MS:
+            return nearest
+        return None
 
 
 @dataclass(frozen=True)
@@ -182,6 +315,16 @@ class Replay:
     catalog_source: str = ""
     notes: list[str] = field(default_factory=list)
     catalog_notes: list[str] = field(default_factory=list)
+    positions: dict[int, Track] = field(default_factory=dict)
+    position_source: str = ""
+
+    @property
+    def has_positions(self) -> bool:
+        """Whether anything in this replay can be drawn at a map coordinate."""
+        return any(t.samples for t in self.positions.values())
+
+    def track(self, actor_id: int) -> Track | None:
+        return self.positions.get(actor_id)
 
     @property
     def subjects(self) -> list[str]:
