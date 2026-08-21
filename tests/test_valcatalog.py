@@ -55,8 +55,16 @@ MANIFEST = {
         "The Range": {"uuid": "ee613ee9", "map_url": "/Game/Maps/Poveglia/Range"},
     },
     "agents": {
-        "Astra": {"uuid": ASTRA_UUID, "role": "Controller"},
-        "Sova": {"uuid": "320b2a48-4d9b-a075-30f1-1f93a9b638fa", "role": "Initiator"},
+        "Astra": {
+            "uuid": ASTRA_UUID,
+            "developer_name": "Rift",
+            "role": "Controller",
+        },
+        "Sova": {
+            "uuid": "320b2a48-4d9b-a075-30f1-1f93a9b638fa",
+            "developer_name": "Hunter",
+            "role": "Initiator",
+        },
     },
 }
 
@@ -96,6 +104,25 @@ class FromManifest(unittest.TestCase):
 
     def test_version_comes_from_the_branch(self):
         assert valcatalog.from_manifest(MANIFEST).version == "release-13.04"
+
+    def test_codenames_join_across_a_case_difference(self):
+        """The archetype path capitalises; the manifest need not."""
+        catalog = valcatalog.from_manifest(MANIFEST)
+        assert catalog.agent_for_codename("Rift") == "Astra"
+        assert catalog.agent_for_codename("rift") == "Astra"
+        assert catalog.agent_for_codename("Nobody") is None
+
+    def test_a_manifest_predating_developer_names_has_no_codenames(self):
+        """The ordinary state of a cache fetched before this join existed."""
+        older = {
+            **MANIFEST,
+            "agents": {"Astra": {"uuid": ASTRA_UUID}},
+        }
+        catalog = valcatalog.from_manifest(older)
+        assert catalog.codenames == {}
+        assert catalog.agent_for_codename("Rift") is None
+        # Still usable for the two joins it does carry.
+        assert not catalog.empty
 
 
 class ShapeSniffing(unittest.TestCase):

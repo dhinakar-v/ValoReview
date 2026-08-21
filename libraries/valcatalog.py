@@ -1,11 +1,18 @@
 """
 Riot's content catalogue, reduced to the two joins a replay actually needs.
 
-A .vrf states its map as an internal asset path and its agents as UUIDs.  Both
-are opaque, and both resolve against Riot's published catalogue:
+A .vrf states its map as an internal asset path, its agents as UUIDs and -- in
+the replication stream, where vrfview.tracks reads it -- each pawn's agent as
+an internal codename.  All three are opaque, and all three resolve against
+Riot's published catalogue:
 
     /Game/Maps/Infinity/Infinity          -> Abyss
     41fb69c1-4189-7b37-f117-bcaf1e96f1bf  -> Astra
+    Hunter                                -> Sova
+
+Only the third comes with a caveat: `developerName` is a valorant-api.com
+field and has no equivalent in val-content-v1, so the codename join exists in
+a fetch_assets manifest and nowhere else.
 
 docs/valorant-api.md confirmed both joins live on 2026-08-21: the map path is
 exactly `ContentItemDto.assetPath` in val-content-v1, and all ten `characterId`
@@ -54,10 +61,12 @@ class Catalog:
     version: str = ""
     source: str = SOURCE_NONE
     path: str = ""
+    codenames: dict[str, str] = field(default_factory=dict)
 
     @property
     def empty(self) -> bool:
-        return not self.maps and not self.agents
+        """Whether this catalogue can answer anything at all."""
+        return not self.maps and not self.agents and not self.codenames
 
     @property
     def described(self) -> str:
@@ -76,6 +85,10 @@ class Catalog:
 
     def agent_name(self, uuid: str) -> str | None:
         return self.agents.get(uuid.lower()) if uuid else None
+
+    def agent_for_codename(self, codename: str) -> str | None:
+        """Public name for an internal codename: `Hunter` -> `Sova`."""
+        return self.codenames.get(codename.lower()) if codename else None
 
 
 def from_contents(doc: dict, path: str = "") -> Catalog:
@@ -116,8 +129,17 @@ def from_manifest(doc: dict, path: str = "") -> Catalog:
         for name, entry in (doc.get("agents") or {}).items()
         if entry.get("uuid")
     }
+    # A manifest written before fetch_assets recorded developer names has no
+    # codenames at all, and that is the ordinary state of an existing cache:
+    # the join is simply unavailable until the next refresh, and names.py
+    # falls back to its built-in table and says so.
+    codenames = {
+        entry["developer_name"].lower(): name
+        for name, entry in (doc.get("agents") or {}).items()
+        if entry.get("developer_name")
+    }
     version = str((doc.get("version") or {}).get("branch") or "")
-    return Catalog(maps, agents, version, SOURCE_MANIFEST, path)
+    return Catalog(maps, agents, version, SOURCE_MANIFEST, path, codenames)
 
 
 def from_document(doc: dict, path: str = "") -> Catalog:

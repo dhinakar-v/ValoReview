@@ -63,6 +63,7 @@ DUELIST = {
 JETT = {
     "uuid": "add6443a-41bd-e414-f6ad-e58d267f4e95",
     "displayName": "Jett",
+    "developerName": "Wushu",
     "displayIcon": "https://media.valorant-api.com/agents/jett/displayicon.png",
     "fullPortrait": "https://media.valorant-api.com/agents/jett/fullportrait.png",
     "killfeedPortrait": "https://media.valorant-api.com/agents/jett/killfeed.png",
@@ -195,6 +196,17 @@ class PlanAgentsTests(unittest.TestCase):
 
         assert "Passive" not in manifest["Jett"]["abilities"]
         assert all("passive" not in d.path for d in downloads)
+
+    def test_the_manifest_keeps_the_developer_name(self):
+        """The only join from a pawn archetype path to an agent name."""
+        _, manifest = plan_agents([JETT])
+
+        assert manifest["Jett"]["developer_name"] == "Wushu"
+
+    def test_an_agent_with_no_developer_name_records_none(self):
+        _, manifest = plan_agents([KAYO])
+
+        assert manifest["KAY/O"]["developer_name"] is None
 
     def test_the_manifest_keeps_the_role_and_the_ability_names(self):
         _, manifest = plan_agents([JETT])

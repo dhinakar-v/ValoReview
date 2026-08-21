@@ -185,6 +185,12 @@ def plan_agents(agents: list[dict]) -> tuple[list[Download], dict]:
         role = entry.get("role") or {}
         manifest[name] = {
             "uuid": entry.get("uuid"),
+            # Riot's internal name for the agent -- Hunter for Sova, Wushu for
+            # Jett.  It is the only join from a pawn's archetype path in the
+            # replication stream to a public agent name, and this endpoint is
+            # the only place it is published: val-content-v1 has no equivalent
+            # field.  See valcatalog and vrfview.names.
+            "developer_name": entry.get("developerName"),
             "role": role.get("displayName"),
             "files": _by_filename(files),
             "abilities": abilities,

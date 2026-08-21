@@ -455,9 +455,16 @@ class TestNames(unittest.TestCase):
         assert any("catalog" in n for n in replay.catalog_notes)
 
     def test_the_roster_is_never_attached_to_a_player(self):
-        """No field links a loadout to an actor net id, so none may claim to."""
+        """
+        No field links a loadout to an actor net id, so none may claim to.
+
+        A player may now carry an agent, but only one its own pawn stated.
+        Here the roster names Astra and no pawn stated anything, so every
+        player must come back with no agent at all.
+        """
         replay = resolve(with_roster([ASTRA]), CATALOG)
-        assert not any(hasattr(p, "agent") for p in replay.players)
+        assert replay.roster == ["Astra"]
+        assert [p.agent for p in replay.players] == [""] * len(replay.players)
         assert any(
             "not attributable to actor net IDs" in n for n in replay.catalog_notes
         )
