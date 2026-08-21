@@ -40,6 +40,7 @@ two stay undetermined rather than being filled in.
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
 
 from vrfview.model import (
     TEAM_A,
@@ -53,6 +54,7 @@ from vrfview.model import (
     Player,
     Replay,
     Round,
+    Track,
     Ultimate,
 )
 
@@ -62,6 +64,7 @@ def annotate(replay: Replay) -> Replay:
     _assign_teams(replay)
     _merge_reconnects(replay)
     _label_players(replay)
+    _check_agents(replay)
     _assign_round_numbers(replay)
     _assign_outcomes(replay)
     return replay
@@ -154,6 +157,8 @@ def _assign_teams(replay: Replay) -> None:
                 else (TEAM_B if p.actor_id in group_b else TEAM_UNKNOWN)
             ),
             merged_from=p.merged_from,
+            codename=p.codename,
+            agent=p.agent,
         )
         for p in replay.players
     ]
@@ -219,12 +224,50 @@ def _merge_reconnects(replay: Replay) -> None:
 
     x, y = candidates[0]
     keep, drop = (x, y) if span[x][0] <= span[y][0] else (y, x)
+
+    agreement = _codenames_agree(replay, keep, drop)
+    if agreement is False:
+        replay.notes.append(
+            f"actors {keep} and {drop} do not overlap in time but play different "
+            f"agents ({_codename_of(replay, keep)} and "
+            f"{_codename_of(replay, drop)}), so they are not one reconnected "
+            f"player and were left unmerged",
+        )
+        return
+
+    spans = (
+        f"({span[drop][0] / 1000:.0f}-{span[drop][1] / 1000:.0f}s and "
+        f"{span[keep][0] / 1000:.0f}-{span[keep][1] / 1000:.0f}s) do not overlap"
+    )
+    corroborated = (
+        f", and both pawns are {_codename_of(replay, keep)}"
+        if agreement is True
+        else ""
+    )
     _rewrite_actor(replay, drop, keep)
     replay.notes.append(
         f"actor {drop} merged into {keep} as a reconnect: their activity spans "
-        f"({span[drop][0] / 1000:.0f}-{span[drop][1] / 1000:.0f}s and "
-        f"{span[keep][0] / 1000:.0f}-{span[keep][1] / 1000:.0f}s) do not overlap",
+        f"{spans}{corroborated}",
     )
+
+
+def _codename_of(replay: Replay, actor_id: int) -> str:
+    player = replay.player(actor_id)
+    return player.codename if player else ""
+
+
+def _codenames_agree(replay: Replay, one: int, other: int) -> bool | None:
+    """
+    Whether two actors play the same agent.  None when either is unknown.
+
+    A reconnect is the same person on the same agent, so a codename mismatch
+    refutes a pairing that the timing alone would have accepted.  Codenames
+    only exist where positions were decoded, hence the third answer.
+    """
+    a, b = _codename_of(replay, one), _codename_of(replay, other)
+    if not a or not b:
+        return None
+    return a == b
 
 
 def _disjoint(one: tuple[int, int], other: tuple[int, int]) -> bool:
@@ -257,14 +300,44 @@ def _rewrite_actor(replay: Replay, drop: int, keep: int) -> None:
             merged_from=(
                 (*p.merged_from, drop) if p.actor_id == keep else p.merged_from
             ),
+            codename=p.codename,
+            agent=p.agent,
         )
         for p in replay.players
         if p.actor_id != drop
     ]
+    _merge_tracks(replay, drop, keep)
+
+
+def _merge_tracks(replay: Replay, drop: int, keep: int) -> None:
+    """
+    Give the surviving actor the dropped one's positions too.
+
+    Only ever called for spans that were already established as disjoint, so
+    concatenating in time order is a splice rather than an interleave, and the
+    result is one continuous trajectory for one player.
+    """
+    dropped = replay.positions.pop(drop, None)
+    if dropped is None or not dropped.samples:
+        return
+    kept = replay.positions.get(keep)
+    joined = sorted(
+        (*(kept.samples if kept else ()), *dropped.samples),
+        key=lambda p: p.t_ms,
+    )
+    replay.positions[keep] = Track(
+        actor_id=keep,
+        samples=tuple(replace(p, actor_id=keep) for p in joined),
+    )
 
 
 def _label_players(replay: Replay) -> None:
-    """Positional labels only -- A1..A5 -- never an invented agent name."""
+    """
+    Positional labels only -- A1..A5 -- never an invented agent name.
+
+    A codename read off the pawn's archetype is carried through untouched: it
+    is not this module's to derive, and naming it is vrfview.names' job.
+    """
     counters = {TEAM_A: 0, TEAM_B: 0, TEAM_UNKNOWN: 0}
     labelled = []
     for p in sorted(replay.players, key=lambda q: (q.team, q.actor_id)):
@@ -276,9 +349,43 @@ def _label_players(replay: Replay) -> None:
                 team=p.team,
                 label=f"{prefix}{counters[p.team]}",
                 merged_from=p.merged_from,
+                codename=p.codename,
+                agent=p.agent,
             ),
         )
     replay.players = labelled
+
+
+def _check_agents(replay: Replay) -> None:
+    """
+    Cross-check the team split against the agents, where those are known.
+
+    No valid match puts two of the same agent on one side, so a split that
+    gives every team five distinct codenames is corroborated by a fact the
+    kill graph never saw.  A duplicate does not overturn the split on its own
+    -- it is reported, not acted on -- because the file could as easily be a
+    custom game as the colouring could be wrong.
+    """
+    coded = [p for p in replay.players if p.codename and p.known_team]
+    if not coded:
+        return
+
+    clashes = []
+    for team in (TEAM_A, TEAM_B):
+        names = [p.codename for p in coded if p.team == team]
+        duplicated = sorted({n for n in names if names.count(n) > 1})
+        clashes.extend(f"{team} has {len(names)} pawns playing {n}" for n in duplicated)
+
+    if clashes:
+        replay.notes.append(
+            "the team split disagrees with the agents on the wire: "
+            f"{'; '.join(clashes)}",
+        )
+        return
+    replay.notes.append(
+        f"the team split is corroborated by the agents on the wire: all "
+        f"{len(coded)} pawns are distinct within their team",
+    )
 
 
 # --- rounds --------------------------------------------------------------
