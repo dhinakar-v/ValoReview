@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Valorant Replay Demo Folder
+Demos/
+# vrf_to_json.py output
+out/
