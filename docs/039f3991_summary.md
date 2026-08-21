@@ -197,7 +197,7 @@ counted as a death but not as a kill, which is why kills total 107 against 108 d
 | CHECKPOINT header | no frame header; 16-byte `preamble_hex` (block 1: `bbc30200000000000000000000000000`) |
 | Name table (block 0) | 1,701 entries = 609 asset paths + 1,092 property names |
 | Largest name table | block 29 (checkpoint14): 6,799 entries |
-| Replication stream | **not decoded** - "bit-packed UE net stream; decoding needs the game's class layouts" |
+| Replication stream | **not decoded on this capture** - the payloads are obfuscated and no transform exists for 11.11; see the note under section 8 |
 
 Sample asset paths: `/Game/Characters/_Core/BaseJanusController`, `/Game/Equippables/Buddies/...`, `/Game/CloserCeremony`, `/Game/ClutchCeremony`.
 
@@ -209,4 +209,17 @@ Sample property names: `AresAbilitySystem`, `AresAttributeSet`, `BombGameMode_C`
 - Scoreline, economy, weapon used per kill, damage numbers, positions
 - Any mapping from event actor net IDs back to `subject` UUIDs
 
-All of that lives inside the bit-packed UE replication stream, which the parser decompresses but does not decode - decoding needs the game's class layouts / property schema.
+All of that lives inside the bit-packed UE replication stream, which the parser decompresses but does not decode on this capture.
+
+> **Partly superseded, 2026-08-22.** "Decoding needs the game's class layouts" was the wrong
+> diagnosis. The property payloads are *obfuscated* -- whitened with a keystream seeded
+> `payload_bits ^ actor_net_guid` -- and underneath they are stock UE. `libraries/vrfnet/
+> payload_transform.py` undoes that for 12.10, 12.11 and 13.00-13.02, and on those builds
+> **player positions and the agent each actor is playing are decoded** and drawn on a real map
+> (`vrf-view.bat dump <file>.vrf --positions`, or the viewer's DECODE POSITIONS button).
+>
+> None of it applies to `039f3991...`: the transforms are derived per build against the shipped
+> binary and 11.11 is long gone from the live client, so this capture correctly refuses. The list
+> above therefore still holds *for this file*. Player names, economy, damage and the actor-to-
+> `subject` join remain out of reach on every build.
+

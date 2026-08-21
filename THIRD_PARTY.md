@@ -1,8 +1,10 @@
 # Third-party notices
 
-This project has no runtime dependencies, but it does contain code ported by
-hand from other projects. Their licences are reproduced here in full, as those
-licences require.
+This project depends on two packages at runtime -- `customtkinter` and
+`Pillow`, both installed from PyPI under their own licences -- and it contains
+code **ported by hand** from another project. A port is not a dependency: the
+code is in this repository, so its licence travels with it, and that licence is
+reproduced here in full as it requires.
 
 Each ported module names its upstream source file in its own docstring; this
 file is the licence record, not the index.
@@ -13,13 +15,24 @@ file is the licence record, not the index.
 
 <https://github.com/michel-giehl/ValorantReplayParser>
 
-`libraries/vrfnet/payload_transform.py` is a Python port of that project's
-payload de-obfuscation, and `tests/test_payload_transform.py` reuses its
-known-answer test vectors verbatim. Both derive from:
+Two modules are Python ports of that project, and each names its own upstream
+files in its docstring:
+
+`libraries/vrfnet/payload_transform.py` -- the payload de-obfuscation.
+`tests/test_payload_transform.py` reuses its known-answer vectors verbatim.
 
 - `src/Replay.Encoding/PayloadEncryption/ValorantSeededTransformHelpers.cs`
 - `src/Replay.Encoding/PayloadEncryption/VersionedTransforms/ValorantSeededTransform*.cs`
 - `tests/Replay.Encoding.Tests/PayloadEncryption/ValorantSeededTransformTests.cs`
+
+`libraries/vrfnet/movement.py` -- the movement RPC and the bitstream inside it,
+which is where every position in this project comes from.
+
+- `src/Replay.Valorant/Movement/RemoteCharacterUpdatesRpcDecoder.cs`
+- `src/Replay.Valorant/Movement/ComponentDataStream.cs`
+
+`libraries/vrfnet/properties.py` is **not** a port: the property loop it runs
+is the documented UE one, reached once the transform above is undone.
 
 ```
 MIT License
@@ -45,10 +58,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-Not yet ported, but the likely next sources from the same project and the same
-licence: `Replay.Unreal/Parsing/FieldPayloadParser.cs`,
-`Replay.Unreal/Parsing/ArchiveVectorReaders.cs`, and
-`Replay.Valorant/Movement/ComponentDataStream.cs`.
+Not ported, and the likely next sources from the same project and the same
+licence should more of the payload be decoded: `Replay.Unreal/Parsing/
+FieldPayloadParser.cs` and `Replay.Unreal/Parsing/ArchiveVectorReaders.cs`.
 
 Its predecessor, `michel-giehl/ValorantReplayParserPlayground` (also MIT), is a
 fork of `Shiqan/FortniteReplayDecompressor`. Nothing here is taken from either;
@@ -67,3 +79,9 @@ trademarks are the property of Riot Games, Inc.
 
 It reads replay files the user already has on their own machine. It does not
 touch the game client, the game process, or any anti-cheat component.
+
+Map images, agent portraits and callout names come from valorant-api.com, a
+community mirror of Riot's published content catalogue; they are Riot's assets,
+cached locally under `assets/` and never redistributed by this repository,
+which gitignores that directory. The transport glyphs in `assets/icons/` are
+drawn by `scripts/make_icons.py` and belong to this project.

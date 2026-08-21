@@ -345,6 +345,34 @@ class TestUnsupportedBuild(unittest.TestCase):
         assert all(not p.codename for p in replay.players)
 
 
+# What the 12.10 capture's own pawns say they are: actor net ID -> codename,
+# and the public name each codename resolves to.  Measured, not chosen.
+KNOWN_CODENAMES = {
+    548: "Hunter",
+    642: "Wushu",
+    742: "Smonk",
+    842: "Vampire",
+    976: "Sequoia",
+    1074: "Killjoy",
+    1172: "Vampire",
+    1272: "Smonk",
+    1370: "Pine",
+    1466: "Hunter",
+}
+KNOWN_AGENTS = {
+    548: "Sova",
+    642: "Jett",
+    742: "Clove",
+    842: "Reyna",
+    976: "Iso",
+    1074: "Killjoy",
+    1172: "Reyna",
+    1272: "Clove",
+    1370: "Veto",
+    1466: "Sova",
+}
+
+
 @pytest.mark.skipif(not DEMO_12_10.exists(), reason="needs the 12.10 capture")
 class AgainstARealCapture(unittest.TestCase):
     replay: Replay
@@ -423,3 +451,22 @@ class AgainstARealCapture(unittest.TestCase):
     def test_the_provenance_line_says_what_was_decoded(self):
         assert "release-12.10" in self.replay.position_source
         assert "positions for" in self.replay.position_source
+
+    def test_every_pawn_states_the_same_agent_it_stated_before(self):
+        """
+        The actor -> codename join, pinned to what this capture actually says.
+
+        A codename is *read* from the pawn's archetype path, so this is a
+        regression test on the decode itself and not on a lookup table: if the
+        archetype resolution, the GUID cache or the channel-to-actor join
+        drifts, one of these ten changes and nothing else in the suite would
+        notice. Actor 1370 is the reconnect, and its second life states the
+        same agent as its first.
+        """
+        got = {p.actor_id: p.codename for p in self.replay.players}
+        assert got == KNOWN_CODENAMES
+
+    def test_the_codenames_name_the_ten_agents(self):
+        """And the lookup on top of them, which is what a panel shows."""
+        got = {p.actor_id: p.agent for p in self.replay.players}
+        assert got == KNOWN_AGENTS

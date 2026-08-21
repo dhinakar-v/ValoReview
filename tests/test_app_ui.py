@@ -112,3 +112,35 @@ class Provenance(unittest.TestCase):
         text = provenance_text(_replay())
         assert "health, armour, credits" in text
         assert "player names / Riot IDs" in text
+
+
+class HeadlessLayers(unittest.TestCase):
+    """
+    The decoder must not learn about the toolkit, in either direction.
+
+    `vrfnet` is the replication stream and nothing else; it runs under
+    `vrf-net.bat` on machines with no display, and a stray `import
+    customtkinter` there would make the whole decoding pipeline need a screen.
+    Checked by reading the sources rather than by importing them, so the test
+    fails on the import statement itself and names the file.
+    """
+
+    FORBIDDEN = ("import tkinter", "import customtkinter", "from PIL")
+
+    def _sources(self, package: str):
+        root = Path("libraries") / package
+        return sorted(root.glob("*.py"))
+
+    def test_vrfnet_imports_no_toolkit(self):
+        files = self._sources("vrfnet")
+        assert files, "vrfnet sources not found"
+        for path in files:
+            source = path.read_text(encoding="utf-8")
+            for forbidden in self.FORBIDDEN:
+                assert forbidden not in source, f"{path.name} has {forbidden}"
+
+    def test_the_scanner_and_the_page_are_on_opposite_sides_of_that_line(self):
+        scanner = (Path("libraries") / "vrfhome" / "scan.py").read_text("utf-8")
+        page = (Path("libraries") / "vrfhome" / "cards.py").read_text("utf-8")
+        assert "customtkinter" not in scanner
+        assert "customtkinter" in page
