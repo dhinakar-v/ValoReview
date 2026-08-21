@@ -46,10 +46,6 @@ FETCH_HINT = "runners\\fetch-assets.bat fetch writes one"
 
 # PNG stores width and height as big-endian uint32 at these offsets: an 8-byte
 # signature, then the IHDR chunk's 4-byte length and 4-byte type, then the two.
-_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-_IHDR_WIDTH_AT = 16
-_IHDR_HEIGHT_AT = 20
-_PNG_HEADER_BYTES = 24
 
 
 @dataclass(frozen=True)
@@ -199,40 +195,6 @@ class ArtCache:
     def agent_art(self, uuid: str) -> AgentArt | None:
         """Art for an agent UUID.  Both sides are lowered, as valcatalog does."""
         return self.agents.get(uuid.lower()) if uuid else None
-
-
-def png_size(path: Path) -> tuple[int, int]:
-    """
-    A PNG's pixel dimensions, read from its IHDR chunk.
-
-    The manifest records no dimensions and the cache is not uniform -- Neon's
-    icon is 512x512 against 1024x1024 for the other 28 agents, and Breach and
-    Jett ship 128x64 killfeeds against 256x128 -- so the only way to size a tile
-    consistently is to read each file.  Cheap: 24 bytes, no decode.
-    """
-    with path.open("rb") as handle:
-        header = handle.read(_PNG_HEADER_BYTES)
-    if len(header) < _PNG_HEADER_BYTES or not header.startswith(_PNG_SIGNATURE):
-        msg = f"{path} is not a PNG"
-        raise ValueError(msg)
-    width = int.from_bytes(header[_IHDR_WIDTH_AT:_IHDR_HEIGHT_AT], "big")
-    height = int.from_bytes(header[_IHDR_HEIGHT_AT:_PNG_HEADER_BYTES], "big")
-    return width, height
-
-
-def subsample_for(size: tuple[int, int], target: int) -> int:
-    """
-    The Tk subsample factor bringing an image's longest side within `target`.
-
-    Tk 8.6 scales only by whole-number factors and the project is stdlib-only,
-    so there is no Pillow to resample with: the choice is which integer, not
-    which size.  Rounds up, so the result never exceeds `target` and is never
-    upscaled, and never returns 0 -- which Tk rejects.
-    """
-    longest = max(size)
-    if longest <= 0 or target <= 0:
-        return 1
-    return max(1, -(-longest // target))
 
 
 def _resolve(root: Path, files: dict, name: str) -> Path | None:

@@ -28,7 +28,8 @@ Every runner forwards its arguments and returns the underlying exit code.
     runners\vrf-net.bat actors <block.bin>          decode the replication stream
     runners\vrf-app.bat                             browse the replay library
     runners\vrf-app.bat --list                      the same scan, as text
-    runners\vrf-view.bat <replay.vrf>               open the 2D viewer
+    runners\make-icons.bat                          draw the transport glyphs
+    runners\vrf-view.bat <replay.vrf>               open one replay directly
     runners\vrf-view.bat dump <replay.json>         headless text dump
     runners\vrf-view.bat catalog                    what names and art are cached
     runners\fetch-assets.bat list                   plan the art download

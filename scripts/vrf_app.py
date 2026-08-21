@@ -9,20 +9,15 @@ The CustomTkinter app: the match list over DEMO_PATH.
 it says what the library holds, which builds decode positions and which files
 it could not read, on a machine with no display at all.
 
-Opening a card currently prints the replay it would open.  The viewer route is
-Phase 6 of the rebuild; the router lands with it rather than being stubbed in
-two places.
+Opening a card loads that replay and switches to the viewer; `vrfview.app` is
+the router and owns both pages.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
 
 from vrfhome import scan
-
-WINDOW_TITLE = "Valorant replay analyzer"
-WINDOW_SIZE = "1180x760"
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -36,6 +31,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--list",
         action="store_true",
         help="print the scan as text and exit; needs no display",
+    )
+    ap.add_argument(
+        "--no-art",
+        action="store_true",
+        help="ignore the art cache; no thumbnails, portraits or minimap",
     )
     ap.add_argument(
         "--no-cache",
@@ -74,24 +74,11 @@ def main(argv=None) -> int:
 
     # Imported here, not at module scope, so --list stays runnable with no
     # display and no customtkinter import.
-    import customtkinter as ctk  # noqa: PLC0415
+    from vrfview import app  # noqa: PLC0415
+    from vrfview import art as art_mod  # noqa: PLC0415
 
-    from vrfhome import cards  # noqa: PLC0415
-    from vrfview import theme  # noqa: PLC0415
-
-    ctk.set_appearance_mode("dark")
-    root = ctk.CTk()
-    root.title(WINDOW_TITLE)
-    root.geometry(WINDOW_SIZE)
-    root.configure(fg_color=theme.APP_BG)
-
-    def open_card(card: scan.MatchCard) -> None:
-        print(f"open {card.path}", file=sys.stderr)
-
-    page = cards.MatchListPage(root, result, on_open=open_card)
-    page.pack(fill="both", expand=True)
-    root.mainloop()
-    return 0
+    art = art_mod.ArtCache() if args.no_art else art_mod.load()
+    return app.run(result, art)
 
 
 if __name__ == "__main__":

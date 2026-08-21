@@ -312,14 +312,19 @@ def cmd_view(args: argparse.Namespace) -> int:
     """
     Open the playback window.
 
-    vrfview.app is loaded here rather than at the top of the module because it
-    imports tkinter, and `dump` has to keep working on a Python with no Tk at
-    all.  importlib says that is deliberate; a plain import inside a function
-    reads like an oversight.
+    vrfview.viewer is loaded here rather than at the top of the module because
+    it imports tkinter and customtkinter, and `dump` has to keep working on a
+    Python with no Tk at all.  importlib says that is deliberate; a plain
+    import inside a function reads like an oversight.
     """
-    app = importlib.import_module("vrfview.app")
+    viewer = importlib.import_module("vrfview.viewer")
 
-    return app.run(read_replay(args), build_art(args))
+    return viewer.run(
+        read_replay(args),
+        build_art(args),
+        args.path,
+        build_catalog(args),
+    )
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -20,8 +20,6 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
-import pytest
-
 import valcatalog
 from vrfview import art as art_mod
 from vrfview import theme
@@ -648,26 +646,6 @@ class TestArt(unittest.TestCase):
         cache = self._write()
         assert not cache.map_art("/Game/Maps/Rig/Rig").plottable
 
-    def test_png_size_reads_the_ihdr(self):
-        path = self.root / "probe.png"
-        path.write_bytes(_png_bytes(456, 100))
-        assert art_mod.png_size(path) == (456, 100)
-
-    def test_png_size_rejects_a_file_that_is_not_a_png(self):
-        path = self.root / "not.png"
-        path.write_bytes(b"GIF89a" + b"\0" * 32)
-        with pytest.raises(ValueError, match="is not a PNG"):
-            art_mod.png_size(path)
-
-    def test_subsample_never_upscales_and_never_returns_zero(self):
-        assert art_mod.subsample_for((1024, 1024), 64) == 16
-        assert art_mod.subsample_for((512, 512), 64) == 8
-        assert art_mod.subsample_for((256, 128), 128) == 2
-        assert art_mod.subsample_for((456, 100), 456) == 1
-        # Smaller than the target: Tk rejects 0, and there is no upscaling.
-        assert art_mod.subsample_for((32, 32), 64) == 1
-        assert art_mod.subsample_for((0, 0), 64) == 1
-
     def test_coverage_reports_an_empty_cache_in_one_line(self):
         lines = art_mod.coverage(art_mod.ArtCache(), "/Game/Maps/Ascent/Ascent", [])
         assert len(lines) == 1
@@ -718,14 +696,6 @@ class TestRealArtCache(unittest.TestCase):
             raise unittest.SkipTest("callout set changed upstream")
         x, y = found["A Site"]
         assert (round(x), round(y)) == ASCENT_A_SITE_PX
-
-    def test_a_cached_icon_subsamples_to_the_roster_tile_size(self):
-        entry = self.cache.agent_art("add6443a-41bd-e414-f6ad-e58d267f4e95")
-        if entry is None or entry.icon is None:
-            raise unittest.SkipTest("Jett icon not fetched")
-        size = art_mod.png_size(entry.icon)
-        factor = art_mod.subsample_for(size, 64)
-        assert max(size) // factor <= 64
 
 
 def _png_bytes(width: int, height: int) -> bytes:

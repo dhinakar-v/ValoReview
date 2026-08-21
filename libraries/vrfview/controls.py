@@ -1,7 +1,7 @@
 """
 The docked bottom: round strip, scrubber and transport.
 
-The strip is a canvas rather than a ttk.Scale because the playhead, the round
+The strip is a canvas rather than a slider widget because the playhead, the round
 bands, the event ticks and the side-swap divider all have to share one
 coordinate system; a themed slider owns its own geometry and cannot be drawn
 into.  `ms_to_x` and `x_to_ms` are the only place pixels and milliseconds meet.
@@ -21,15 +21,18 @@ from __future__ import annotations
 import tkinter as tk
 from collections.abc import Callable
 from dataclasses import dataclass
-from tkinter import ttk
 from typing import TYPE_CHECKING, Protocol
 
+import customtkinter as ctk
+
 from vrf_reader import _fmt_ms
-from vrfview import theme
+from vrfview import icons, theme
 from vrfview.clock import SPEEDS
+from vrfview.icons import ICON_PX
 from vrfview.model import TEAM_A, TEAM_B, Replay
 
 if TYPE_CHECKING:
+    from vrfview.images import Visuals
     from vrfview.state import Snapshot
 
 STRIP_HEIGHT = 76
@@ -292,110 +295,116 @@ class TimelineStrip:
             self.on_hover_time(self.x_to_ms(event.x))
 
 
-class ControlBar:
-    """Transport, speed, readout and layer toggles."""
+
+class TransportBar(ctk.CTkFrame):
+    """
+    Transport, speed, readout and the two panel buttons.
+
+    CustomTkinter rather than ttk, and every control carries a glyph from
+    `scripts/make_icons.py` with a text fallback: `assets/` is gitignored, so a
+    fresh checkout has no icons and must still get a usable bar.  `images.ctk`
+    returns None for a missing file, which is the whole fallback test.
+    """
 
     def __init__(
         self,
-        master: tk.Misc,
+        master,
         replay: Replay,
         cb: Callbacks,
-        *,
-        map_available: bool = False,
+        visuals: Visuals,
     ) -> None:
+        super().__init__(master, fg_color=theme.APP_BG, corner_radius=0)
         self.replay = replay
         self.cb = cb
-        self.frame = ttk.Frame(master, padding=(10, 6))
-        self._speed_buttons: dict[float, ttk.Button] = {}
-        self._layer_vars: dict[str, tk.BooleanVar] = {}
+        self.visuals = visuals
+        self._speed_buttons: dict[float, ctk.CTkButton] = {}
 
-        left = ttk.Frame(self.frame)
-        left.pack(side="left")
-        ttk.Button(left, text="|<", width=3, command=lambda: cb.step_round(-1)).pack(
-            side="left",
-            padx=1,
-        )
-        ttk.Button(left, text="<", width=3, command=lambda: cb.step_event(-1)).pack(
-            side="left",
-            padx=1,
-        )
-        self.play_button = ttk.Button(
-            left,
-            text="Play",
-            width=6,
-            command=cb.toggle_play,
-        )
-        self.play_button.pack(side="left", padx=3)
-        ttk.Button(left, text=">", width=3, command=lambda: cb.step_event(1)).pack(
-            side="left",
-            padx=1,
-        )
-        ttk.Button(left, text=">|", width=3, command=lambda: cb.step_round(1)).pack(
-            side="left",
-            padx=1,
-        )
+        left = ctk.CTkFrame(self, fg_color="transparent")
+        left.pack(side="left", padx=(12, 0), pady=8)
+        self._icon_button(left, "round_back", lambda: cb.step_round(-1))
+        self._icon_button(left, "step_back", lambda: cb.step_event(-1))
+        self.play_button = self._icon_button(left, "play", cb.toggle_play, wide=True)
+        self._icon_button(left, "step_forward", lambda: cb.step_event(1))
+        self._icon_button(left, "round_forward", lambda: cb.step_round(1))
 
-        self.time_label = ttk.Label(
-            self.frame,
+        self.time_label = ctk.CTkLabel(
+            self,
             text="",
-            font=("Consolas", 10),
-            style="Read.TLabel",
+            font=("Consolas", 13),
+            text_color=theme.TEXT_PRIMARY,
         )
-        self.time_label.pack(side="left", padx=14)
+        self.time_label.pack(side="left", padx=16)
 
-        speed_box = ttk.Frame(self.frame)
-        speed_box.pack(side="left", padx=6)
-        for s in SPEEDS:
-            text = f"{s:g}x"
-            button = ttk.Button(
-                speed_box,
-                text=text,
-                width=4,
-                command=lambda v=s: cb.set_speed(v),
+        speeds = ctk.CTkFrame(self, fg_color="transparent")
+        speeds.pack(side="left")
+        for value in SPEEDS:
+            button = ctk.CTkButton(
+                speeds,
+                text=f"{value:g}x",
+                width=42,
+                height=26,
+                corner_radius=4,
+                fg_color=theme.CARD_BG,
+                hover_color=theme.CARD_HOVER,
+                text_color=theme.TEXT_MUTED,
+                command=lambda v=value: cb.set_speed(v),
             )
-            button.pack(side="left", padx=1)
-            self._speed_buttons[s] = button
+            button.pack(side="left", padx=2)
+            self._speed_buttons[value] = button
 
-        right = ttk.Frame(self.frame)
-        right.pack(side="right")
-        ttk.Button(right, text="Provenance", command=cb.show_provenance).pack(
-            side="right",
-            padx=4,
+        right = ctk.CTkFrame(self, fg_color="transparent")
+        right.pack(side="right", padx=(0, 12))
+        self._icon_button(right, "info", cb.show_provenance, side="right")
+        # Offered only when the art cache holds a radar image for this map: a
+        # button that can only report its own absence is worse than no button.
+        art = visuals.art.map_art(replay.map_path)
+        if art is not None and art.plottable:
+            self._icon_button(right, "map", cb.show_map, side="right")
+
+    def _icon_button(
+        self,
+        master,
+        name: str,
+        command,
+        *,
+        side: str = "left",
+        wide: bool = False,
+    ) -> ctk.CTkButton:
+        image = self.visuals.images.ctk(icons.path_for(name), ICON_PX)
+        button = ctk.CTkButton(
+            master,
+            text="" if image is not None else icons.FALLBACK.get(name, name),
+            image=image,
+            width=48 if wide else 36,
+            height=30,
+            corner_radius=4,
+            fg_color=theme.CARD_BG,
+            hover_color=theme.CARD_HOVER,
+            text_color=theme.TEXT_PRIMARY,
+            command=command,
         )
-        # Offered only when the art cache actually holds a radar image for
-        # this map: a button that can only report its own absence is worse
-        # than no button.
-        if map_available:
-            ttk.Button(right, text="Map", command=cb.show_map).pack(
-                side="right",
-                padx=4,
-            )
-        for name, label in (
-            ("kills", "Kills"),
-            ("trails", "Trails"),
-            ("ults", "Ults"),
-            ("spike", "Spike"),
-            ("kd", "K/D"),
-        ):
-            var = tk.BooleanVar(value=name != "trails")
-            self._layer_vars[name] = var
-            ttk.Checkbutton(
-                right,
-                text=label,
-                variable=var,
-                command=lambda n=name, v=var: cb.toggle_layer(n, on=v.get()),
-            ).pack(side="right", padx=2)
+        button.pack(side=side, padx=3)
+        return button
 
     @property
-    def widget(self) -> ttk.Frame:
-        return self.frame
+    def widget(self) -> ctk.CTkFrame:
+        return self
 
     def refresh(self, snap: Snapshot, *, playing: bool, speed: float) -> None:
-        self.play_button.configure(text="Pause" if playing else "Play")
+        glyph = "pause" if playing else "play"
+        image = self.visuals.images.ctk(icons.path_for(glyph), ICON_PX)
+        self.play_button.configure(
+            image=image,
+            text="" if image is not None else icons.FALLBACK[glyph],
+        )
         rnd = snap.round.number if snap.round else "-"
         self.time_label.configure(
             text=f"{_fmt_ms(snap.t_ms)} / {_fmt_ms(self.replay.length_ms)}"
             f"   R{rnd}/{len(self.replay.rounds)}",
         )
         for value, button in self._speed_buttons.items():
-            button.state(["pressed"] if value == speed else ["!pressed"])
+            chosen = value == speed
+            button.configure(
+                fg_color=theme.CARD_HOVER if chosen else theme.CARD_BG,
+                text_color=theme.TEXT_PRIMARY if chosen else theme.TEXT_MUTED,
+            )
