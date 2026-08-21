@@ -193,8 +193,7 @@ def read_packet_bunches(
         bunch = read_bunch_header(reader, features)
         if bunch.num_bits > reader.bits_left:
             msg = (
-                f"bunch wants {bunch.num_bits} bits, packet has "
-                f"{reader.bits_left} left"
+                f"bunch wants {bunch.num_bits} bits, packet has {reader.bits_left} left"
             )
             raise NetError(msg)
         if keep_payload:

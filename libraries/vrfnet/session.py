@@ -20,8 +20,14 @@ from vrfnet.actors import ChannelTable, read_content_block, read_new_actor
 from vrfnet.bitreader import NetError
 from vrfnet.datachannel import read_packet_bunches
 from vrfnet.demodriver import read_demo_frames
+from vrfnet.movement import MOVEMENT_RPC, MovementLog, read_movement_rpc
 from vrfnet.packagemap import ExportTable, GuidCache
+from vrfnet.properties import CLASS_NET_CACHE, PropertyStats, decode_content_block
 from vrfnet.versions import Features
+
+# A channel names its class default object; the class itself drops this.
+DEFAULT_OBJECT_PREFIX = "Default__"
+CLASS_NET_CACHE_SUFFIX = "_ClassNetCache"
 
 
 @dataclass
@@ -105,6 +111,15 @@ class ReplaySession:
     exports: ExportTable = field(default_factory=ExportTable)
     channels: ChannelTable = field(default_factory=ChannelTable)
     stats: Stats = field(default_factory=Stats)
+    # The build branch from the replay header.  Empty means the property
+    # layer stays off: the transform is build-specific, so decoding without
+    # one would be guessing.
+    branch: str = ""
+    props: PropertyStats = field(default_factory=PropertyStats)
+    # Movement decoding is opt-in: it is the most expensive thing here, and
+    # every other consumer of a session does without it.
+    collect_movement: bool = False
+    movement: MovementLog = field(default_factory=MovementLog)
 
     def feed_block(self, buf: bytes, *, decode_bunches: bool = True) -> None:
         """Decode one decompressed REPLAYDATA block."""
@@ -153,20 +168,74 @@ class ReplaySession:
         channel = self.channels.get(bunch.ch_index)
         if channel is not None:
             channel.bunches += 1
-        try:
-            block = read_content_block(reader)
-        except NetError as exc:
-            self.stats.fail("content block", exc)
-        else:
-            self.stats.content_blocks += 1
-            if block.exact:
-                self.stats.content_blocks_exact += 1
-            if channel is not None:
-                channel.content_blocks += 1
-                channel.payload_bits += block.num_bits
+        self._feed_content_block(reader, channel, time_seconds)
 
         # A close applies whether or not the payload parsed -- the flag is in
         # the header, which we trust, not in the body, which we do not.
         if bunch.b_close:
             self.stats.bunches_close += 1
             self.channels.close(bunch.ch_index)
+
+    def _feed_content_block(self, reader, channel, time_seconds: float) -> None:
+        """One content block, and the properties inside it when decodable."""
+        try:
+            block = read_content_block(reader)
+        except NetError as exc:
+            self.stats.fail("content block", exc)
+            return
+        self.stats.content_blocks += 1
+        if block.exact:
+            self.stats.content_blocks_exact += 1
+        if channel is None:
+            return
+        channel.content_blocks += 1
+        channel.payload_bits += block.num_bits
+        if self.branch:
+            self._read_properties(block, channel, time_seconds)
+
+    # --- property layer --------------------------------------------------
+
+    def _group_for(self, channel):
+        """
+        The export group describing a channel's class, if it has been exported.
+
+        A channel names its archetype -- the class default object -- so the
+        class path is the same path with the `Default__` prefix dropped from
+        the object name.  Rep-layout blocks use that group; RPC blocks use the
+        matching _ClassNetCache group, which is exported separately.
+        """
+        path = channel.archetype_path
+        if not path:
+            return None
+        head, _, tail = path.rpartition(".")
+        if tail.startswith(DEFAULT_OBJECT_PREFIX):
+            path = f"{head}.{tail[len(DEFAULT_OBJECT_PREFIX) :]}"
+        group = self.exports.by_path.get(path)
+        if group is None:
+            return None
+        return group
+
+    def _class_net_cache_for(self, channel):
+        group = self._group_for(channel)
+        if group is None:
+            return None
+        return self.exports.by_path.get(f"{group.path_name}{CLASS_NET_CACHE_SUFFIX}")
+
+    def _read_properties(self, block, channel, time_seconds: float = 0.0) -> None:
+        group = (
+            self._group_for(channel)
+            if block.flag_a
+            else self._class_net_cache_for(channel)
+        )
+        decoded = decode_content_block(block, channel.actor_guid, self.branch, group)
+        self.props.record(decoded)
+        if self.collect_movement and decoded.kind == CLASS_NET_CACHE:
+            self._read_movement(decoded, time_seconds)
+
+    def _read_movement(self, decoded, time_seconds: float) -> None:
+        for prop in decoded.fields:
+            if prop.name == MOVEMENT_RPC:
+                self.movement.add(
+                    time_seconds,
+                    read_movement_rpc(prop.payload, prop.num_bits),
+                )
