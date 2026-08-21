@@ -20,10 +20,13 @@ rather than leaving an empty space that reads as "nobody won".
 
 What the card *can* say, and what the brief never thought to ask for, is
 whether this capture's build has a payload transform -- that is, whether the
-viewer will draw a real minimap for it or fall back to the schematic.  It
-costs one string comparison against `payload_transform.SUPPORTED_BRANCHES`,
-which is the same table the decoder itself consults, so the indicator cannot
-drift away from what the decode will actually do.
+viewer can draw it at all.  It costs one string comparison against
+`payload_transform.SUPPORTED_BRANCHES`, which is the same table the decoder
+itself consults, so the indicator cannot drift away from what the decode will
+actually do.  It is now load-bearing rather than decorative: the list shows
+`playable` by default, because opening a capture that will never produce a map
+is a dead end and the schematic that used to soften it is gone.  The ones held
+back are counted and one button away, never silently dropped.
 
 A file that fails to parse is a card too
 ----------------------------------------
@@ -49,7 +52,10 @@ from vrfview.loader import map_name_for
 RESULT_NOT_IN_FILE = "result not in file"
 
 POSITIONS_AVAILABLE = "positions decode on this build"
-POSITIONS_UNAVAILABLE = "no payload transform for this build; schematic only"
+POSITIONS_UNAVAILABLE = "no payload transform for this build; nothing to draw"
+
+# What the footer says about the captures the default filter holds back.
+HIDDEN_NOTE = "{n} hidden - no payload transform for their build"
 
 CACHE_VERSION = 1
 DEFAULT_CACHE = Path("out") / "match-scan.json"
@@ -85,6 +91,11 @@ class MatchCard:
     def positions_available(self) -> bool:
         """Whether the viewer will draw this one on a real map."""
         return self.build in SUPPORTED_BRANCHES
+
+    @property
+    def playable(self) -> bool:
+        """Whether opening this card can lead anywhere: readable and decodable."""
+        return self.readable and self.positions_available
 
     @property
     def positions_note(self) -> str:
@@ -123,6 +134,16 @@ class ScanResult:
         return [c for c in self.cards if not c.readable]
 
     @property
+    def playable(self) -> list[MatchCard]:
+        """The captures the viewer can actually draw -- the list's default."""
+        return [c for c in self.cards if c.playable]
+
+    @property
+    def hidden(self) -> list[MatchCard]:
+        """Everything the default filter holds back, counted rather than dropped."""
+        return [c for c in self.cards if not c.playable]
+
+    @property
     def described(self) -> str:
         """One line the home page can show verbatim."""
         where = self.root.described if self.root is not None else "no directory"
@@ -130,9 +151,11 @@ class ScanResult:
             return f"no replays in {where}"
         bad = len(self.failed)
         note = f", {bad} unreadable" if bad else ""
+        held = len(self.hidden)
+        back = f"; {HIDDEN_NOTE.format(n=held)}" if held else ""
         return (
-            f"{len(self.cards)} replays in {where} "
-            f"({self.read} read, {self.cached} from cache{note})"
+            f"{len(self.playable)} of {len(self.cards)} replays in {where} "
+            f"({self.read} read, {self.cached} from cache{note}){back}"
         )
 
 

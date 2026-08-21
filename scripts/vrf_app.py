@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 
 from vrfhome import scan
+from vrfview import positioncache
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -51,17 +52,23 @@ def run_scan(args: argparse.Namespace) -> scan.ScanResult:
 
 
 def print_scan(result: scan.ScanResult) -> int:
-    """The whole library as text, newest first."""
+    """
+    The whole library as text, newest first.
+
+    Every card, including the ones the window holds back: a listing is what a
+    user reaches for precisely when they want to know why a capture is not on
+    screen, so this is the one place the filter does not apply.
+    """
     print(result.described)
     for card in scan.sort_cards(result.cards, descending=True):
         if not card.readable:
             print(f"  {card.file_name}  UNREADABLE  {card.error}")
             continue
+        state = "playable " if card.playable else "no decode"
+        cached = "  cached" if positioncache.has(card.path) else ""
         print(
             f"  {card.recorded}  {card.map_name:<9} {card.duration}  "
-            f"{card.rounds:>2} rounds  "
-            f"{'minimap  ' if card.positions_available else 'schematic'}  "
-            f"{card.file_name}",
+            f"{card.rounds:>2} rounds  {state}{cached}  {card.file_name}",
         )
     return 0
 

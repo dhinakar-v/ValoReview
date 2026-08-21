@@ -14,11 +14,19 @@ carries `scan.RESULT_NOT_IN_FILE` in the badge's place.  An empty space there
 would read as a draw, or as a bug; the sentence reads as what it is.
 
 In exchange the card says something the brief never asked for and the user
-actually needs: **whether positions decode on this build**.  That decides
-whether the viewer will draw a real minimap or the schematic, it is knowable
+actually needs: **whether this capture can be drawn at all**.  It is knowable
 from a plain chunk, and on a typical library it is true of about one file in
-five.  It is the single most useful thing this page can say about a capture
-before opening it.
+five.  Since the schematic was removed there is no half-answer for the other
+four, so the page shows the playable ones by default and says how many it is
+holding back; SHOW ALL reveals them, each carrying the reason.  A list that
+quietly drops eighty of a hundred files would be worse than the schematic ever
+was.
+
+The second chip is that capture's **preparation state**, from
+`vrfhome.prewarm`: a decode is four minutes the first time and instant every
+time after, so the difference between QUEUED and READY is the difference
+between waiting and not, and it belongs on the card rather than being
+discovered after the click.
 
 Art is optional, here as everywhere
 -----------------------------------
@@ -37,7 +45,7 @@ from pathlib import Path
 import customtkinter as ctk
 from PIL import Image
 
-from vrfhome import scan
+from vrfhome import prewarm, scan
 from vrfview import art, theme
 
 THUMB_SIZE = (182, 40)
@@ -46,6 +54,25 @@ FONT_TITLE = ("Impact", 26)
 FONT_CARD = ("Arial", 15, "bold")
 FONT_BODY = ("Arial", 12)
 FONT_SMALL = ("Arial", 11)
+
+SHOW_ALL = "SHOW ALL"
+SHOW_PLAYABLE = "PLAYABLE ONLY"
+
+UNSUPPORTED_CHIP = "UNSUPPORTED BUILD"
+
+# How the preparation states colour.  READY is the only one that is good news
+# and FAILED the only one that is bad; QUEUED and PREPARING are neither, so
+# they take the muted default rather than a colour that implies a verdict.
+_CHIP_COLOUR = {
+    prewarm.READY: theme.ACCENT_OK,
+    prewarm.FAILED: theme.ACCENT_B,
+}
+
+
+def chip_colour(state: str) -> str:
+    """The colour one preparation state is shown in."""
+    return _CHIP_COLOUR.get(state, theme.TEXT_MUTED)
+
 
 EMPTY_TITLE = "No replays here"
 EMPTY_HINT = (
@@ -99,6 +126,7 @@ class MatchCardRow(ctk.CTkFrame):
         card: scan.MatchCard,
         on_open: Callable[[scan.MatchCard], None],
         thumbnails: Thumbnails | None = None,
+        status: prewarm.Status | None = None,
     ):
         super().__init__(
             master,
@@ -109,12 +137,22 @@ class MatchCardRow(ctk.CTkFrame):
         )
         self.card = card
         self.on_open = on_open
+        self.status_chip: ctk.CTkLabel | None = None
         self.grid_columnconfigure(1, weight=1)
 
         self._thumbnail(thumbnails)
         self._facts()
-        self._badges()
+        self._badges(status)
         self._bind_all(self)
+
+    def set_status(self, status: prewarm.Status) -> None:
+        """Repaint the preparation chip in place, without rebuilding the row."""
+        if self.status_chip is None:
+            return
+        self.status_chip.configure(
+            text=status.label,
+            text_color=chip_colour(status.state),
+        )
 
     # -- pieces ----------------------------------------------------------
     def _thumbnail(self, thumbnails: Thumbnails | None) -> None:
@@ -164,19 +202,11 @@ class MatchCardRow(ctk.CTkFrame):
             anchor="w",
         ).grid(row=1, column=1, sticky="w", pady=(0, 10))
 
-    def _badges(self) -> None:
+    def _badges(self, status: prewarm.Status | None) -> None:
         column = ctk.CTkFrame(self, fg_color="transparent")
         column.grid(row=0, column=2, rowspan=2, padx=(12, 12), pady=10, sticky="e")
 
-        if self.card.readable:
-            self._chip(column, scan.RESULT_NOT_IN_FILE, theme.TEXT_MUTED)
-            positions = self.card.positions_available
-            self._chip(
-                column,
-                "MINIMAP" if positions else "SCHEMATIC",
-                theme.ACCENT_OK if positions else theme.TEXT_MUTED,
-            )
-        else:
+        if not self.card.readable:
             self._chip(column, "UNREADABLE", theme.ACCENT_B)
             ctk.CTkLabel(
                 column,
@@ -185,6 +215,34 @@ class MatchCardRow(ctk.CTkFrame):
                 text_color=theme.TEXT_MUTED,
                 anchor="e",
             ).pack(anchor="e")
+            return
+
+        self._chip(column, scan.RESULT_NOT_IN_FILE, theme.TEXT_MUTED)
+        if not self.card.positions_available:
+            # Only ever visible under SHOW ALL, and it is the whole reason this
+            # card was held back, so it says so rather than showing a state.
+            self._chip(column, UNSUPPORTED_CHIP, theme.TEXT_MUTED)
+            ctk.CTkLabel(
+                column,
+                text=self.card.positions_note,
+                font=FONT_SMALL,
+                text_color=theme.TEXT_MUTED,
+                anchor="e",
+            ).pack(anchor="e")
+            return
+
+        found = status or prewarm.Status()
+        self.status_chip = ctk.CTkLabel(
+            column,
+            text=found.label,
+            font=FONT_SMALL,
+            text_color=chip_colour(found.state),
+            fg_color=theme.TOOLTIP_BG,
+            corner_radius=4,
+            padx=8,
+            pady=2,
+        )
+        self.status_chip.pack(anchor="e", pady=2)
 
     def _chip(self, master, text: str, colour: str) -> None:
         ctk.CTkLabel(
@@ -236,14 +294,20 @@ class MatchListPage(ctk.CTkFrame):
         result: scan.ScanResult,
         on_open: Callable[[scan.MatchCard], None],
         thumbnails: Thumbnails | None = None,
+        prewarmer: prewarm.Prewarmer | None = None,
     ):
         super().__init__(master, fg_color=theme.APP_BG)
         self.result = result
         self.on_open = on_open
         self.thumbnails = thumbnails if thumbnails is not None else Thumbnails()
+        self.prewarmer = prewarmer
 
         self.page_number = 1
         self.descending = False
+        self.show_all = False
+        # Path -> the row currently showing it, so a status change repaints one
+        # chip instead of rebuilding ten rows thirty times a minute.
+        self._rows: dict[Path, MatchCardRow] = {}
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -303,6 +367,22 @@ class MatchListPage(ctk.CTkFrame):
         )
         self.sort_button.grid(row=0, column=4, sticky="e")
 
+        # Offered only when something is actually being held back, so the
+        # button never invites a user to reveal an empty set.
+        if self.result.hidden:
+            self.filter_button = ctk.CTkButton(
+                bar,
+                text=SHOW_ALL,
+                width=130,
+                command=self._toggle_filter,
+                fg_color=theme.CARD_BG,
+                hover_color=theme.CARD_HOVER,
+                border_color=theme.BORDER,
+                border_width=1,
+                text_color=theme.TEXT_MUTED,
+            )
+            self.filter_button.grid(row=0, column=5, sticky="e", padx=(8, 0))
+
     def _build_list(self) -> None:
         self.list_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.list_frame.grid(row=1, column=0, sticky="nsew", padx=16)
@@ -355,14 +435,27 @@ class MatchListPage(ctk.CTkFrame):
         )
         self.provenance.grid(row=0, column=1, sticky="e")
 
+        # How far the background decode has got.  Its own line rather than
+        # appended to the provenance one, which is a fact about the scan and
+        # does not change while the app is open.
+        self.progress = ctk.CTkLabel(
+            footer,
+            text=self.prewarmer.described if self.prewarmer is not None else "",
+            font=FONT_SMALL,
+            text_color=theme.TEXT_MUTED,
+            anchor="e",
+        )
+        self.progress.grid(row=1, column=1, sticky="e")
+
     # -- state -----------------------------------------------------------
     @property
     def visible(self) -> list[scan.MatchCard]:
         """The cards the current filter and sort leave, before paging."""
         chosen = self.map_menu.get()
+        pool = self.result.cards if self.show_all else self.result.playable
         return scan.sort_cards(
             scan.filter_cards(
-                self.result.cards,
+                pool,
                 map_name="" if chosen.startswith("All") else chosen,
                 date=self.date_entry.get(),
             ),
@@ -379,21 +472,54 @@ class MatchListPage(ctk.CTkFrame):
         self.page_number = min(max(1, self.page_number), total)
         rows = scan.page(cards, self.page_number)
 
+        self._rows.clear()
         if not rows:
             self._empty_state()
         for row, card in enumerate(rows):
-            MatchCardRow(self.list_frame, card, self.on_open, self.thumbnails).grid(
-                row=row,
-                column=0,
-                sticky="ew",
-                pady=4,
+            widget = MatchCardRow(
+                self.list_frame,
+                card,
+                self.on_open,
+                self.thumbnails,
+                self._status_of(card),
             )
+            widget.grid(row=row, column=0, sticky="ew", pady=4)
+            self._rows[Path(card.path)] = widget
 
         self.page_label.configure(text=f"page {self.page_number} of {total}")
         self.prev_button.configure(state="normal" if self.page_number > 1 else "disabled")
         self.next_button.configure(
             state="normal" if self.page_number < total else "disabled",
         )
+
+    def _status_of(self, card: scan.MatchCard):
+        """The card's preparation state, or None where nothing is preparing."""
+        if self.prewarmer is None or not card.playable:
+            return None
+        return self.prewarmer.status(card.path)
+
+    def set_status(self, path, status) -> None:
+        """
+        Repaint one card's chip.  Called from the app's Tk thread only.
+
+        A path that is not on the current page is neither an error nor a
+        missed update: the page reads every status again when it is next
+        drawn, so a card scrolled past catches up on its own.
+        """
+        row = self._rows.get(Path(path))
+        if row is not None:
+            row.set_status(status)
+        if self.prewarmer is not None:
+            self.progress.configure(text=self.prewarmer.described)
+
+    def _toggle_filter(self) -> None:
+        self.show_all = not self.show_all
+        self.filter_button.configure(
+            text=SHOW_PLAYABLE if self.show_all else SHOW_ALL,
+            text_color=theme.TEXT_PRIMARY if self.show_all else theme.TEXT_MUTED,
+        )
+        self.page_number = 1
+        self.refresh()
 
     def _empty_state(self) -> None:
         holder = ctk.CTkFrame(self.list_frame, fg_color="transparent")

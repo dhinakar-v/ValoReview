@@ -8,11 +8,11 @@ describe the map rather than the match: the same picture for every replay on
 Bind, whatever happened in it.  Nothing here reads Replay.kills, and the footer
 says so on screen.
 
-It is a separate Toplevel and not a layer under the scene for that reason.  The
-replay contains no positions -- the property payloads are undecoded -- so
-players cannot be placed on this image, and drawing the schematic's nodes on top
-of it would suggest they had been.  docs/replay-viewer-*-handoff.md records the
-decision to keep the scene schematic; this window does not reopen it.
+It is a separate Toplevel and not a layer under the map for that reason, and it
+stays one now that the minimap *does* plot real positions.  The two windows
+answer different questions -- where this match happened, and what this map is
+called -- and `show` is handed no `Replay` at all, so it is structurally
+unable to blur them.  Keep it that way: positions belong on the minimap.
 
 The transform is vrfview.art's, including the axis swap, which is measured and
 not assumed.

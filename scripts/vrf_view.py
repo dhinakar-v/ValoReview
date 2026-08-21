@@ -168,7 +168,14 @@ def cmd_dump(args: argparse.Namespace) -> int:
         print(f"  - {note}")
     print(f"  - positions: {replay.position_source}")
     if not replay.has_positions:
-        print("  - with no positions the 2D scene is schematic, not a map")
+        print("  - with no positions the viewer has no map to draw")
+    if replay.ability_casts:
+        with_track = sum(1 for c in replay.ability_casts if c.has_track)
+        print(
+            f"  - abilities: {len(replay.ability_casts)} casts, "
+            f"{with_track} spawned a pawn with a decoded path; "
+            f"projectiles carry no position on the wire",
+        )
     return 0
 
 

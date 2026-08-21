@@ -24,6 +24,12 @@ ICON_DIRNAME = "icons"
 ICON_PX = 20
 
 # Every glyph the app asks for, and the text that stands in for it.
+#
+# `death` is the odd one out: it is drawn on the map canvas rather than on a
+# button, so its fallback is never rendered as text -- `minimap` falls back to
+# the two crossed lines it drew before there was an icon.  It lives here
+# anyway because the generator and the viewer have to agree on the name, and
+# this table plus `tests/test_app_ui.py::IconNames` is what makes them.
 FALLBACK = {
     "play": ">",
     "pause": "||",
@@ -34,6 +40,9 @@ FALLBACK = {
     "back": "<-",
     "map": "MAP",
     "info": "i",
+    "death": "x",
+    "sight": "SIGHT",
+    "ability": "ABIL",
 }
 
 NAMES = tuple(FALLBACK)

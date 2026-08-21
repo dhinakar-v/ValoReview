@@ -18,7 +18,8 @@ portrait is a mask rather than a square tile with the corners showing.
 Two flavours, and the difference matters
 ----------------------------------------
 `photo` returns a Tk `PhotoImage` for a **canvas** -- the minimap, the map
-reference window, the schematic.  `ctk` returns a `CTkImage` for a **widget** --
+reference window, the ability window.  `ctk` returns a `CTkImage` for a
+**widget** --
 a label, a button.  They are not interchangeable: a canvas cannot draw a
 CTkImage, and a CTkImage is what lets a widget rescale itself when the display
 scaling changes.  Callers pick by where the image is going.

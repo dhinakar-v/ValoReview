@@ -6,9 +6,14 @@ Draw the transport glyphs the app uses, as PNGs.
 
 The brief asks for a custom icon on every interactive control and none exist:
 the art cache is Riot's, and Riot ships no transport glyphs.  Rather than
-depend on an icon font or vendor a set with its own licence, the nine shapes
-are drawn here -- triangles, bars and an arrow head -- at 4x and downsampled,
+depend on an icon font or vendor a set with its own licence, the shapes are
+drawn here -- triangles, bars and an arrow head -- at 4x and downsampled,
 which is what makes their edges smooth at 20 px.
+
+Three of them are not transport controls.  `death` marks a body on the map,
+`sight` and `ability` are the two layer toggles; they are drawn by the same
+code because a viewer with Riot's art and no glyphs of its own is exactly the
+state this file exists to prevent.
 
 They are generated, not committed: `assets/` is gitignored, and the viewer
 falls back to a text label for any glyph that is missing, so a checkout that
@@ -163,6 +168,87 @@ def draw_info() -> Image.Image:
     return _finish(image)
 
 
+def draw_death() -> Image.Image:
+    """
+    A skull, for a body on the map.
+
+    Drawn rather than lettered because at 14 px on a minimap a glyph has to
+    read as a silhouette: two eye sockets and a jaw are recognisable at that
+    size where an X is just noise beside ten other marks.
+    """
+    image, draw = _canvas()
+    side = SIZE * SUPERSAMPLE
+    # Cranium, then a squared-off jaw beneath it.
+    draw.ellipse([side * 0.16, side * 0.12, side * 0.84, side * 0.72], fill=COLOUR)
+    draw.rounded_rectangle(
+        [side * 0.34, side * 0.58, side * 0.66, side * 0.86],
+        radius=int(side * 0.08),
+        fill=COLOUR,
+    )
+    hollow = (0, 0, 0, 0)
+    for left in (0.28, 0.56):
+        draw.ellipse(
+            [side * left, side * 0.32, side * (left + 0.16), side * 0.52],
+            fill=hollow,
+        )
+    # The gap between the teeth, so the jaw does not read as a solid block.
+    draw.rectangle([side * 0.47, side * 0.62, side * 0.53, side * 0.86], fill=hollow)
+    return _finish(image)
+
+
+def draw_sight() -> Image.Image:
+    """An eye: the sight-cone layer toggle."""
+    image, draw = _canvas()
+    side = SIZE * SUPERSAMPLE
+    width = int(side * 0.055)
+    # Two arcs meeting at the corners make an eye; a full ellipse makes a coin.
+    draw.arc(
+        [side * 0.06, side * 0.10, side * 0.94, side * 0.90],
+        start=200,
+        end=340,
+        fill=COLOUR,
+        width=width,
+    )
+    draw.arc(
+        [side * 0.06, side * 0.10, side * 0.94, side * 0.90],
+        start=20,
+        end=160,
+        fill=COLOUR,
+        width=width,
+    )
+    draw.ellipse(
+        [side * 0.38, side * 0.38, side * 0.62, side * 0.62],
+        fill=COLOUR,
+    )
+    return _finish(image)
+
+
+def draw_ability() -> Image.Image:
+    """
+    A four-pointed spark: the ability layer toggle.
+
+    Deliberately not any agent's own ability icon.  Those are Riot's art and
+    belong to one ability; this control is about all of them.
+    """
+    image, draw = _canvas()
+    side = SIZE * SUPERSAMPLE
+    mid, far, near = side * 0.5, side * 0.08, side * 0.36
+    draw.polygon(
+        [
+            (mid, far),
+            (mid + (near - far) * 0.42, near),
+            (side - far, mid),
+            (mid + (near - far) * 0.42, side - near),
+            (mid, side - far),
+            (mid - (near - far) * 0.42, side - near),
+            (far, mid),
+            (mid - (near - far) * 0.42, near),
+        ],
+        fill=COLOUR,
+    )
+    return _finish(image)
+
+
 GLYPHS = {
     "play": draw_play,
     "pause": draw_pause,
@@ -173,6 +259,9 @@ GLYPHS = {
     "back": draw_back,
     "map": draw_map,
     "info": draw_info,
+    "death": draw_death,
+    "sight": draw_sight,
+    "ability": draw_ability,
 }
 
 

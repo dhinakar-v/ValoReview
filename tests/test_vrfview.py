@@ -25,7 +25,6 @@ from vrfview import art as art_mod
 from vrfview import theme
 from vrfview.clock import PlaybackClock
 from vrfview.infer import annotate, two_colour
-from vrfview.layout import compute
 from vrfview.model import (
     TEAM_A,
     TEAM_B,
@@ -346,39 +345,7 @@ class TestClock(unittest.TestCase):
         assert clock.t_ms == 1000
 
 
-class TestLayoutAndTheme(unittest.TestCase):
-    def setUp(self):
-        self.replay = annotate(scenario([]))
-
-    def test_every_player_is_placed_inside_the_canvas(self):
-        lay = compute(self.replay, 1200, 800)
-        assert len(lay.positions) == 10
-        for x, y in lay.positions.values():
-            assert 0 <= x <= 1200
-            assert 0 <= y <= 800
-
-    def test_nodes_do_not_overlap(self):
-        lay = compute(self.replay, 1200, 800)
-        points = list(lay.positions.values())
-        for i, (x1, y1) in enumerate(points):
-            for x2, y2 in points[i + 1 :]:
-                gap = ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
-                assert gap > lay.radius * 2
-
-    def test_teams_sit_on_opposite_sides(self):
-        lay = compute(self.replay, 1200, 800)
-        mid = lay.centre[0]
-        for p in self.replay.team(TEAM_A):
-            assert lay.of(p.actor_id)[0] < mid
-        for p in self.replay.team(TEAM_B):
-            assert lay.of(p.actor_id)[0] > mid
-
-    def test_layout_is_deterministic(self):
-        assert (
-            compute(self.replay, 900, 700).positions
-            == compute(self.replay, 900, 700).positions
-        )
-
+class TestTheme(unittest.TestCase):
     def test_blend_hits_both_endpoints(self):
         assert theme.blend("#ffffff", "#000000", 0.0) == "#ffffff"
         assert theme.blend("#ffffff", "#000000", 1.0) == "#000000"
@@ -728,9 +695,16 @@ class TestHeadless(unittest.TestCase):
         "loader",
         "names",
         "state",
-        "layout",
         "clock",
         "theme",
+        # The ability path parser and the sight raycaster are model-layer too:
+        # one parses strings, the other marches a bitmask, and both are only
+        # useful to a canvas.  Keeping them here is what proves neither
+        # reached for a widget on the way.
+        "abilities",
+        "sight",
+        "positioncache",
+        "positionfile",
         # art resolves file paths and coordinates, never pixels; keeping it on
         # this list is what lets `dump` report art coverage with no Tk present.
         "art",

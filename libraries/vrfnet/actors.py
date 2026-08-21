@@ -147,6 +147,13 @@ class ChannelTable:
     # checkpoint, but who an actor was does not stop being true, and a
     # consumer reading identities at the end of a run needs all of them.
     archetypes: dict[int, str] = field(default_factory=dict)
+    # Actor net GUID -> the frame time its channel first opened, seconds.  The
+    # same history rule as `archetypes`, and for a sharper reason: an ability
+    # leaves no event behind, so the instant its actor appeared is the only
+    # timestamp a cast will ever have.  First open wins -- a checkpoint reopens
+    # channels for actors that already existed, and the later time would move
+    # a cast into whichever round the reader happened to seek to.
+    first_seen: dict[int, float] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.channels)
@@ -163,6 +170,7 @@ class ChannelTable:
         self.opened += 1
         if actor.archetype_path:
             self.archetypes[actor.actor_guid] = actor.archetype_path
+        self.first_seen.setdefault(actor.actor_guid, time_seconds)
         if actor.resolved:
             self.resolved += 1
         else:
@@ -180,8 +188,9 @@ class ChannelTable:
         """
         A checkpoint drops every channel-to-actor association.
 
-        `archetypes` deliberately survives: the channel indices are what a
-        checkpoint invalidates, not the identity of the actors they carried.
+        `archetypes` and `first_seen` deliberately survive: the channel
+        indices are what a checkpoint invalidates, not the identity of the
+        actors they carried nor the moment they first appeared.
         """
         self.channels.clear()
 

@@ -317,6 +317,17 @@ class Replay:
     catalog_notes: list[str] = field(default_factory=list)
     positions: dict[int, Track] = field(default_factory=dict)
     position_source: str = ""
+    # Ability casts, and the tracks of the pawns some of them spawn.  Both
+    # arrive with the positions and from the same decode -- see vrfview.tracks
+    # and vrfview.abilities -- so a replay that has one normally has the other,
+    # and a replay with neither says so in `position_source` rather than
+    # implying the match had no abilities in it.
+    ability_casts: list = field(default_factory=list)
+    ability_tracks: dict[int, Track] = field(default_factory=dict)
+
+    @property
+    def has_abilities(self) -> bool:
+        return bool(self.ability_casts)
 
     @property
     def has_positions(self) -> bool:
@@ -325,6 +336,12 @@ class Replay:
 
     def track(self, actor_id: int) -> Track | None:
         return self.positions.get(actor_id)
+
+    def ability_track(self, actor_id: int) -> Track | None:
+        return self.ability_tracks.get(actor_id)
+
+    def casts_in(self, round_no: int) -> list:
+        return [c for c in self.ability_casts if c.round_no == round_no]
 
     @property
     def subjects(self) -> list[str]:
@@ -358,6 +375,7 @@ class Replay:
         ts |= {u.t_ms for u in self.ultimates}
         ts |= {s.t_ms for s in self.spike}
         ts |= {r.start_ms for r in self.rounds}
+        ts |= {c.t_ms for c in self.ability_casts}
         return sorted(ts)
 
     @property

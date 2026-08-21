@@ -218,6 +218,14 @@ All of that lives inside the bit-packed UE replication stream, which the parser 
 > **player positions and the agent each actor is playing are decoded** and drawn on a real map
 > (`vrf-view.bat dump <file>.vrf --positions`, or the viewer's DECODE POSITIONS button).
 >
+> **Abilities too, on those builds.** Every ability opens actor channels whose archetype paths name
+> the agent and the keybind -- `/Game/Characters/Killjoy/S0/Ability_E/Pawn_Killjoy_E_Turret` -- so
+> `libraries/vrfview/abilities.py` reads casts out of them even though section 6 above shows there
+> is no ability event of any kind. What that still cannot give is *where*: the spawn transform is
+> not decoded, and of every ability archetype seen in a full capture only the `Pawn_` ones emit a
+> movement record, so a drone and a turret have paths and a thrown smoke has a time and nothing
+> else. No ability range, radius or damage figure exists in the replay or in Riot's catalogue.
+>
 > None of it applies to `039f3991...`: the transforms are derived per build against the shipped
 > binary and 11.11 is long gone from the live client, so this capture correctly refuses. The list
 > above therefore still holds *for this file*. Player names, economy, damage and the actor-to-

@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Protocol
 import customtkinter as ctk
 
 from vrf_reader import _fmt_ms
-from vrfview import icons, theme
+from vrfview import abilities, icons, theme
 from vrfview.clock import SPEEDS
 from vrfview.icons import ICON_PX
 from vrfview.model import TEAM_A, TEAM_B, Replay
@@ -42,6 +42,11 @@ BAND_TOP = 20
 BAND_BOTTOM = 52
 TICK_TOP = 54
 TICK_BOTTOM = 70
+# Ability casts get their own two pixels above the kill ticks.  They are far
+# more numerous than kills -- a round has a handful of deaths and a dozen
+# casts -- so sharing the row would bury the deaths under the utility.
+CAST_TOP = 50
+CAST_BOTTOM = 53
 
 # Below this the strip has no room for round bands at all; a band narrower than
 # CHIP_LABEL_FULL loses the "R" prefix, and below CHIP_LABEL_SHORT its number.
@@ -74,6 +79,7 @@ class Callbacks:
     toggle_layer: ToggleLayer
     show_provenance: Callable[[], None]
     show_map: Callable[[], None]
+    show_abilities: Callable[[], None] | None = None
 
 
 class TimelineStrip:
@@ -109,6 +115,10 @@ class TimelineStrip:
         )
         self._chips: dict[int, int] = {}
         self.on_hover_time = None
+        # Codename -> actor id, so a cast tick can be drawn in its team's
+        # colour.  `attribute` refuses a codename two players share rather
+        # than guessing, and an unattributed cast draws in the neutral grey.
+        self._caster = abilities.attribute(replay.players).by_codename
 
         self.canvas.bind("<Configure>", self._on_configure)
         self.canvas.bind("<Button-1>", self._on_press)
@@ -150,13 +160,30 @@ class TimelineStrip:
         self._rebuild()
 
     def _rebuild(self) -> None:
-        """Redraw the parts that only change on resize."""
-        c = self.canvas
-        c.delete("static")
+        """
+        Redraw the parts that only change on resize.
+
+        Split into one method per kind of mark rather than one long pass: the
+        strip now carries five of them -- bands, kills, casts, ultimates and
+        the spike -- and which row each occupies is the only thing keeping
+        them legible on top of one another.
+        """
+        self.canvas.delete("static")
         self._chips.clear()
         if self._width < MIN_STRIP_WIDTH:
             return
+        self._draw_bands()
+        self._draw_kills()
+        self._draw_casts()
+        self._draw_ultimates()
+        self._draw_spike()
+        self._draw_swap()
+        self.canvas.tag_raise(self._ghost)
+        self.canvas.tag_raise(self._playhead)
 
+    def _draw_bands(self) -> None:
+        """One rectangle per round, proportional to real time, plus its chip."""
+        c = self.canvas
         for i, rnd in enumerate(self.replay.rounds):
             x0, x1 = self.ms_to_x(rnd.start_ms), self.ms_to_x(rnd.end_ms)
             shade = theme.PANEL_EDGE if i % 2 == 0 else theme.PANEL
@@ -194,6 +221,9 @@ class TimelineStrip:
                 tags="static",
             )
 
+    def _draw_kills(self) -> None:
+        """A short tick per death, in the victim's team colour."""
+        c = self.canvas
         for kill in self.replay.kills:
             x = self.ms_to_x(kill.t_ms)
             player = self.replay.player(kill.victim)
@@ -211,6 +241,32 @@ class TimelineStrip:
                 width=1,
                 tags="static",
             )
+    def _draw_casts(self) -> None:
+        """
+        A tick per ability cast, on its own row above the kills.
+
+        Dimmer than a kill and shorter, because a round has a dozen of these
+        and a handful of those, and the deaths are what a reader scans for.
+        """
+        c = self.canvas
+        for cast in self.replay.ability_casts:
+            player = self.replay.player(self._caster.get(cast.codename, -1))
+            c.create_line(
+                self.ms_to_x(cast.t_ms),
+                CAST_TOP,
+                self.ms_to_x(cast.t_ms),
+                CAST_BOTTOM,
+                fill=theme.blend(
+                    theme.team_colour(player.team if player else "?"),
+                    theme.PANEL,
+                    0.3,
+                ),
+                width=1,
+                tags="static",
+            )
+    def _draw_ultimates(self) -> None:
+        """A full-height tick per ultimate, from the event stream."""
+        c = self.canvas
         for ult in self.replay.ultimates:
             x = self.ms_to_x(ult.t_ms)
             c.create_line(
@@ -222,6 +278,9 @@ class TimelineStrip:
                 width=1,
                 tags="static",
             )
+    def _draw_spike(self) -> None:
+        """Plant, defuse and explode, as glyphs -- the events carry no actor."""
+        c = self.canvas
         for spike in self.replay.spike:
             glyph, colour = _SPIKE_GLYPH.get(spike.kind, ("?", theme.MUTED))
             c.create_text(
@@ -232,6 +291,9 @@ class TimelineStrip:
                 font=("Segoe UI", 7),
                 tags="static",
             )
+    def _draw_swap(self) -> None:
+        """The side swap, where the file recorded one."""
+        c = self.canvas
         if self.replay.side_swap_ms is not None:
             x = self.ms_to_x(self.replay.side_swap_ms)
             c.create_line(
@@ -253,8 +315,6 @@ class TimelineStrip:
                 font=("Segoe UI", 7),
                 tags="static",
             )
-        c.tag_raise(self._ghost)
-        c.tag_raise(self._playhead)
 
     # --- per-frame -------------------------------------------------------
 
@@ -318,6 +378,8 @@ class TransportBar(ctk.CTkFrame):
         self.cb = cb
         self.visuals = visuals
         self._speed_buttons: dict[float, ctk.CTkButton] = {}
+        self._layers: dict[str, bool] = {}
+        self._layer_buttons: dict[str, ctk.CTkButton] = {}
 
         left = ctk.CTkFrame(self, fg_color="transparent")
         left.pack(side="left", padx=(12, 0), pady=8)
@@ -360,6 +422,62 @@ class TransportBar(ctk.CTkFrame):
         art = visuals.art.map_art(replay.map_path)
         if art is not None and art.plottable:
             self._icon_button(right, "map", cb.show_map, side="right")
+
+        # The two canvas layers.  `Callbacks.toggle_layer` has been plumbed
+        # through to the view since the schematic existed and until now nothing
+        # called it; these are that wire's first callers.  Both are offered
+        # only where they can do something -- sight needs the radar image it
+        # raycasts against, abilities need a decode that found some.
+        if art is not None and art.plottable:
+            self._toggle_button(right, "sight", "SIGHT", on=False)
+        if replay.has_abilities:
+            self._toggle_button(right, "abilities", "ABILITIES", on=True)
+            if cb.show_abilities is not None:
+                self._icon_button(right, "ability", cb.show_abilities, side="right")
+
+    def _toggle_button(
+        self,
+        master,
+        layer: str,
+        label: str,
+        *,
+        on: bool,
+    ) -> ctk.CTkButton:
+        """
+        A layer switch that shows its own state in its colour.
+
+        Its initial `on` has to match the view's own default for the layer or
+        the button lies from the first frame; `minimap.MinimapView._layers` is
+        the one place those defaults live.
+        """
+        button = ctk.CTkButton(
+            master,
+            text=label,
+            width=88,
+            height=30,
+            corner_radius=4,
+            fg_color=theme.CARD_BG,
+            hover_color=theme.CARD_HOVER,
+            text_color=theme.TEXT_PRIMARY,
+        )
+        button.configure(command=lambda: self._flip(layer))
+        button.pack(side="right", padx=3)
+        self._layers[layer] = on
+        self._layer_buttons[layer] = button
+        self._paint_layer(layer)
+        return button
+
+    def _flip(self, layer: str) -> None:
+        self._layers[layer] = not self._layers[layer]
+        self._paint_layer(layer)
+        self.cb.toggle_layer(layer, on=self._layers[layer])
+
+    def _paint_layer(self, layer: str) -> None:
+        on = self._layers[layer]
+        self._layer_buttons[layer].configure(
+            fg_color=theme.CARD_HOVER if on else theme.CARD_BG,
+            text_color=theme.TEXT_PRIMARY if on else theme.TEXT_MUTED,
+        )
 
     def _icon_button(
         self,

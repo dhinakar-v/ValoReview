@@ -28,7 +28,8 @@ TEAM_COLOURS = {"A": "#4ea3ff", "B": "#ff6b5a", "?": "#8a90a2"}
 
 # The brief's own palette, used by the CustomTkinter pages (vrfhome.cards and
 # the Phase 6 viewer).  The canvas constants above stay as they are: they are
-# the schematic's palette and the two are drawn by different toolkits.
+# the canvas palette -- the minimap, the strip, the map reference -- and the
+# two are drawn by different toolkits.
 #
 # The brief names accent-red ATK and accent-blue DEF.  Those *semantics* are
 # not adopted -- which team attacked is not recoverable from the file -- so the

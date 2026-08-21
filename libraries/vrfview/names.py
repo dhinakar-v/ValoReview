@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from vrfview.abilities import GRENADE, ULTIMATE, AbilityCast
 from vrfview.model import Loadout, Player, Replay
 
 if TYPE_CHECKING:
@@ -94,7 +95,65 @@ def resolve(replay: Replay, catalog: Catalog | None) -> Replay:
     # Codenames are resolved either way: the built-in table needs no catalogue
     # and is the only thing a player pawn can fall back on.
     _resolve_codenames(replay, usable)
+    _resolve_casts(replay, usable)
     return replay
+
+
+def _resolve_casts(replay: Replay, catalog: Catalog | None) -> None:
+    """
+    Name the agent behind each ability cast, and say what could not be named.
+
+    An ability actor's path states its agent's codename, so the caster is a
+    lookup of the same kind `_resolve_codenames` makes for a pawn -- and it is
+    made here, in the module that owns lookups, rather than in `tracks`, which
+    reads the stream and is not allowed to consult a catalogue.
+
+    The ability's own name is a different matter and is *not* resolved for two
+    of the four slots.  X is always `Ultimate` and C always `Grenade` in Riot's
+    published data, so those join exactly.  Q and E are published as `Ability1`
+    and `Ability2` **in an order that varies by agent**, so no join exists;
+    those keep the internal name read out of the archetype path, which is a
+    fact from the file rather than a guess dressed as a lookup.
+    """
+    if not replay.ability_casts:
+        return
+
+    replay.ability_casts = [
+        AbilityCast(
+            t_ms=c.t_ms,
+            codename=c.codename,
+            slot=c.slot,
+            name=c.name,
+            round_no=c.round_no,
+            actor_id=c.actor_id,
+            spawns=c.spawns,
+            kinds=c.kinds,
+            pawns=c.pawns,
+            agent=_agent_for(c.codename, catalog)[0],
+        )
+        for c in replay.ability_casts
+    ]
+
+    slots = {c.slot for c in replay.ability_casts}
+    joinable = sorted(slots & {ULTIMATE, GRENADE})
+    unjoinable = sorted(slots - {ULTIMATE, GRENADE})
+    replay.catalog_notes.append(
+        f"{len(replay.ability_casts)} ability casts read from the archetype "
+        f"paths of the actors each one spawned; there is no ability event in "
+        f"the file",
+    )
+    if unjoinable:
+        replay.catalog_notes.append(
+            f"ability names for slots {', '.join(unjoinable)} are the internal "
+            f"names read from those paths, not catalogue names: Riot publishes "
+            f"Q and E as Ability1/Ability2 in an order that varies by agent, so "
+            f"there is no join"
+            + (
+                f"; slots {', '.join(joinable)} are named from the catalogue"
+                if joinable
+                else ""
+            ),
+        )
 
 
 def _describe(replay: Replay, catalog: Catalog | None) -> Catalog | None:

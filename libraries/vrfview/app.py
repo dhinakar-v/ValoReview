@@ -17,6 +17,16 @@ codenames, and `names` needs them to name anybody.  Positions are *not* decoded
 here; the viewer offers a button for that, because four minutes before the
 first frame is not an opening.
 
+The four minutes happen anyway -- earlier, and in the background
+----------------------------------------------------------------
+`vrfhome.prewarm` starts once the window is up and decodes the playable
+captures one at a time into `vrfview.positioncache`, so by the time a card is
+clicked the decode has usually already happened and `tracks.attach` finds it
+rather than doing it.  It is paused whenever a viewer is open: the viewer's own
+DECODE POSITIONS button is a request the user made, and it must not queue
+behind twenty they did not.  Every status arrives on a worker thread and is
+marshalled onto Tk with `after`, the same rule the viewer's decode follows.
+
 A replay that fails to load is a message, not a traceback
 ---------------------------------------------------------
 The list already knows which files it could not read; a file that parses in the
@@ -26,15 +36,16 @@ shows the error on the list page and stays there.
 
 from __future__ import annotations
 
+import tkinter as tk
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
 from vrf_reader import VrfError
-from vrfhome import cards, scan
+from vrfhome import cards, prewarm, scan
 from vrfview import art as art_mod
-from vrfview import infer, loader, names, theme
+from vrfview import infer, loader, names, theme, tracks
 from vrfview.images import ImageCache, Visuals
 from vrfview.viewer import Session, ViewerPage
 
@@ -42,13 +53,30 @@ if TYPE_CHECKING:
     from vrfview.model import Replay
 
 WINDOW_TITLE = "Valorant replay analyzer"
+
+# How long the background decode waits for the window to appear before it
+# starts competing with it for the CPU.
+PREWARM_DELAY_MS = 800
 WINDOW_SIZE = "1360x860"
 MIN_SIZE = (1100, 700)
 
 
 def open_replay(path: str | Path, catalog=None) -> Replay:
-    """Read, infer, then name -- the order the pipeline documents."""
-    return names.resolve(infer.annotate(loader.load(path)), catalog)
+    """
+    Read, infer, attach anything already decoded, then name.
+
+    The order is the pipeline's and the reasons are unchanged -- `infer`
+    cross-checks its team split against the codenames, `names` needs them to
+    name anybody -- with one step added in the middle.  `tracks.attach_stored`
+    cannot decode; it only picks up a sidecar or a cache entry, so it is
+    milliseconds when there is something and nothing when there is not.  It
+    sits *before* `names` because a stored decode carries the codenames too,
+    and naming has to happen after they arrive or every agent stays a
+    `Hunter`.
+    """
+    replay = infer.annotate(loader.load(path))
+    tracks.attach_stored(replay, path)
+    return names.resolve(replay, catalog)
 
 
 class ReplayApp(ctk.CTk):
@@ -71,14 +99,50 @@ class ReplayApp(ctk.CTk):
         self.minsize(*MIN_SIZE)
         self.configure(fg_color=theme.APP_BG)
 
+        self.prewarmer = prewarm.Prewarmer(result.cards, on_change=self._prepared)
         self.list_page = cards.MatchListPage(
             self,
             result,
             on_open=self.show_replay,
             thumbnails=cards.Thumbnails(visuals.art),
+            prewarmer=self.prewarmer,
         )
         self.list_page.pack(fill="both", expand=True)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # After the window has painted, not during construction: the first
+        # decode competes for the CPU and the list should be on screen before
+        # it starts.
+        self.after(PREWARM_DELAY_MS, self.prewarmer.start)
+
+    # -- background preparation ------------------------------------------
+    def _prepared(self, path, status) -> None:
+        """
+        A capture changed state.  Called on the worker thread, never Tk's.
+
+        Nothing here touches a widget; `after` hands the whole thing to the Tk
+        thread, because a chip reconfigured from a worker fails in ways that
+        look like a layout bug.
+
+        `after` itself is the part that can fail.  Closing the window tears
+        down the interpreter's Tk half while the worker is still inside a
+        block, and registering a callback against a dead one raises
+        `RuntimeError` *on the worker thread*, where nothing is catching it --
+        the queue dies and the user gets a traceback on the way out of the
+        app.  A window that has gone simply has nothing to tell, so this stops
+        the queue instead.
+        """
+        try:
+            self.after(0, self._show_status, path, status)
+        except (RuntimeError, tk.TclError):
+            self.prewarmer.stop()
+
+    def _show_status(self, path, status) -> None:
+        try:
+            if self.list_page.winfo_exists():
+                self.list_page.set_status(path, status)
+        except tk.TclError:
+            # The page was destroyed between the `after` and its callback.
+            self.prewarmer.stop()
 
     # -- navigation ------------------------------------------------------
     def show_replay(self, card: scan.MatchCard) -> None:
@@ -92,6 +156,9 @@ class ReplayApp(ctk.CTk):
             )
             return
 
+        # The viewer may want to decode this very capture; two decodes at once
+        # would halve both.  The queue picks up again on the way back.
+        self.prewarmer.pause()
         self.list_page.pack_forget()
         session = Session(
             replay=replay,
@@ -109,10 +176,18 @@ class ReplayApp(ctk.CTk):
             self.viewer.destroy()
             self.viewer = None
         self.list_page.pack(fill="both", expand=True)
+        # A viewer that decoded its own capture has just filled a cache entry,
+        # so refresh before resuming: the chip should say READY the moment the
+        # card is visible again.
+        self.list_page.refresh()
+        self.prewarmer.resume()
 
     def _on_close(self) -> None:
         if self.viewer is not None:
             self.viewer.stop()
+        # Asked, not waited for: the worker checks between blocks, so it drops
+        # out within a second or so, and it is a daemon thread besides.
+        self.prewarmer.stop()
         self.destroy()
 
 

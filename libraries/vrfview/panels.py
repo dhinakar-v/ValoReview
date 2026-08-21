@@ -45,7 +45,6 @@ from vrfview import theme
 from vrfview.images import CIRCLE, Visuals
 
 if TYPE_CHECKING:
-    from vrfview.art import ArtCache
     from vrfview.model import Player, Replay
     from vrfview.state import Snapshot
 
@@ -65,25 +64,6 @@ FONT_STAT = ("Consolas", 12)
 
 # How far a dead row is faded toward the background.
 DEAD_FADE = 0.55
-
-
-def agent_art_by_name(cache: ArtCache, name: str):
-    """
-    Art for an agent named rather than identified by UUID.
-
-    `ArtCache.agent_art` keys on the UUID, which is what a loadout slot
-    carries.  A `Player` has no UUID -- its agent is *read* from the pawn's
-    archetype codename and named through the catalogue -- so the only join left
-    is the display name, and it is exact on both sides because both come from
-    the same published catalogue.
-    """
-    if not name:
-        return None
-    wanted = name.lower()
-    for entry in cache.agents.values():
-        if entry.name.lower() == wanted:
-            return entry
-    return None
 
 
 class PlayerRow(ctk.CTkFrame):
@@ -158,7 +138,7 @@ class PlayerRow(ctk.CTkFrame):
         )
 
     def _set_portrait(self, visuals: Visuals) -> None:
-        entry = agent_art_by_name(visuals.art, self.player.agent)
+        entry = visuals.art.agent_art_by_name(self.player.agent)
         path = entry.icon if entry is not None else None
         image = visuals.images.ctk(path, (PORTRAIT_PX, PORTRAIT_PX), CIRCLE)
         if image is not None:

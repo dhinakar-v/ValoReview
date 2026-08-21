@@ -44,6 +44,10 @@ SOURCE_NONE = "none"
 
 FETCH_HINT = "runners\\fetch-assets.bat fetch writes one"
 
+# Keybind -> the slot name valorant-api.com publishes.  Only the two that are
+# unambiguous appear; see AgentArt.ability for why Q and E cannot.
+SLOT_TO_MANIFEST = {"X": "Ultimate", "C": "Grenade"}
+
 # PNG stores width and height as big-endian uint32 at these offsets: an 8-byte
 # signature, then the IHDR chunk's 4-byte length and 4-byte type, then the two.
 
@@ -121,8 +125,17 @@ class MapArt:
 
 
 @dataclass(frozen=True)
+class AbilityArt:
+    """One published ability slot: Riot's name for it, and its icon."""
+
+    slot: str = ""
+    name: str = ""
+    icon: Path | None = None
+
+
+@dataclass(frozen=True)
 class AgentArt:
-    """Every cached file for one agent, plus its role badge."""
+    """Every cached file for one agent, plus its role badge and its abilities."""
 
     name: str = ""
     uuid: str = ""
@@ -131,6 +144,27 @@ class AgentArt:
     killfeed: Path | None = None
     portrait: Path | None = None
     role_icon: Path | None = None
+    # Keyed by Riot's own slot name -- Ability1, Ability2, Grenade, Ultimate,
+    # Passive -- and not by keybind, because the manifest does not publish one.
+    # `ability` below is the only place that gap is reasoned about.
+    abilities: dict[str, AbilityArt] = field(default_factory=dict)
+
+    def ability(self, key: str) -> AbilityArt | None:
+        """
+        The published ability for a keybind read off a replay, where one joins.
+
+        Two of the four join and two do not, and this is the whole reason the
+        method exists rather than a dict lookup at the call site.
+        `Ultimate` is X and `Grenade` is C on every agent, so those are exact.
+        `Ability1` and `Ability2` are Q and E **in an order that varies by
+        agent** (docs/valorant-assets.md), so there is no way to tell which is
+        which, and returning either would be a coin flip wearing a display
+        name.  Q and E therefore resolve to nothing here, and the caller shows
+        the internal name it read out of the replication stream instead -- a
+        fact from the file, which needs no lookup to be true.
+        """
+        slot = SLOT_TO_MANIFEST.get(key)
+        return self.abilities.get(slot) if slot else None
 
 
 @dataclass(frozen=True)
@@ -196,6 +230,24 @@ class ArtCache:
         """Art for an agent UUID.  Both sides are lowered, as valcatalog does."""
         return self.agents.get(uuid.lower()) if uuid else None
 
+    def agent_art_by_name(self, name: str) -> AgentArt | None:
+        """
+        Art for an agent named rather than identified by UUID.
+
+        `agent_art` keys on the UUID, which is what a loadout slot carries.  A
+        `Player` has no UUID -- its agent is *read* from the pawn's archetype
+        codename and named through the catalogue -- so the only join left is
+        the display name, and it is exact on both sides because both come from
+        the same published catalogue.
+        """
+        if not name:
+            return None
+        wanted = name.lower()
+        for entry in self.agents.values():
+            if entry.name.lower() == wanted:
+                return entry
+        return None
+
 
 def _resolve(root: Path, files: dict, name: str) -> Path | None:
     """One entry from a manifest `files` dict, if it is actually on disk."""
@@ -248,6 +300,27 @@ def _map_art(root: Path, name: str, entry: dict) -> MapArt:
     )
 
 
+def _abilities(root: Path, entry: dict) -> dict[str, AbilityArt]:
+    """
+    One agent's ability slots, as fetch_assets writes them.
+
+    The icon path comes out of the entry's own `file` key rather than being
+    built from the slot or the agent name -- the same rule every other path
+    here follows, and for the same reason: the folders are sanitised and
+    `KAY/O` does not live in `agents/KAY/O/`.
+    """
+    out = {}
+    for slot, raw in (entry.get("abilities") or {}).items():
+        if not isinstance(raw, dict):
+            continue
+        out[slot] = AbilityArt(
+            slot=slot,
+            name=str(raw.get("display_name") or ""),
+            icon=_resolve(root, {"icon": raw.get("file") or ""}, "icon"),
+        )
+    return out
+
+
 def _agent_art(root: Path, name: str, entry: dict, roles: dict) -> AgentArt:
     files = entry.get("files") or {}
     role = str(entry.get("role") or "")
@@ -260,6 +333,7 @@ def _agent_art(root: Path, name: str, entry: dict, roles: dict) -> AgentArt:
         killfeed=_resolve(root, files, "killfeed.png"),
         portrait=_resolve(root, files, "portrait.png"),
         role_icon=_resolve(root, role_files, "role"),
+        abilities=_abilities(root, entry),
     )
 
 

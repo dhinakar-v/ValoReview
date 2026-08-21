@@ -74,6 +74,11 @@ class Snapshot:
     score: tuple[int, int] = (0, 0)
     positions: dict[int, Position] = field(default_factory=dict)
     death_positions: dict[int, Position] = field(default_factory=dict)
+    # Ability casts already made in the current round, and where the pawns
+    # some of them spawned are now.  Scoped to the round for the same reason
+    # `alive` is: a smoke thrown last round is not a fact about this one.
+    round_casts: tuple = ()
+    ability_positions: dict[int, Position] = field(default_factory=dict)
 
     @property
     def has_positions(self) -> bool:
@@ -91,6 +96,14 @@ class Snapshot:
 
     def is_alive(self, actor_id: int) -> bool:
         return actor_id in self.alive
+
+    @property
+    def has_abilities(self) -> bool:
+        return bool(self.round_casts)
+
+    def casts_of(self, codename: str) -> tuple:
+        """Casts by one agent this round, in the order they were made."""
+        return tuple(c for c in self.round_casts if c.codename == codename)
 
 
 def _kd_at(replay: Replay, t_ms: int) -> dict[int, tuple[int, int]]:
@@ -177,6 +190,40 @@ def _positions_at(
     return live, fallen
 
 
+def _abilities_at(
+    replay: Replay,
+    rnd: Round | None,
+    t_ms: int,
+) -> tuple[tuple, dict[int, Position]]:
+    """
+    The casts made so far this round, and where their pawns are now.
+
+    A cast is kept once the playhead reaches it and never removed before the
+    round ends.  Unlike a kill arrow it is not an animation but the record of
+    a decision, and a list that empties as you scrub forward would be unable to
+    answer what utility has already been spent.
+
+    Pawn positions go through the same `Track.at` as a player's, so an ability
+    pawn that has stopped replicating disappears rather than freezing in place.
+    There is deliberately no death-position fallback here: a drone is shot down
+    and gone, and pinning its last coordinate would leave a marker on the map
+    for something that is no longer on it.
+    """
+    if rnd is None:
+        return (), {}
+    casts = tuple(
+        c for c in replay.ability_casts if rnd.contains(c.t_ms) and c.t_ms <= t_ms
+    )
+    live: dict[int, Position] = {}
+    for cast in casts:
+        for actor_id in cast.pawns:
+            track = replay.ability_tracks.get(actor_id)
+            here = track.at(t_ms) if track is not None else None
+            if here is not None:
+                live[actor_id] = here
+    return casts, live
+
+
 def state_at(
     replay: Replay,
     t_ms: int,
@@ -216,6 +263,7 @@ def state_at(
     score_b = sum(1 for r in replay.rounds if r.winner == TEAM_B and r.end_ms <= t_ms)
 
     positions, death_positions = _positions_at(replay, dead_since, t_ms)
+    round_casts, ability_positions = _abilities_at(replay, rnd, t_ms)
 
     return Snapshot(
         t_ms=t_ms,
@@ -232,4 +280,6 @@ def state_at(
         score=(score_a, score_b),
         positions=positions,
         death_positions=death_positions,
+        round_casts=round_casts,
+        ability_positions=ability_positions,
     )

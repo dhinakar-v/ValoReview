@@ -15,7 +15,7 @@ fourth kind of act: it decodes a second, deeper stream out of the same file.
 Keeping it apart means `model`, `infer` and `state` still import nothing from
 vrfnet, and a replay whose build has no transform loses positions and nothing
 else -- `attach` records the refusal in `Replay.position_source` and returns
-the replay untouched, because a schematic view of a match is still a view.
+the replay untouched, for the viewer to say so on screen.
 
 What makes these positions trustworthy
 --------------------------------------
@@ -52,7 +52,7 @@ from vrf_reader import REPLAYDATA, Oodle, VrfError, VrfFile
 from vrfnet.calibrate import load as load_features
 from vrfnet.payload_transform import UnsupportedBuildError, transform_for
 from vrfnet.session import ReplaySession
-from vrfview import positionfile
+from vrfview import abilities, positioncache, positionfile
 from vrfview.model import POSITION_HZ, Player, Position, Replay, Track
 
 # The archetype path of a player pawn: /Game/Characters/<Codename>/<Codename>_PC
@@ -65,6 +65,10 @@ NO_SOURCE_JSON = (
     "replication stream (write one with vrf-to-json --positions)"
 )
 NOT_REQUESTED = "positions not decoded (not requested)"
+NOT_DECODED = (
+    "positions not decoded yet; nothing stored for this capture "
+    "(press DECODE POSITIONS, or let the match list prepare it)"
+)
 
 
 def codename_for(archetype_path: str) -> str:
@@ -99,6 +103,15 @@ class Options:
     blocks: int | None = None
     hz: int = POSITION_HZ
     progress: Callable[[int, int], None] | None = None
+    # Whether a stored decode may answer instead of a fresh one.  On by
+    # default because re-deriving four minutes of identical arithmetic is
+    # never what a caller wanted; off for the tests that have to prove the
+    # decoder itself still works.
+    cache: bool = True
+    # Whether a fresh decode is allowed at all.  Off is how a caller asks the
+    # cheap question -- "is this one already done?" -- without risking four
+    # minutes on the answer being no.  See `attach_stored`.
+    decode: bool = True
 
 
 @dataclass
@@ -107,6 +120,10 @@ class Extraction:
 
     positions: dict[int, Track] = field(default_factory=dict)
     codenames: dict[int, str] = field(default_factory=dict)
+    # Ability actors: every spawn seen, and tracks for the `Pawn_` ones, which
+    # are the only kind that ever moves.  See vrfview.abilities.
+    spawns: list = field(default_factory=list)
+    ability_positions: dict[int, Track] = field(default_factory=dict)
     build: str = ""
     blocks: int = 0
     hz: int = POSITION_HZ
@@ -132,11 +149,17 @@ class Extraction:
                 f"{self.build}: {self.blocks} REPLAYDATA blocks decoded but no "
                 f"movement matched a player actor"
             )
+        extra = ""
+        if self.spawns:
+            extra = (
+                f"; {len(self.spawns)} ability actors, "
+                f"{len(self.ability_positions)} of them with a track"
+            )
         return (
             f"{self.build}: {self.samples:,} positions for "
             f"{len(self.positions)} player actors at {self.hz} Hz, thinned from "
             f"{self.moves:,} movement records over {self.blocks} REPLAYDATA "
-            f"blocks ({len(self.ignored)} non-player actors ignored)"
+            f"blocks ({len(self.ignored)} non-player actors ignored){extra}"
         )
 
 
@@ -169,8 +192,10 @@ def extract(
     period_ms = max(1, round(1000 / options.hz))
     # actor -> time bucket -> the last position seen in that bucket.  Drained
     # after every block, so a full match holds one block of moves rather than
-    # all 3.09 million of them at once.
-    buckets: dict[int, dict[int, Position]] = {}
+    # all 3.09 million of them at once.  Ability pawns get their own table so
+    # that widening the filter costs the drone and the turret and not all 143
+    # other actors that happen to move.
+    buckets = _Buckets()
 
     todo = list(vrf.data_blocks(kinds=(REPLAYDATA,)))
     if options.blocks is not None:
@@ -178,10 +203,16 @@ def extract(
     for i, block in enumerate(todo):
         raw = oodle.decompress(block.blob(vrf.data), block.decompressed_size)
         session.feed_block(raw)
-        _drain(session, buckets, actor_ids, period_ms, out)
+        _drain(session, buckets, actor_ids=actor_ids, period_ms=period_ms, out=out)
         if options.progress is not None:
             options.progress(i + 1, len(todo))
     out.blocks = len(todo)
+
+    out.spawns = abilities.spawns_from(
+        session.channels.archetypes,
+        session.channels.first_seen,
+    )
+    out.ability_positions = _tracks_from(buckets.abilities)
 
     # session.channels.archetypes, not session.channels.channels: the live
     # table has already lost anyone who disconnected, which is exactly the
@@ -194,29 +225,61 @@ def extract(
         if actor_guid in actor_ids:
             out.codenames[actor_guid] = codename
 
-    out.positions = {
+    out.positions = _tracks_from(buckets.players)
+    return out
+
+
+@dataclass
+class _Buckets:
+    """
+    The two thinning tables one block of movement is drained into.
+
+    Bundled rather than passed loose because they are always handled together
+    and always by the same rule: a sample belongs to exactly one of them, and
+    which one is the single decision `_drain` exists to make.
+    """
+
+    players: dict[int, dict[int, Position]] = field(default_factory=dict)
+    abilities: dict[int, dict[int, Position]] = field(default_factory=dict)
+
+
+def _tracks_from(buckets: dict[int, dict[int, Position]]) -> dict[int, Track]:
+    """Thinned buckets back into time-ordered tracks, one per actor."""
+    return {
         actor_id: Track(
             actor_id=actor_id,
             samples=tuple(by_tick[t] for t in sorted(by_tick)),
         )
         for actor_id, by_tick in sorted(buckets.items())
     }
-    return out
 
 
 def _drain(
     session: ReplaySession,
-    buckets: dict[int, dict[int, Position]],
+    buckets: _Buckets,
+    *,
     actor_ids: set[int],
     period_ms: int,
     out: Extraction,
 ) -> None:
-    """Move one block of samples into the buckets, thinning as they go."""
+    """
+    Move one block of samples into the buckets, thinning as they go.
+
+    Three destinations, and the order matters.  `actor_ids` is the event
+    stream's own set of players and still outranks everything: a pawn the
+    events name is a player even if its archetype reads oddly.  Only what is
+    left is offered to the ability parser, and only the kinds that actually
+    move are kept -- a `Projectile_` never emits a movement record, so a bucket
+    for one would be a promise of an arc that is not in the file.
+    """
     for actor_id, samples in session.movement.samples.items():
-        if actor_id not in actor_ids:
+        if actor_id in actor_ids:
+            by_tick = buckets.players.setdefault(actor_id, {})
+        elif _is_moving_ability(session, actor_id):
+            by_tick = buckets.abilities.setdefault(actor_id, {})
+        else:
             out.ignored.add(actor_id)
             continue
-        by_tick = buckets.setdefault(actor_id, {})
         for time_seconds, move in samples:
             out.moves += 1
             t_ms = round(time_seconds * 1000)
@@ -234,67 +297,186 @@ def _drain(
     session.movement.samples.clear()
 
 
+def _is_moving_ability(session: ReplaySession, actor_id: int) -> bool:
+    """Whether this actor is an ability pawn -- a drone or a turret, not a smoke."""
+    path = session.channels.archetypes.get(actor_id)
+    if not path:
+        return False
+    ref = abilities.parse(path)
+    return ref is not None and ref.moves
+
+
 def attach(
     replay: Replay,
     path: str | Path,
     options: Options | None = None,
 ) -> Replay:
     """
-    Decode positions and codenames into `replay`, in place.
+    Decode positions, abilities and codenames into `replay`, in place.
 
     Never raises for want of positions.  An unsupported build, a missing Oodle
     DLL and a JSON dump with no sidecar all end the same way -- `position_source`
-    says which, the model keeps every fact it already had, and the viewer falls
-    back to the schematic it drew before any of this existed.
+    says which, the model keeps every fact it already had, and the viewer says
+    on screen that it has no map to draw.
 
-    A JSON dump is not decoded: it carries no replication stream.  It is read
-    from the sidecar `vrf-to-json --positions` writes beside it, if there is
-    one, which is the whole reason that flag exists -- the DLL is needed once,
-    on the machine that dumped, and never again.
+    Three sources, tried in order, and only the last one costs four minutes:
+
+      1. a sidecar **beside the file**, which is what `vrf-to-json --positions`
+         writes and a user may have copied here deliberately;
+      2. the machine's own cache (`vrfview.positioncache`), written by a
+         previous decode of this same capture;
+      3. a real decode -- after which the result is cached, so this is the last
+         time this capture costs anything.
+
+    A JSON dump never reaches step 3: it carries no replication stream, so for
+    it the sidecar is not an optimisation but the only source there is.
     """
-    if Path(path).suffix.lower() != ".vrf":
-        return _from_sidecar(replay, path)
+    options = options or Options()
+    is_vrf = Path(path).suffix.lower() == ".vrf"
+    # Why each source that had a file declined it.  Carried rather than
+    # written straight onto the replay because a later source overwrites
+    # `position_source`, and "the sidecar is for another match" is the one
+    # sentence a user actually needs when nothing else works either.
+    refused: list[str] = []
+
+    beside = positionfile.sidecar_path(path)
+    if beside.is_file() and _apply_sidecar(replay, beside, refused=refused):
+        return replay
+    if not is_vrf:
+        # A dump has no other source: it carries no replication stream.
+        replay.position_source = _no_positions(refused) or NO_SOURCE_JSON
+        return replay
+
+    if options.cache:
+        cached = positioncache.cache_path(path)
+        if cached.is_file() and _apply_sidecar(
+            replay,
+            cached,
+            cached=True,
+            refused=refused,
+        ):
+            return replay
+
+    if not options.decode:
+        replay.position_source = _no_positions(refused) or NOT_DECODED
+        return replay
 
     actor_ids = {p.actor_id for p in replay.players}
     try:
         found = extract(path, actor_ids, options)
     except (UnsupportedBuildError, VrfError, OSError) as exc:
-        replay.position_source = f"no positions: {exc}"
+        replay.position_source = _no_positions([*refused, str(exc)])
         return replay
 
     replay.positions = found.positions
     replay.position_source = found.described
+    replay.ability_tracks = found.ability_positions
     _name_pawns(replay, found.codenames)
+    _name_casts(replay, found.spawns)
+    if options.cache:
+        positioncache.write(path, sidecar_for(replay, found))
     return replay
 
 
-def _from_sidecar(replay: Replay, path: str | Path) -> Replay:
-    """Read positions written earlier, or say why there are none."""
-    side = positionfile.sidecar_path(path)
-    if not side.is_file():
-        replay.position_source = NO_SOURCE_JSON
-        return replay
+def attach_stored(replay: Replay, path: str | Path) -> Replay:
+    """
+    Attach positions **only** if they are already on disk.  Never decodes.
+
+    This is what makes a prepared capture open instantly instead of opening on
+    a button.  It is safe to call on the Tk thread during navigation precisely
+    because it cannot become a four-minute decode: the worst case is reading a
+    10 MB JSON file, and the ordinary case is that there is nothing to read.
+    """
+    return attach(replay, path, Options(decode=False))
+
+
+def sidecar_for(replay: Replay, found: Extraction) -> positionfile.Sidecar:
+    """One decode in the shape the sidecar stores it."""
+    return positionfile.Sidecar(
+        positions=found.positions,
+        codenames=found.codenames,
+        description=found.described,
+        match_id=replay.match_id,
+        build=found.build,
+        hz=found.hz,
+        ability_spawns={s.actor_id: (s.path, s.t_ms) for s in found.spawns},
+        ability_tracks=found.ability_positions,
+    )
+
+
+def _no_positions(reasons: list[str]) -> str:
+    """Every reason there are no positions, in the order they were met."""
+    return f"no positions: {'; '.join(r for r in reasons if r)}" if reasons else ""
+
+
+def _apply_sidecar(
+    replay: Replay,
+    side: Path,
+    *,
+    cached: bool = False,
+    refused: list[str],
+) -> bool:
+    """
+    Put one stored decode onto `replay`, or say why it was refused.
+
+    Returns whether the replay now has positions, so the caller can fall
+    through to the next source.  A refusal is appended to `refused` rather
+    than written onto the replay: a stored decode that silently became a fresh
+    one would hide a corrupt cache for as long as the cache existed, but the
+    fresh decode is also entitled to set the final message if it works.
+    """
     try:
         stored = positionfile.read(side)
     except positionfile.PositionFileError as exc:
-        replay.position_source = f"no positions: {exc}"
-        return replay
+        refused.append(str(exc))
+        return False
     # A sidecar is a loose file that can be copied next to the wrong dump, and
     # a track drawn for another match would look entirely plausible.  Both
     # sides know the match ID, so refuse rather than draw it.
     if stored.match_id and replay.match_id and stored.match_id != replay.match_id:
-        replay.position_source = (
-            f"no positions: {side.name} holds match {stored.match_id}, "
-            f"not {replay.match_id}"
+        refused.append(
+            f"{side.name} holds match {stored.match_id}, not {replay.match_id}",
         )
-        return replay
+        return False
 
+    where = "cache" if cached else side.name
     replay.positions = stored.positions
-    replay.position_source = (
-        f"{stored.description} (read from {side.name}, not decoded)"
-    )
+    replay.ability_tracks = stored.ability_tracks
+    replay.position_source = f"{stored.description} (read from {where}, not decoded)"
     _name_pawns(replay, stored.codenames)
-    return replay
+    # Regrouped rather than read back grouped: the sidecar keeps the spawns,
+    # so this replay's own rounds and the current grouping rules both apply,
+    # however old the stored decode is.
+    _name_casts(
+        replay,
+        abilities.spawns_from(
+            {a: path for a, (path, _t) in stored.ability_spawns.items()},
+            {a: t / 1000 for a, (_p, t) in stored.ability_spawns.items()},
+        ),
+    )
+    return True
+
+
+def _name_casts(replay: Replay, spawns: list) -> None:
+    """
+    Group ability spawns into casts, in place, using this replay's own rounds.
+
+    Grouping happens here rather than in `extract` because a cast belongs to a
+    round, and `extract` decodes a stream and knows nothing about rounds.  The
+    agent name is left empty on purpose: it is a catalogue lookup, and
+    `vrfview.names` is the one place those are made.
+    """
+    replay.ability_casts = abilities.casts(spawns, round_of=_round_number(replay))
+
+
+def _round_number(replay: Replay):
+    """`Replay.round_at` as the millisecond -> number callable `casts` wants."""
+
+    def number(t_ms: int) -> int:
+        rnd = replay.round_at(t_ms)
+        return rnd.number if rnd is not None else 0
+
+    return number
 
 
 def _name_pawns(replay: Replay, codenames: dict[int, str]) -> None:
@@ -320,12 +502,5 @@ def save(
     """Write `found` as the sidecar belonging to a dump at `path`."""
     return positionfile.write(
         positionfile.sidecar_path(path),
-        positionfile.Sidecar(
-            positions=found.positions,
-            codenames=found.codenames,
-            description=found.described,
-            match_id=replay.match_id,
-            build=found.build,
-            hz=found.hz,
-        ),
+        sidecar_for(replay, found),
     )

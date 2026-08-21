@@ -222,4 +222,5 @@ class AgainstARealCapture(unittest.TestCase):
         assert got.readable
         assert got.build == BUILD_UNSUPPORTED
         assert not got.positions_available
-        assert "schematic" in got.positions_note
+        assert "no payload transform" in got.positions_note
+        assert not got.playable

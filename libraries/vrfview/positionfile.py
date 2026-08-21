@@ -21,7 +21,8 @@ they have always been -- opt-in, attached by `tracks.attach`, and described in
 
 The format
 ----------
-One JSON object.  Samples are stored columnar -- six equal-length arrays per
+One JSON object.  Version 2 added the ability actors; version 1 files are
+still read, and simply have none.  Samples are stored columnar -- six equal-length arrays per
 actor rather than a dict per sample -- which is about a third of the bytes and
 costs nothing in clarity, since a sample is six numbers and always the same
 six.  Floats are written at full precision: json round-trips a double exactly,
@@ -38,11 +39,19 @@ from pathlib import Path
 from vrfview.model import POSITION_HZ, Position, Track
 
 FORMAT = "vrf-positions"
-VERSION = 1
+VERSION = 2
+# Every version this module can still read.  A v1 file is a real sidecar
+# written by `vrf-to-json --positions` before abilities were decoded, and it is
+# not wrong -- it simply says nothing about them.  Refusing it would throw away
+# a four-minute decode over a field it was never asked to carry.
+READABLE = (1, 2)
 SUFFIX = ".positions.json"
 
 # The order the columns are written in, and the order Position takes them.
 COLUMNS = ("t", "x", "y", "z", "yaw", "pitch")
+
+# An ability spawn is stored as exactly [archetype path, milliseconds].
+_SPAWN_FIELDS = 2
 
 
 class PositionFileError(Exception):
@@ -59,6 +68,14 @@ class Sidecar:
     match_id: str = ""
     build: str = ""
     hz: int = POSITION_HZ
+    # Ability actors as they were seen: actor net ID -> (archetype path,
+    # spawn time).  Stored raw rather than as grouped casts on purpose --
+    # a spawn is a fact off the wire, a cast is a reading of several of them,
+    # and the reading has already changed once.  Keeping the facts means an
+    # improvement to `abilities.casts` takes effect on the next load instead
+    # of needing every cached decode thrown away.
+    ability_spawns: dict[int, tuple[str, int]] = field(default_factory=dict)
+    ability_tracks: dict[int, Track] = field(default_factory=dict)
 
     @property
     def samples(self) -> int:
@@ -89,6 +106,14 @@ def write(path: str | Path, sidecar: Sidecar) -> Path:
             str(actor_id): _columns(track)
             for actor_id, track in sorted(sidecar.positions.items())
         },
+        "ability_spawns": {
+            str(actor_id): [path, t_ms]
+            for actor_id, (path, t_ms) in sorted(sidecar.ability_spawns.items())
+        },
+        "ability_tracks": {
+            str(actor_id): _columns(track)
+            for actor_id, track in sorted(sidecar.ability_tracks.items())
+        },
     }
     with out.open("w", encoding="utf-8") as fh:
         json.dump(doc, fh, ensure_ascii=False)
@@ -108,8 +133,11 @@ def read(path: str | Path) -> Sidecar:
     if not isinstance(doc, dict) or doc.get("format") != FORMAT:
         msg = f"{src}: not a {FORMAT} file"
         raise PositionFileError(msg)
-    if doc.get("version") != VERSION:
-        msg = f"{src}: sidecar version {doc.get('version')!r}, expected {VERSION}"
+    if doc.get("version") not in READABLE:
+        msg = (
+            f"{src}: sidecar version {doc.get('version')!r}, "
+            f"expected one of {READABLE}"
+        )
         raise PositionFileError(msg)
 
     positions = {}
@@ -123,6 +151,13 @@ def read(path: str | Path) -> Sidecar:
         _actor_id(src, raw_id): str(name)
         for raw_id, name in (doc.get("codenames") or {}).items()
     }
+    ability_tracks = {}
+    for raw_id, columns in (doc.get("ability_tracks") or {}).items():
+        actor_id = _actor_id(src, raw_id)
+        ability_tracks[actor_id] = Track(
+            actor_id=actor_id,
+            samples=_samples(src, actor_id, columns),
+        )
     return Sidecar(
         positions=positions,
         codenames=codenames,
@@ -130,7 +165,20 @@ def read(path: str | Path) -> Sidecar:
         match_id=str(doc.get("match_id") or ""),
         build=str(doc.get("build") or ""),
         hz=int(doc.get("hz") or POSITION_HZ),
+        ability_spawns={
+            _actor_id(src, raw_id): _spawn(src, raw_id, entry)
+            for raw_id, entry in (doc.get("ability_spawns") or {}).items()
+        },
+        ability_tracks=ability_tracks,
     )
+
+
+def _spawn(src: Path, raw_id, entry) -> tuple[str, int]:
+    """One `[archetype path, spawn ms]` pair back, or refuse the file."""
+    if not isinstance(entry, (list, tuple)) or len(entry) != _SPAWN_FIELDS:
+        msg = f"{src}: ability spawn {raw_id!r} is not [path, t]"
+        raise PositionFileError(msg)
+    return (str(entry[0]), int(entry[1]))
 
 
 def _columns(track: Track) -> dict[str, list]:

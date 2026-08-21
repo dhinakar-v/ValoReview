@@ -8,22 +8,25 @@ furniture.
 
 The centre canvas is the whole point
 ------------------------------------
-It is a `MinimapView` when this replay has decoded positions *and* the art
-cache holds a radar image for the map, and the schematic `SceneView` otherwise.
-Both present `widget`, `render(snapshot)` and `on_hover`, so the swap changes
-nothing else, and the caption under the map says which of the two is showing
-and why -- `Replay.position_source` is a sentence written by whichever step
-refused, so it is never blank and never a guess.
+It is a `MinimapView`, and since the schematic was removed there is no second
+kind.  What used to be a fallback view is now a fallback *sentence*:
+`MissingArtView` names the radar image it has not got, because a diagram drawn
+where a map goes reads as a map however it is captioned.  The caption under the
+canvas still says where the positions came from -- `Replay.position_source` is
+a sentence written by whichever step produced or refused them, so it is never
+blank and never a guess.
 
 Positions are decoded here, not at load
 ---------------------------------------
-A full match costs about four minutes and an Oodle DLL.  Blocking the window
-for that before it draws anything would be the wrong trade, so the viewer opens
-on the schematic and the DECODE POSITIONS button runs `tracks.attach` on a
-worker thread, reporting block by block and swapping the canvas when it lands.
-The thread only ever hands back a finished `Replay`; every widget call happens
-on the Tk thread through `after`, because Tk is not thread-safe and a canvas
-touched from a worker fails in ways that look like data corruption.
+A full match costs about four minutes and an Oodle DLL -- but only once.
+`tracks.attach` now consults a sidecar and then the machine cache before it
+decodes anything, so on a capture the match list has already prepared, or one
+opened a second time, the button never has to run at all and the map is there
+on the first frame.  When it does run it runs on a worker thread, reporting
+block by block and rebuilding the body when it lands.  The thread only ever
+hands back a finished `Replay`; every widget call happens on the Tk thread
+through `after`, because Tk is not thread-safe and a canvas touched from a
+worker fails in ways that look like data corruption.
 
 The clock is not re-implemented
 -------------------------------
@@ -45,14 +48,13 @@ from typing import TYPE_CHECKING
 import customtkinter as ctk
 
 from vrf_reader import _fmt_ms
+from vrfview import abilitywindow, icons, mapref, names, theme, tracks
 from vrfview import art as art_mod
-from vrfview import icons, mapref, names, theme, tracks
 from vrfview.clock import SPEEDS, PlaybackClock
 from vrfview.controls import STRIP_HEIGHT, Callbacks, TimelineStrip, TransportBar
 from vrfview.images import ImageCache, Visuals
-from vrfview.minimap import MinimapView
+from vrfview.minimap import MinimapView, MissingArtView
 from vrfview.panels import TeamPanel
-from vrfview.scene import SceneView
 from vrfview.state import state_at
 
 if TYPE_CHECKING:
@@ -71,8 +73,8 @@ FONT_TITLE = ("Impact", 22)
 FONT_CLOCK = ("Consolas", 20)
 FONT_SUB = ("Arial", 11)
 
-SCHEMATIC_CAPTION = "SCHEMATIC — not a map. "
 MINIMAP_CAPTION = "MAP — real coordinates. "
+NO_MAP_CAPTION = "NO MAP IMAGE. "
 
 
 @dataclass(frozen=True)
@@ -114,6 +116,7 @@ class ViewerPage(ctk.CTkFrame):
         self._after_id: str | None = None
         self._hover_text = ""
         self._map_window: tk.Toplevel | None = None
+        self._ability_window: tk.Toplevel | None = None
         self._decoding = False
 
         self.map_art = self.visuals.art.map_art(self.replay.map_path)
@@ -216,18 +219,31 @@ class ViewerPage(ctk.CTkFrame):
         self.right.configure(width=PANEL_WIDTH)
 
     def _make_view(self):
-        """The minimap where positions and art allow it, the schematic otherwise."""
+        """
+        The minimap, or a sentence naming what is missing.
+
+        There is no third option and deliberately no drawn fallback.  Two
+        different things can be absent -- the decode and the radar image -- and
+        they are different problems with different fixes, so they get different
+        sentences rather than one view that stands in for both.
+        """
         plottable = self.map_art is not None and self.map_art.plottable
         if self.replay.has_positions and plottable:
             self.caption.configure(
                 text=MINIMAP_CAPTION + self.replay.position_source,
             )
-            return MinimapView(self.centre, self.replay, self.map_art, self.visuals.images)
-        why = self.replay.position_source or tracks.NOT_REQUESTED
-        if self.replay.has_positions and not plottable:
-            why = f"positions decoded, but no minimap image for {self.replay.map_name}"
-        self.caption.configure(text=SCHEMATIC_CAPTION + why)
-        return SceneView(self.centre, self.replay)
+            return MinimapView(self.centre, self.replay, self.map_art, self.visuals)
+        if not plottable:
+            self.caption.configure(text=NO_MAP_CAPTION + self.visuals.art.described)
+            return MissingArtView(self.centre, self.replay, art_mod.FETCH_HINT)
+        self.caption.configure(
+            text=NO_MAP_CAPTION + (self.replay.position_source or tracks.NOT_REQUESTED),
+        )
+        return MissingArtView(
+            self.centre,
+            self.replay,
+            "Press DECODE POSITIONS to read them out of the replication stream.",
+        )
 
     def _build_bottom(self) -> None:
         cb = Callbacks(
@@ -239,6 +255,7 @@ class ViewerPage(ctk.CTkFrame):
             toggle_layer=self._toggle_layer,
             show_provenance=self._show_provenance,
             show_map=self._show_map,
+            show_abilities=self._show_abilities,
         )
         self.strip = TimelineStrip(self, self.replay, cb)
         self.strip.widget.grid(row=2, column=0, sticky="ew", padx=10)
@@ -361,15 +378,13 @@ class ViewerPage(ctk.CTkFrame):
         self.view.set_layer(name, on=on)
         self._dirty = True
 
-    def _on_hover_node(self, actor_id) -> None:
-        # The minimap hands back a Player, the schematic an actor id; both are
-        # allowed to say "nothing".
-        if actor_id is None:
+    def _on_hover_node(self, player) -> None:
+        # The view hands back a Player, or None for "the mouse is over nobody".
+        if player is None:
             self._hover_text = ""
             self._dirty = True
             return
-        if not isinstance(actor_id, int):
-            actor_id = actor_id.actor_id
+        actor_id = player.actor_id
         snap = state_at(self.replay, self.clock.t_ms)
         player = self.replay.player(actor_id)
         kills, deaths = snap.kd.get(actor_id, (0, 0))
@@ -402,6 +417,17 @@ class ViewerPage(ctk.CTkFrame):
             self.winfo_toplevel(),
             self.map_art,
             self.visuals.images,
+        )
+
+    def _show_abilities(self) -> None:
+        """Open the ability timeline, or raise the one already open."""
+        if self._ability_window is not None and self._ability_window.winfo_exists():
+            self._ability_window.lift()
+            return
+        self._ability_window = abilitywindow.show(
+            self.winfo_toplevel(),
+            self.replay,
+            self.visuals,
         )
 
     def _show_provenance(self) -> None:
@@ -455,17 +481,23 @@ class ViewerPage(ctk.CTkFrame):
             text="POSITIONS DECODED" if self.replay.has_positions else "DECODE POSITIONS",
         )
         # A decode does not only produce positions: each pawn also states its
-        # own agent codename, and those were not there when names.resolve last
-        # ran.  Naming them again is what turns `Hunter` into Sova in the
-        # panels, so it has to happen before the body is rebuilt.
+        # own agent codename, and every ability cast names the agent that made
+        # it.  None of that was there when names.resolve last ran.  Naming them
+        # again is what turns `Hunter` into Sova in the panels and on the cast
+        # list, so it has to happen before the body is rebuilt.
         names.resolve(self.replay, self.catalog)
+        self._event_times = self.replay.event_times
         self._rebuild_body()
+        # The transport bar offers the layer toggles and the ability window
+        # only where there is something to toggle, and a decode is exactly the
+        # moment that changes.
+        self._rebuild_bottom()
 
     def _rebuild_body(self) -> None:
         """
         Throw the body away and build it again.
 
-        The schematic and the minimap are different widgets, and a portrait is
+        A sentence and a minimap are different widgets, and a portrait is
         chosen when a row is constructed, so the decode's two effects -- a real
         map, and agents with faces -- both land by rebuilding rather than by
         reconfiguring ten things in place.
@@ -473,6 +505,14 @@ class ViewerPage(ctk.CTkFrame):
         for child in self.body.winfo_children():
             child.destroy()
         self._build_body()
+        self._dirty = True
+
+    def _rebuild_bottom(self) -> None:
+        """Rebuild the strip and the transport, for the same reason as the body."""
+        self.strip.widget.destroy()
+        self.bar.destroy()
+        self.status.destroy()
+        self._build_bottom()
         self._dirty = True
 
 
@@ -505,6 +545,7 @@ def provenance_text(replay: Replay, art: ArtCache | None = None) -> str:
         "DECODED FROM THE REPLICATION STREAM",
         f"  positions         {replay.position_source or 'not requested'}",
         f"  agent per actor   {_codename_summary(replay)}",
+        f"  ability casts     {_ability_summary(replay)}",
     ]
     lines += [
         "",
@@ -539,8 +580,26 @@ def provenance_text(replay: Replay, art: ArtCache | None = None) -> str:
         "                            side planted is not recoverable, and the two",
         "                            colours mean team A and team B",
         "  weapon held               in the property payload but not yet decoded",
+        "  where an ability landed   ability actors state what they are and when,",
+        "                            but not where: the spawn transform is not at",
+        "                            any fixed offset, and only the pawn kinds --",
+        "                            a drone, a turret -- ever send a movement",
+        "                            record.  A smoke has a time and no coordinate",
+        "  ability damage / radius   no ability carries a range, radius or damage",
+        "                            figure in the replay or in Riot's catalogue",
     ]
     return "\n".join(lines)
+
+
+def _ability_summary(replay: Replay) -> str:
+    if not replay.ability_casts:
+        return "not decoded; no ability actor was read"
+    with_track = sum(1 for c in replay.ability_casts if c.has_track)
+    slots = sorted({c.slot for c in replay.ability_casts})
+    return (
+        f"{len(replay.ability_casts)} casts across slots {', '.join(slots)}; "
+        f"{with_track} spawned a pawn with a decoded path"
+    )
 
 
 def _codename_summary(replay: Replay) -> str:
