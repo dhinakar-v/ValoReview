@@ -1,0 +1,18 @@
+{
+  "features": {
+    "legacy_ack_dummy": false,
+    "legacy_close_reason": false,
+    "legacy_max_channels": false,
+    "legacy_channel_names": false,
+    "post_chindex_flags": 4,
+    "chname_always": false,
+    "max_packet_bits": 16384
+  },
+  "rate": 0.998,
+  "runner_up_rate": 0.17675,
+  "packets": 4000,
+  "bunches": 3992,
+  "undetermined": [
+    "legacy_close_reason"
+  ]
+}
