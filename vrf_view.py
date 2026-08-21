@@ -3,7 +3,11 @@ Play a .vrf replay back in 2D.
 
 Two commands: `view` opens the window, `dump` prints the same model as text so
 the model and inference layers can be checked on a machine with no display.
-The command may be omitted, so `vrfview.py some.vrf` opens the viewer.
+The command may be omitted, so `vrf_view.py some.vrf` opens the viewer.
+
+The name mirrors vrf_net.py against vrfnet/: a root script cannot share a name
+with a package beside it, because the package wins the import and `import
+vrfview` would then never reach this module.
 """
 
 from __future__ import annotations
