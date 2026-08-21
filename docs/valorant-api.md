@@ -1173,6 +1173,12 @@ decoded replay stores them lowercase. Joining without `.lower()` matches nothing
 > needs a `MatchDto` — the coordinate cross-check especially — is therefore still a plan,
 > not a result.
 
+**Implemented since 2026-08-21.** Join keys 1-3 are wired into the viewer:
+`libraries/valapi.py` is the client for this API, `libraries/valcatalog.py` reduces a
+`val-content-v1` response to the map and agent lookups, and `libraries/vrfview/names.py`
+applies them to a replay. `runners\vrf-view.bat catalog` reports the cache and
+`--refresh` rewrites it; `dump` and `view` never call the API.
+
 The API and the offline decoder in `libraries/vrfnet/` describe the same match from two
 directions. The decoder gives continuous, per-tick truth with no names attached; the API
 gives sparse, authoritative, fully-named truth. They join cleanly, and the join keys were
@@ -1216,6 +1222,16 @@ once the catalogue is cached:
 
     maps = {m["assetPath"]: m["name"] for m in content["maps"] if m.get("assetPath")}
     print(maps[replay["demo_header"]["maps"][0]])
+
+The same join is available with **no key at all** from the `assets/manifest.json` that
+`fetch-assets` writes from valorant-api.com -- but the field to join on there is
+`map_url`, not the `asset_path` sitting beside it, which uses a different notation
+entirely:
+
+    "Abyss": {"map_url":    "/Game/Maps/Infinity/Infinity",                          <- joins
+              "asset_path": "ShooterGame/Content/Maps/Infinity/Infinity_PrimaryAsset"}  <- does not
+
+`valcatalog.from_manifest` reads `map_url` for exactly this reason.
 
 **Confirmed live 2026-08-21.** Run against a real `val-content-v1` response, the replay's
 `/Game/Maps/Infinity/Infinity` resolves to:
@@ -1312,14 +1328,18 @@ rotation term but not pitch.
 ### Suggested order of work
 
 1. Cache `val-content-v1` once per patch -- it is the largest body and changes least.
-   Send `locale=en-US` (1.7 MB, versus 14.3 MB unfiltered). **This works today.**
+   Send `locale=en-US` (1.7 MB, versus 14.3 MB unfiltered). **Done:**
+   `vrf-view.bat catalog --refresh` writes `assets/content-en-US.json`.
 2. Resolve map and agent names offline from that cache; no per-replay API call needed.
-   **This works today** -- steps 1 and 2 are fully verified and need nothing more than the
-   personal key already in `.env`.
+   **Done:** `valcatalog` + `vrfview/names.py`, with the `fetch-assets` manifest and the
+   built-in codename table as keyless fallbacks. Steps 1 and 2 need nothing more than the
+   personal key already in `.env`, and step 2 needs no key whatsoever.
 3. Apply for a **production key**. Steps 4-5 are unreachable without one; this is the real
    blocker, not rate limits.
 4. Fetch `/val/match/v1/matches/{matchId}` per replay you actually analyse, and cache the
-   response next to the `.vrf`. One call per replay stays comfortably inside a dev key's
+   response next to the `.vrf`. `valapi.match()` already makes this call and
+   `valapi.key_state()` tells a gated 403 apart from a dead key; nothing merges a
+   `MatchDto` into the viewer's model yet, because no real response has been seen. One call per replay stays comfortably inside a dev key's
    100-per-2-minutes budget; a bulk sweep of all 101 captures in `Demos/` does not.
 5. Only then attempt the coordinate cross-check.
 

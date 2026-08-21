@@ -33,6 +33,7 @@ from vrf_to_json import (
 )
 from vrfview.model import (
     Kill,
+    Loadout,
     Player,
     Replay,
     Round,
@@ -41,7 +42,9 @@ from vrfview.model import (
 )
 
 # Internal map paths are codenames; the public names are external knowledge and
-# are shown as inferred.  Unknown paths fall back to the leaf of the path.
+# are shown as inferred.  This table is the keyless fallback: when a Riot
+# content catalogue is available, vrfview.names resolves the same path against
+# it instead and says so.  Unknown paths fall back to the leaf of the path.
 MAP_NAMES = {
     "Ascent": "Ascent",
     "Bonsai": "Split",
@@ -67,6 +70,12 @@ _GROUP_SPIKE = {
     "spikeDefused": "defused",
     "spikeExploded": "exploded",
 }
+
+
+# How Replay.map_name was arrived at.  vrfview.names adds its own value when a
+# catalogue answers, so the interface never has to guess which one is showing.
+MAP_NAME_SOURCE_TABLE = "built-in codename table"
+MAP_NAME_SOURCE_LEAF = "raw path leaf (codename not in the built-in table)"
 
 
 def map_name_for(map_path: str) -> tuple[str, bool]:
@@ -114,12 +123,17 @@ def _from_document(
 
     replay = Replay(
         source=source.name,
+        # friendly_name is the match UUID: it equals the file's own stem on all
+        # 101 captures surveyed, and is read from the header rather than from
+        # the filename so a renamed copy still reports the right match.
+        match_id=str(container.get("friendly_name") or ""),
         map_path=map_path,
         map_name=name,
+        map_name_source=MAP_NAME_SOURCE_TABLE if recognised else MAP_NAME_SOURCE_LEAF,
         length_ms=int(container.get("length_ms") or 0),
         recorded_utc=str(container.get("recorded_utc") or ""),
         build=str(demo.get("build") or ""),
-        subjects=[p.get("subject", "") for p in (metadata.get("players") or [])],
+        loadouts=_loadouts(metadata),
     )
     if not recognised and map_path:
         replay.notes.append(
@@ -148,6 +162,23 @@ def _from_document(
         msg = f"{source}: no roundStarted events, nothing to play back"
         raise VrfError(msg)
     return replay
+
+
+def _loadouts(metadata: dict) -> list[Loadout]:
+    """
+    The roster as the file states it: a subject and an agent UUID per slot.
+
+    Both stay UUIDs here.  Turning `characterId` into an agent name needs Riot's
+    catalogue, which is external knowledge and therefore vrfview.names' job.
+    """
+    return [
+        Loadout(
+            index=int(p.get("index", i)),
+            subject=str(p.get("subject") or ""),
+            character_id=str(p.get("characterId") or ""),
+        )
+        for i, p in enumerate(metadata.get("players") or [])
+    ]
 
 
 def _actor_ids(kills: list, ultimates: list) -> set[int]:

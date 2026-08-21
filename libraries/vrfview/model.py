@@ -9,15 +9,21 @@ tested and dumped as text.
 What is read from the file and what is not
 ------------------------------------------
 Read directly: event times, event groups, actor net IDs, round numbers, the
-map's internal path, the recording timestamp and the match length.
+map's internal path, the match id, the recording timestamp, the match length,
+and the player loadouts -- a subject UUID and an agent UUID per roster slot.
 
 Not in the file, and therefore either absent or marked inferred: player names,
 Riot IDs, team assignment, attacker/defender sides, round win-loss results,
-agent identity per actor, and every kind of position.  docs/039f3991_summary.md
+agent identity per actor, and every kind of position.
+
+The map name and the agent names are external knowledge: they are UUIDs and
+asset paths here, and vrfview.names resolves them against Riot's published
+content catalogue, recording which source answered.  docs/039f3991_summary.md
 section 8 is the authoritative list.  `Player.team` and `Round.winner` are
 inferred by vrfview.infer and carry an explicit unknown state rather than a
-guess; `Replay.notes` records how each inference was reached so the UI can show
-its working.
+guess; `Replay.notes` records how each inference was reached and
+`Replay.catalog_notes` how each name was looked up, so the UI can show its
+working and keep the two kinds of claim apart.
 
 The characterDeath argument order
 ---------------------------------
@@ -63,6 +69,30 @@ class Player:
     @property
     def display(self) -> str:
         return f"{self.label} #{self.actor_id}" if self.label else f"#{self.actor_id}"
+
+
+@dataclass(frozen=True)
+class Loadout:
+    """
+    One entry of match_metadata.playerLoadouts, as the file states it.
+
+    `subject` and `character_id` are both read straight from the file; `agent`
+    is the display name that vrfview.names resolves for `character_id` against
+    Riot's content catalogue, and stays empty when no catalogue is available.
+
+    Nothing links a loadout to an actor net ID.  The loadout list is a roster,
+    in the file's own order, and attaching any of it to a Player would be an
+    invention -- see vrfview.names.
+    """
+
+    index: int
+    subject: str = ""
+    character_id: str = ""
+    agent: str = ""
+
+    @property
+    def display(self) -> str:
+        return self.agent or f"unresolved {self.character_id or '?'}"
 
 
 @dataclass(frozen=True)
@@ -135,8 +165,10 @@ class Replay:
     """Everything the viewer needs, from either a .vrf or a dumped JSON."""
 
     source: str = ""
+    match_id: str = ""
     map_path: str = ""
     map_name: str = ""
+    map_name_source: str = ""
     length_ms: int = 0
     recorded_utc: str = ""
     build: str = ""
@@ -146,8 +178,20 @@ class Replay:
     ultimates: list[Ultimate] = field(default_factory=list)
     spike: list[SpikeEvent] = field(default_factory=list)
     side_swap_ms: int | None = None
-    subjects: list[str] = field(default_factory=list)
+    loadouts: list[Loadout] = field(default_factory=list)
+    catalog_source: str = ""
     notes: list[str] = field(default_factory=list)
+    catalog_notes: list[str] = field(default_factory=list)
+
+    @property
+    def subjects(self) -> list[str]:
+        """Player UUIDs from the loadouts, in the file's own order."""
+        return [x.subject for x in self.loadouts]
+
+    @property
+    def roster(self) -> list[str]:
+        """Agent names, where the catalogue resolved them."""
+        return [x.agent for x in self.loadouts if x.agent]
 
     def player(self, actor_id: int) -> Player | None:
         for p in self.players:
