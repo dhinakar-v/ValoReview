@@ -221,6 +221,8 @@ __marimo__/
 Demos/
 # vrf_to_json.py output
 out/
+# fetch_assets.py output
+assets/
 # Oodle runtime drop-in. The DLL is Epic's; it is never redistributed here.
 vendor/*
 !vendor/README.md

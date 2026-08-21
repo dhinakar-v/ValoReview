@@ -30,5 +30,11 @@ build-backend = "hatchling.build"
 only-include = ["libraries"]
 sources = ["libraries"]
 
+[tool.pytest.ini_options]
+# scripts/ is not installed by the wheel -- only libraries/ is -- so the CLIs
+# are unimportable from a test without this. tests/ itself is reached via the
+# rootdir, which pytest adds because tests/ is a package.
+pythonpath = ["scripts"]
+
 [tool.uv]
 package = true
