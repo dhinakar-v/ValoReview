@@ -1,0 +1,34 @@
+[project]
+name = "val-replay-analyzer"
+version = "0.1.0"
+description = "Decode and replay Valorant .vrf replay files."
+readme = "README.md"
+requires-python = ">=3.11"
+# The project itself is stdlib + tkinter; it has no runtime dependencies.
+dependencies = []
+
+# The two library modules carry a CLI as well; scripts/ holds the pure CLIs,
+# which runners/ invokes by path.
+[project.scripts]
+vrf-reader = "vrf_reader:main"
+vrf-to-json = "vrf_to_json:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# libraries/ is the source root, not a package: its contents (two loose modules
+# and two packages) map onto the install root, so `import vrf_reader` and
+# `import vrfnet` keep working from anywhere.
+only-include = ["libraries"]
+sources = ["libraries"]
+
+[tool.uv]
+package = true

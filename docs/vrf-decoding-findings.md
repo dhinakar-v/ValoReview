@@ -3,7 +3,7 @@
 **Date:** 2026-08-21
 **Sample:** `039f3991-5472-4119-bed2-838da0935f60.vrf` — build `++Ares-Core+release-11.11`,
 network version `480767974`
-**Code:** `vrfnet/`, driven by `vrf_net.py`; tests in `tests/`
+**Code:** `libraries/vrfnet/`, driven by `scripts/vrf_net.py`; tests in `tests/`
 
 Companion to `vrf-decoding-research.md`, which is a literature review. This file records what
 was *measured* against the capture. Everything below is reproducible from the decompressed
@@ -31,8 +31,8 @@ Verified end to end by an independent cross-check: **the bit stream yields 10 ag
 Run it:
 
 ```
-python vrf_net.py decode out/039f3991_blocks/block000_replaydata.bin
-python vrf_net.py actors out/039f3991_blocks/block00*_replaydata.bin
+runners\vrf-net.bat decode out/039f3991_blocks/block000_replaydata.bin
+runners\vrf-net.bat actors out/039f3991_blocks/block00*_replaydata.bin
 ```
 
 ---
@@ -94,7 +94,7 @@ found by scanning the last non-zero byte for its highest set bit and excluding i
 ## Version gates, resolved empirically
 
 The `EEngineNetworkVersionHistory` integer thresholds for this build are not public, so they were
-not guessed. `vrf_net.py calibrate` sweeps 192 candidate layouts and scores each by the fraction
+not guessed. `vrf-net.bat calibrate` sweeps 192 candidate layouts and scores each by the fraction
 of packets whose bunch loop lands exactly on `at_end()`. A wrong bit layout does not degrade
 gracefully — it collapses within a bunch or two — so the correct one separates by a wide margin.
 
@@ -123,7 +123,7 @@ Between `ChIndex` and the partial flags this build carries four bits where UE do
 (`bHasPackageMapExports`, `bHasMustBeMappedGUIDs`, `bPartial`). All four are zero across all
 28,483 bunches sampled — there are no partial bunches and no inline package-map exports, because
 the exports ship in the frame prologue instead. **Which of the four is `bPartial` is therefore
-not determined by this capture**, and `vrfnet/datachannel.py` says so at the point of use. It only
+not determined by this capture**, and `libraries/vrfnet/datachannel.py` says so at the point of use. It only
 matters on a replay that actually sets one.
 
 ---
@@ -178,7 +178,7 @@ handle 0. **That loop does not parse this capture.** Measured, on 8,000 non-open
 
 So for this title the property payload is **not** self-delimiting in the documented way, and a
 structural-only property timeline — the plan's M5 deliverable — is not reachable by that route.
-`vrfnet/actors.py` reports the payload rather than guessing at it.
+`libraries/vrfnet/actors.py` reports the payload rather than guessing at it.
 
 Two hypotheses worth testing next, in order:
 
@@ -199,11 +199,11 @@ neither hypothesis should be assumed to match stock UE.
 ## Reproducing
 
 ```
-python -m unittest discover -s tests          # 28 bit-reader vectors
-python vrf_net.py calibrate out/039f3991_blocks/block002_replaydata.bin --limit 4000 --save
-python vrf_net.py decode    out/039f3991_blocks/block00{0,2}_replaydata.bin
-python vrf_net.py actors    out/039f3991_blocks/block00{0,2}_replaydata.bin
-python vrf_net.py exports   out/039f3991_blocks/block000_replaydata.bin --filter PlayerState
+runners\test.bat                                  # 28 bit-reader vectors
+runners\vrf-net.bat calibrate out/039f3991_blocks/block002_replaydata.bin --limit 4000 --save
+runners\vrf-net.bat decode    out/039f3991_blocks/block00{0,2}_replaydata.bin
+runners\vrf-net.bat actors    out/039f3991_blocks/block00{0,2}_replaydata.bin
+runners\vrf-net.bat exports   out/039f3991_blocks/block000_replaydata.bin --filter PlayerState
 ```
 
 `clean packets` in the `decode` report is the health metric for the whole decoder. Bit-level
