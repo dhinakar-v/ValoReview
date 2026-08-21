@@ -4,8 +4,17 @@ version = "0.1.0"
 description = "Decode and replay Valorant .vrf replay files."
 readme = "README.md"
 requires-python = ">=3.11"
-# The project itself is stdlib + tkinter; it has no runtime dependencies.
-dependencies = []
+# The decoding pipeline is stdlib + tkinter and stays that way; the desktop
+# app is not.  customtkinter is the widget set the brief specifies, and Pillow
+# is what draws a circular portrait and scales a minimap tile by a fraction --
+# Tk's own subsample divides by whole numbers only.  python-dotenv is
+# deliberately NOT here: libraries/envfile.py already implements the exact
+# contract vrfconfig needs, so adding it would have meant two readers of one
+# .env in one process.  vrfconfig.py says so at greater length.
+dependencies = [
+    "customtkinter>=6.0.0",
+    "Pillow>=11.0.0",
+]
 
 # The two library modules carry a CLI as well; scripts/ holds the pure CLIs,
 # which runners/ invokes by path.

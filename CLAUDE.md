@@ -61,7 +61,11 @@ There are three joins, and the third has a caveat: map asset path → name, agen
 
 **Oodle is never vendored.** `libraries/oodlefind.py` resolves `oo2core_*_win64.dll` in order: `--oodle-dll` → `VRF_OODLE_DLL` (real env, then nearest `.env` via `libraries/envfile.py`) → `vendor/` → cache → Steam/Epic library scan. The first two are configured deliberately, so a nonexistent path raises rather than falling through to a scan. Valorant itself cannot supply one (statically linked, exports no Oodle symbols).
 
-**No runtime dependencies.** stdlib + tkinter only; dev group is pytest + ruff. `envfile.py` exists instead of python-dotenv for this reason. Keep it that way unless asked.
+**Two runtime dependencies, and a declined third.** The decoding pipeline (`vrf_reader`, `vrf_to_json`, `vrfnet`, `valapi`) is stdlib-only and stays that way; the desktop app adds `customtkinter` (the widget set the brief specifies) and `Pillow` (circular portraits and fractional scaling -- Tk's own `subsample` divides by whole numbers only). Dev group is pytest + ruff. `requirements.txt` mirrors `pyproject.toml` for pip installs. **`python-dotenv` was deliberately not adopted**: `envfile.py` already implements the same contract -- real environment first, nearest `.env` second, no `os.environ` mutation -- so `vrfconfig.py` calls it rather than putting two readers of one `.env` in one process. Add a dependency only when the standard library genuinely lacks the thing.
+
+**Configuration is one key, and it reports where it came from.** `libraries/vrfconfig.py` resolves `DEMO_PATH` (the directory the match list scans) through `envfile`, defaulting to `Demos/`, and returns a `DemoRoot` carrying the provenance sentence alongside the path. A `DEMO_PATH` that does not exist resolves normally and reports `exists = False` -- an empty library is the match list's empty state, not a startup error.
+
+**Positions travel beside a JSON dump, never inside it.** `vrf-to-json ... --positions` decodes tracks once, on the machine that has the Oodle DLL, and writes `<out>.positions.json` (`libraries/vrfview/positionfile.py`); `tracks.attach` reads that sidecar when it is handed a `.json`, so the JSON path stays DLL-free without weakening the test that asserts the two input paths build equal `Replay`s -- `loader.load` still reads only what the container states. A sidecar whose `match_id` disagrees with the replay's is refused with a sentence, because a track drawn for the wrong match looks entirely plausible.
 
 ## Tests
 

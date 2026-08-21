@@ -377,7 +377,8 @@ def _parser() -> argparse.ArgumentParser:
         "--positions",
         action="store_true",
         help="decode player positions and agents from the replication stream; "
-        "needs Oodle and takes minutes on a full match",
+        "needs Oodle and takes minutes on a full match. Given a JSON dump, "
+        "reads the .positions.json sidecar beside it instead",
     )
     parser.add_argument(
         "--blocks",

@@ -52,6 +52,7 @@ from vrf_reader import REPLAYDATA, Oodle, VrfError, VrfFile
 from vrfnet.calibrate import load as load_features
 from vrfnet.payload_transform import UnsupportedBuildError, transform_for
 from vrfnet.session import ReplaySession
+from vrfview import positionfile
 from vrfview.model import POSITION_HZ, Player, Position, Replay, Track
 
 # The archetype path of a player pawn: /Game/Characters/<Codename>/<Codename>_PC
@@ -59,7 +60,10 @@ CHARACTERS_ROOT = ("Game", "Characters")
 PAWN_SUFFIX = "_PC"
 PAWN_DEPTH = 5
 
-NO_SOURCE_JSON = "positions need the .vrf; a JSON dump carries no replication stream"
+NO_SOURCE_JSON = (
+    "positions need the .vrf or a sidecar; a JSON dump alone carries no "
+    "replication stream (write one with vrf-to-json --positions)"
+)
 NOT_REQUESTED = "positions not decoded (not requested)"
 
 
@@ -239,13 +243,17 @@ def attach(
     Decode positions and codenames into `replay`, in place.
 
     Never raises for want of positions.  An unsupported build, a missing Oodle
-    DLL and a JSON dump all end the same way -- `position_source` says which,
-    the model keeps every fact it already had, and the viewer falls back to the
-    schematic it drew before any of this existed.
+    DLL and a JSON dump with no sidecar all end the same way -- `position_source`
+    says which, the model keeps every fact it already had, and the viewer falls
+    back to the schematic it drew before any of this existed.
+
+    A JSON dump is not decoded: it carries no replication stream.  It is read
+    from the sidecar `vrf-to-json --positions` writes beside it, if there is
+    one, which is the whole reason that flag exists -- the DLL is needed once,
+    on the machine that dumped, and never again.
     """
     if Path(path).suffix.lower() != ".vrf":
-        replay.position_source = NO_SOURCE_JSON
-        return replay
+        return _from_sidecar(replay, path)
 
     actor_ids = {p.actor_id for p in replay.players}
     try:
@@ -256,15 +264,68 @@ def attach(
 
     replay.positions = found.positions
     replay.position_source = found.described
+    _name_pawns(replay, found.codenames)
+    return replay
+
+
+def _from_sidecar(replay: Replay, path: str | Path) -> Replay:
+    """Read positions written earlier, or say why there are none."""
+    side = positionfile.sidecar_path(path)
+    if not side.is_file():
+        replay.position_source = NO_SOURCE_JSON
+        return replay
+    try:
+        stored = positionfile.read(side)
+    except positionfile.PositionFileError as exc:
+        replay.position_source = f"no positions: {exc}"
+        return replay
+    # A sidecar is a loose file that can be copied next to the wrong dump, and
+    # a track drawn for another match would look entirely plausible.  Both
+    # sides know the match ID, so refuse rather than draw it.
+    if stored.match_id and replay.match_id and stored.match_id != replay.match_id:
+        replay.position_source = (
+            f"no positions: {side.name} holds match {stored.match_id}, "
+            f"not {replay.match_id}"
+        )
+        return replay
+
+    replay.positions = stored.positions
+    replay.position_source = (
+        f"{stored.description} (read from {side.name}, not decoded)"
+    )
+    _name_pawns(replay, stored.codenames)
+    return replay
+
+
+def _name_pawns(replay: Replay, codenames: dict[int, str]) -> None:
+    """Fill in each player's codename, in place, keeping any it already had."""
     replay.players = [
         Player(
             actor_id=p.actor_id,
             team=p.team,
             label=p.label,
             merged_from=p.merged_from,
-            codename=found.codenames.get(p.actor_id, p.codename),
+            codename=codenames.get(p.actor_id, p.codename),
             agent=p.agent,
         )
         for p in replay.players
     ]
-    return replay
+
+
+def save(
+    path: str | Path,
+    replay: Replay,
+    found: Extraction,
+) -> Path:
+    """Write `found` as the sidecar belonging to a dump at `path`."""
+    return positionfile.write(
+        positionfile.sidecar_path(path),
+        positionfile.Sidecar(
+            positions=found.positions,
+            codenames=found.codenames,
+            description=found.described,
+            match_id=replay.match_id,
+            build=found.build,
+            hz=found.hz,
+        ),
+    )

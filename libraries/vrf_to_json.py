@@ -324,6 +324,26 @@ def main(argv=None) -> int:
         action="store_true",
         help="keep each block's full ordered name table, not just the unique sets",
     )
+    ap.add_argument(
+        "--positions",
+        action="store_true",
+        help="also decode player positions into a <out>.positions.json sidecar "
+        "(slow: needs Oodle, minutes on a full match, supported builds only)",
+    )
+    ap.add_argument(
+        "--positions-hz",
+        type=int,
+        default=None,
+        metavar="HZ",
+        help="sample rate for the positions sidecar (default: the model's 10 Hz)",
+    )
+    ap.add_argument(
+        "--positions-blocks",
+        type=int,
+        default=None,
+        metavar="N",
+        help="stop the position decode after N REPLAYDATA blocks",
+    )
     ap.add_argument("--indent", type=int, default=2)
     args = ap.parse_args(argv)
 
@@ -339,6 +359,53 @@ def main(argv=None) -> int:
         return 1
 
     print(f"wrote {out}  ({out.stat().st_size:,} bytes)", file=sys.stderr)
+    if args.positions:
+        return dump_positions(args.path, out, args)
+    return 0
+
+
+def dump_positions(vrf_path: str, out: Path, args) -> int:
+    """
+    Decode positions for `vrf_path` and write the sidecar belonging to `out`.
+
+    The imports are local, and deliberately so.  This module is the container
+    layer: it reads chunks and knows nothing about the viewer.  Positions come
+    out of the replication stream through `vrfview.tracks`, which sits two
+    layers up and pulls in the whole vrfnet decoder, so importing it at module
+    scope would make every `vrf-to-json` run pay for a decoder it almost never
+    uses -- and would invert the layering the rest of the file keeps.
+
+    Failing here is not fatal to the dump, which is already written, but it is
+    reported as a failure: positions were asked for by name, and a silent exit
+    0 with no sidecar is how a scripted pipeline ends up drawing nothing.
+    """
+    from vrfview import loader, tracks  # noqa: PLC0415  (layering; see above)
+
+    options = tracks.Options(
+        oodle_dll=args.oodle_dll,
+        blocks=args.positions_blocks,
+        hz=args.positions_hz or tracks.POSITION_HZ,
+        progress=lambda done, total: print(
+            f"  positions: block {done}/{total}",
+            file=sys.stderr,
+        ),
+    )
+    try:
+        replay = loader.load(vrf_path)
+        found = tracks.extract(
+            vrf_path,
+            {p.actor_id for p in replay.players},
+            options,
+        )
+    except (tracks.UnsupportedBuildError, VrfError, OSError) as exc:
+        print(f"error: no positions written: {exc}", file=sys.stderr)
+        return 1
+
+    side = tracks.save(out, replay, found)
+    print(
+        f"wrote {side}  ({side.stat().st_size:,} bytes)\n  {found.described}",
+        file=sys.stderr,
+    )
     return 0
 
 

@@ -23,6 +23,8 @@ Every runner forwards its arguments and returns the underlying exit code.
 
     runners\vrf-reader.bat <replay.vrf> --events    inspect the container
     runners\vrf-to-json.bat <replay.vrf> -o out.json
+    runners\vrf-to-json.bat <replay.vrf> -o out.json --positions
+                                                    and a positions sidecar
     runners\vrf-net.bat actors <block.bin>          decode the replication stream
     runners\vrf-view.bat <replay.vrf>               open the 2D viewer
     runners\vrf-view.bat dump <replay.json>         headless text dump
@@ -31,6 +33,20 @@ Every runner forwards its arguments and returns the underlying exit code.
     runners\fetch-assets.bat fetch                  ~85 MB into assets/
 
 Pass `--help` to any of them for the full argument list.
+
+`DEMO_PATH` in `.env` says where the replay library lives; it defaults to
+`Demos/`. `libraries/vrfconfig.py` resolves it and reports which of the three
+sources answered, so an empty list can always say where it looked.
+
+## Positions on a machine with no Oodle
+
+`vrf-view.bat ... --positions` decodes player positions out of the replication
+stream, which needs the DLL and about four minutes on a full match, and works
+only on the builds `vrfnet/payload_transform.py` supports. `vrf-to-json.bat
+... --positions` does that decode once and writes `<out>.positions.json` beside
+the dump; from then on `vrf-view.bat dump out.json --positions` reads the
+sidecar and needs no DLL at all. A sidecar belonging to another match is
+refused rather than drawn.
 
 ## Oodle
 
@@ -151,8 +167,10 @@ granted, and diagnoses the 403 rather than blaming the key.
 
 ## Development
 
-Requires [uv](https://docs.astral.sh/uv/). No runtime dependencies — the project is
-stdlib + tkinter.
+Requires [uv](https://docs.astral.sh/uv/). The decoding pipeline is stdlib + tkinter;
+the desktop app adds `customtkinter` and `Pillow` (see `requirements.txt`).
+`python-dotenv` is deliberately not used — `libraries/envfile.py` already reads `.env`
+with the same precedence and mutates nothing.
 
     uv sync                       # create .venv and install the project + dev tools
     runners\test.bat              # run tests      (uv run pytest)
