@@ -62,7 +62,7 @@ python vrf_net.py exports out/039f3991_blocks/block000_replaydata.bin --filter B
 ## Where to go next — recommendation
 
 **Do M7 before pushing further on the payload interior.** It needs no bitstream work at all: the
-108 already-decoded `characterDeath` events carry `(time, victim_actor_id, killer_actor_id)`, and
+108 already-decoded `characterDeath` events carry `(time, killer_actor_id, victim_actor_id)`, and
 the Riot match-details API returns the same 108 kills keyed by puuid. Aligning the two kill graphs
 is a 10×10 assignment problem in plain Python, and it delivers names, teams, economy, weapons and
 damage — most of the §8 gap list — without solving the blocker. See plan M6/M7.

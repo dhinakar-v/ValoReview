@@ -122,21 +122,33 @@ Side switch (`switchTeams`) fires at **20:35.236**, inside round 12 - consistent
 
 ### Per-actor kills & deaths
 
-Actor net IDs come from `characterDeath.args`: `args[1]` is the victim, `args[2]` the killer. Ten distinct IDs match the ten players, but the file gives no link from an actor ID back to a `subject`.
+Actor net IDs come from `characterDeath.args`: **`args[1]` is the killer, `args[2]` the victim.** Ten distinct IDs match the ten players, but the file gives no link from an actor ID back to a `subject`.
 
-| Actor ID | Kills | Deaths | K/D | Ults used |
-|---:|---:|---:|---:|---:|
-| 646 | 15 | 7 | 2.14 | 1 |
-| 744 | 15 | 7 | 2.14 | 1 |
-| 1462 | 14 | 6 | 2.33 | 1 |
-| 1160 | 13 | 10 | 1.30 | 0 |
-| 1258 | 12 | 14 | 0.86 | 2 |
-| 1058 | 11 | 9 | 1.22 | 1 |
-| 958 | 10 | 15 | 0.67 | 1 |
-| 1362 | 8 | 11 | 0.73 | 0 |
-| 546 | 6 | 14 | 0.43 | 1 |
-| 852 | 4 | 15 | 0.27 | 1 |
-| **Total** | **108** | **108** | | **9** |
+> **Corrected 2026-08-21.** This was previously documented the other way round. Under the
+> old reading every one of the 15 rounds contains a player who dies twice - in round 1,
+> actor 646 dies at 87.3s, dies again at 105.3s, then scores a kill at 114.0s. Under the
+> reading above, **0 of 15** rounds have a repeat victim, 13 of 15 rounds terminate on an
+> exact five-player wipe, and the team that wins 9-2 has all five players at positive K/D
+> while the losing five are all negative. The table below was inverted by the same error
+> and has been recomputed.
+
+Team A / Team B below are **inferred**, not read from the file: the kill graph is bipartite
+(0 same-team kills in 108) and admits exactly one 5v5 split. Actor 852 has one self-kill,
+counted as a death but not as a kill, which is why kills total 107 against 108 deaths.
+
+| Actor ID | Team | Kills | Deaths | K/D | Ults used |
+|---:|:---:|---:|---:|---:|---:|
+| 958 | A | 15 | 10 | 1.50 | 1 |
+| 852 | A | 14 | 4 | 3.50 | 1 |
+| 546 | A | 14 | 6 | 2.33 | 1 |
+| 1258 | A | 14 | 12 | 1.17 | 2 |
+| 1362 | A | 11 | 8 | 1.38 | 0 |
+| 1160 | B | 10 | 13 | 0.77 | 0 |
+| 1058 | B | 9 | 11 | 0.82 | 1 |
+| 646 | B | 7 | 15 | 0.47 | 1 |
+| 744 | B | 7 | 15 | 0.47 | 1 |
+| 1462 | B | 6 | 14 | 0.43 | 1 |
+| **Total** | | **107** | **108** | | **9** |
 
 ## 7. Data Blocks (decompressed payload)
 
