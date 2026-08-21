@@ -28,6 +28,7 @@ import valapi
 import valcatalog
 from vrf_reader import VrfError, _fmt_ms
 from vrfview import art as art_mod
+from vrfview import tracks
 from vrfview.infer import annotate
 from vrfview.loader import load
 from vrfview.model import TEAM_A, TEAM_B
@@ -84,8 +85,36 @@ def build_art(args: argparse.Namespace) -> art_mod.ArtCache:
 
 
 def read_replay(args: argparse.Namespace):
-    """Load, infer, then name -- in that order, for both commands."""
-    return resolve(annotate(load(args.path)), build_catalog(args))
+    """
+    Read, decode, infer, then name -- in that order, for both commands.
+
+    Positions come second because they are read facts and everything after
+    them derives or looks up: infer needs the codenames to cross-check its
+    team split, and names needs them to say who anybody is.  They are also
+    the only step that can take minutes, which is why nothing asks for them
+    unless --positions did.
+    """
+    replay = load(args.path)
+    if args.positions:
+        tracks.attach(replay, args.path, _decode_options(args))
+    else:
+        replay.position_source = tracks.NOT_REQUESTED
+    return resolve(annotate(replay), build_catalog(args))
+
+
+def _decode_options(args: argparse.Namespace) -> tracks.Options:
+    """Decode knobs, with progress on stderr because this is the slow part."""
+
+    def progress(done: int, total: int) -> None:
+        print(f"  decoding block {done}/{total}", end="\r", file=sys.stderr)
+        if done == total:
+            print(file=sys.stderr)
+
+    return tracks.Options(
+        oodle_dll=args.oodle_dll,
+        blocks=args.blocks,
+        progress=progress,
+    )
 
 
 def cmd_dump(args: argparse.Namespace) -> int:
@@ -112,15 +141,7 @@ def cmd_dump(args: argparse.Namespace) -> int:
     a, b = replay.score
     print(f"score           A {a} - {b} B   [inferred; undecided rounds excluded]")
 
-    final = state_at(replay, replay.length_ms)
-    print("\nplayers  [teams inferred from the kill graph]")
-    print(f"  {'label':<6}{'actor':>7}{'K':>5}{'D':>5}   merged from")
-    for team in (TEAM_A, TEAM_B):
-        for p in replay.team(team):
-            k, d = final.kd.get(p.actor_id, (0, 0))
-            merged = ", ".join(str(m) for m in p.merged_from) or "-"
-            print(f"  {p.label:<6}{p.actor_id:>7}{k:>5}{d:>5}   {merged}")
-
+    _print_players(replay)
     _print_roster(replay, build_art(args))
 
     print("\nrounds  [winner inferred]")
@@ -145,10 +166,36 @@ def cmd_dump(args: argparse.Namespace) -> int:
         print(f"  - looked up: {note}")
     for note in replay.notes:
         print(f"  - {note}")
-    print(
-        "  - no positions exist in this file; the 2D scene is schematic, not a map",
-    )
+    print(f"  - positions: {replay.position_source}")
+    if not replay.has_positions:
+        print("  - with no positions the 2D scene is schematic, not a map")
     return 0
+
+
+def _print_players(replay) -> None:
+    """
+    The player table: read identity, inferred team, decoded track length.
+
+    `agent` and `codename` sit here rather than on the roster table below
+    because these come from the actor itself, and the roster still comes from
+    a loadout list that names no actor.
+    """
+    final = state_at(replay, replay.length_ms)
+    print("\nplayers  [teams inferred from the kill graph; agents read from the wire]")
+    print(
+        f"  {'label':<6}{'actor':>7}{'K':>5}{'D':>5}  {'agent':<10}{'codename':<12}"
+        f"{'samples':>9}   merged from",
+    )
+    for team in (TEAM_A, TEAM_B):
+        for p in replay.team(team):
+            k, d = final.kd.get(p.actor_id, (0, 0))
+            merged = ", ".join(str(m) for m in p.merged_from) or "-"
+            track = replay.track(p.actor_id)
+            samples = f"{len(track):,}" if track else "-"
+            print(
+                f"  {p.label:<6}{p.actor_id:>7}{k:>5}{d:>5}  {p.agent or '-':<10}"
+                f"{p.codename or '-':<12}{samples:>9}   {merged}",
+            )
 
 
 def _print_roster(replay, art: art_mod.ArtCache) -> None:
@@ -325,6 +372,24 @@ def _parser() -> argparse.ArgumentParser:
         "--no-art",
         action="store_true",
         help="ignore the art cache; the viewer draws no icons or map image",
+    )
+    parser.add_argument(
+        "--positions",
+        action="store_true",
+        help="decode player positions and agents from the replication stream; "
+        "needs Oodle and takes minutes on a full match",
+    )
+    parser.add_argument(
+        "--blocks",
+        type=int,
+        default=None,
+        metavar="N",
+        help="stop after N REPLAYDATA blocks when decoding positions",
+    )
+    parser.add_argument(
+        "--oodle-dll",
+        metavar="PATH",
+        help="oo2core_*_win64.dll to use when decoding positions",
     )
     return parser
 
