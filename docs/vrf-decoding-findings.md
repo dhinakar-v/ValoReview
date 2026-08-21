@@ -26,7 +26,7 @@ Verified end to end by an independent cross-check: **the bit stream yields 10 ag
 | Playback packets → bunches | **decoded** | 99.96% of packets consume to exactly zero leftover bits |
 | Actor identity | **decoded** | ChIndex → actor GUID → archetype path |
 | Content-block framing | **decoded** | 88% of blocks framed exactly to the bunch boundary |
-| Property payload interior | **not decoded** | see "The premise that did not hold" |
+| Property payload interior | **not decoded on this capture** | obfuscated; 11.11 has no known transform — see "The premise that did not hold" |
 
 Run it:
 
@@ -158,6 +158,24 @@ Also recovered: exactly 10 `BombPlayerState_C` channels, 10 `Equippable_Unarmed`
 ---
 
 ## The premise that did not hold
+
+> **Superseded, 2026-08-22.** The premise held. Everything measured below is correct and the
+> conclusion drawn from it was not: the payload is **obfuscated**, not encoded differently. Riot
+> whitens every content-block payload with a keystream seeded `payload_bits ^ actor_net_guid`, and
+> "leading packed integers decode to implausible values (billions)" is precisely what a *correct*
+> packed-int reader returns when pointed at a keystream. Undo the transform and the documented
+> `[handle][NumBits][payload]` loop parses at 99.75%.
+>
+> `libraries/vrfnet/payload_transform.py` does that for 12.10, 12.11 and 13.00–13.02. **It cannot
+> do it for this capture:** the transforms rotate every patch and are derived per build with
+> Ghidra against the shipped binary, and 11.11 is long gone from the live client. So the row in
+> the table above stays "not decoded" for `039f3991…` — but for a reason about this *build*, not
+> about this title. See `docs/payload-decryption-20260821-2338-handoff.md`.
+>
+> Both hypotheses at the end of this section are dead. The encoding was never the problem, so
+> neither `ReceiveProperties_r` nor a variable preamble was ever going to explain it. The one
+> useful thing they cost was time: every probe ran against scrambled bytes, where no bit layout
+> could have matched. Do not re-run them.
 
 `vrf-decoding-research.md` Part 1 is built on this claim:
 

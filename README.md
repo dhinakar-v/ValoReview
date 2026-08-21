@@ -99,14 +99,40 @@ hours. Everything else works offline and keyless.
 `fetch-assets` caches Riot's map and agent art under `assets/`, and the viewer
 draws two things with it. A **roster band** across the top: the map's menu strip
 and one icon per loadout slot, in the file's own order -- the file links a loadout
-to no actor net ID, so the band is captioned as unattributable and no player node
-carries an agent. And a **map reference window**, behind the `Map` button: Riot's
+to no actor net ID, so the band is captioned as unattributable. (A player can still
+be named, but from its own pawn; see *Positions* below.) And a **map reference
+window**, behind the `Map` button: Riot's
 radar image with Riot's own callouts, placed through the world-to-image transform
 in `assets/manifest.json`.
 
-That window is the only thing in the project drawn at real map coordinates, and it
-plots nothing from the replay -- there are no positions in a `.vrf` to plot. It
-describes the map, not the match.
+That window plots nothing from the replay: it describes the map, not the match, and
+is handed no replay to be tempted by.
+
+## Positions
+
+Player positions are in a `.vrf`, but not in the open. Riot obfuscates every
+property payload in the replication stream; `vrfnet` undoes that and decodes the
+movement RPC underneath, which carries a position, a heading and a velocity per
+player about a hundred times a second.
+
+    runners\vrf-view.bat dump x.vrf --positions          decode and report them
+    runners\vrf-view.bat dump x.vrf --positions --blocks 2   stop after 2 blocks
+
+It is opt-in because it is the one slow thing here: it needs the Oodle DLL and
+takes around four minutes on a full match, against 0.04s for everything else.
+Decoding also names each player -- an agent's pawn states its own archetype, so
+`dump` reports a per-player agent alongside the unattributable loadout roster,
+and the two agree by two joins that share no term.
+
+Only some builds decode. The transform changes every patch, so `12.10`, `12.11`
+and `13.00`--`13.02` work and everything older -- including the reference capture
+-- refuses by name rather than guessing:
+
+    - positions: no positions: no payload transform for build
+      '++Ares-Core+release-11.11'; supported: ...
+
+Nothing else changes when positions are absent, and nothing invents one when they
+are: a player with no track is drawn with no track.
 
     runners\vrf-view.bat x.vrf --no-art       draw no art at all
     runners\vrf-view.bat x.vrf --assets DIR   read the cache from somewhere else
@@ -115,8 +141,8 @@ Art is optional everywhere: with no `assets/`, the viewer loses the band and the
 button and states exactly what it stated before. `dump` and `catalog` both report
 what resolved.
 
-Player names, ranks, per-round economy and the positions attached to kills and
-plants all live in `val-match-v1`, which is **403 on a personal development key** --
+Player names, ranks and per-round economy live in `val-match-v1`, which is
+**403 on a personal development key** --
 every endpoint, including `/matches/{matchId}`, before the match id is even parsed.
 So `dump` reports the match id it read from the container header and does not look
 it up. `libraries/valapi.py` implements the call for the day a production key is

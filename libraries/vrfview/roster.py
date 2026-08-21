@@ -6,14 +6,18 @@ takes no Snapshot and does no work in the 30 fps loop -- the loadout list does
 not change with the playhead, and pretending otherwise would put a redraw in
 the frame budget for nothing.
 
-Why the agents are a row and not labels on the nodes
-----------------------------------------------------
-The file states ten loadouts and ten actor net IDs and links them nowhere.  The
-property payloads that might are undecoded.  So the agents are shown in the
-file's own order, captioned as unattributable, and the scene's player nodes stay
-as vrfview.infer labels them -- A1..A5, B1..B5.  Putting Jett's icon on a node
-would be an invention with a picture on it, which is worse than one without.
-vrfview.names says the same thing at greater length and is the authority.
+Why this row is still the loadouts and not the players
+------------------------------------------------------
+The file states ten loadouts and ten actor net IDs and links them nowhere, and
+nothing decoded since has changed that.  So this row stays what it always was:
+the loadout list in the file's own order, captioned as unattributable.
+
+A player node *can* now carry an agent -- vrfview.tracks reads each pawn's
+codename off its own archetype path, which is a fact about that actor -- but it
+reaches the node through `Player.agent`, never from a slot in this row.  Lining
+the two up here would still be an invention with a picture on it, and this
+widget is handed no Player to be tempted by.  vrfview.names says the same thing
+at greater length and is the authority.
 """
 
 from __future__ import annotations
