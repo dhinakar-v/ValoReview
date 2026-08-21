@@ -202,11 +202,18 @@ Reproduce it:
 uv run python -c "import json,pathlib; m=json.loads(pathlib.Path('assets/manifest.json').read_text()); e=m['maps']['Ascent']; t=e['transform']; [print(c['regionName'], round(c['location']['y']*t['x_multiplier']+t['x_scalar_to_add'],3), round(c['location']['x']*t['y_multiplier']+t['y_scalar_to_add'],3)) for c in e['callouts']]"
 ```
 
-**Nothing in this repo uses these numbers yet.** The 2D viewer is deliberately schematic —
-`libraries/vrfview/layout.py` places nodes by layout, not position, and the property
-payloads that would carry real positions are undecoded (`vrf-decoding-findings.md`, "The
-premise that did not hold"). The transforms are cached because they cost nothing to keep
-and cannot be reconstructed from the images.
+`libraries/vrfview/art.py` is what consumes these numbers — `Transform.apply` is the only
+place the formula is written, and `MapArt.to_pixels` is what the map reference window
+(`vrfview/mapref.py`, the **Map** button) draws with. `TestArt.test_the_transform_swaps_x_and_y`
+pins the swap against the measured `A Site` pixel above, so the plausible wrong answer
+cannot come back silently.
+
+**What they are still not used for is players.** The transform maps *Riot's* callouts, which
+describe the map; the replay itself carries no position at all, because the property payloads
+that would are undecoded (`vrf-decoding-findings.md`, "The premise that did not hold"). So the
+2D scene stays schematic — `libraries/vrfview/layout.py` places nodes by layout, not position
+— and the map reference is a separate window that is handed no `Replay` at all, which is why
+it cannot accidentally plot one.
 
 ---
 
@@ -288,7 +295,9 @@ Other flags: `--out DIR` (default `assets`), `--jobs N` (default 4 concurrent do
 - **No image processing.** The project is stdlib-only, so there is no Pillow and nothing
   here resizes, crops or recolours. Tk 8.6 can display these PNGs via `PhotoImage` but can
   only scale by integer factors — a viewer wanting arbitrary sizes needs a real image
-  library, which would be a new dependency and a separate decision.
+  library, which would be a new dependency and a separate decision. The viewer lives within
+  that: `art.subsample_for` reads each file's real IHDR and picks a whole-number factor, which
+  is why a 1024×1024 icon and Neon's 512×512 one both land on a 64 px tile.
 - **`portrait.png` is 2048x1860.** Twenty MB across the roster, and far larger than any
   on-screen use. Prefer `icon.png`, or `killfeed.png` for a row.
 - **The manifest records what the API said at fetch time**, not what the game contains now.
@@ -301,6 +310,8 @@ Other flags: `--out DIR` (default `assets`), `--jobs N` (default 4 concurrent do
 ## Related
 
 - `scripts/fetch_assets.py` — the fetcher; module docstring covers the design.
+- `libraries/vrfview/art.py` — the consumer: manifest → file paths, and the transform.
+- `libraries/vrfview/roster.py`, `mapref.py` — the two places the art is drawn.
 - `libraries/vrfview/loader.py:45` — `MAP_NAMES`, the codename table this inverts.
 - `docs/valorant-api.md` — the *official* Riot developer API (needs `RIOT_API` in `.env`);
   unrelated to the asset API used here, but the route to per-match player positions.

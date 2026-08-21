@@ -14,10 +14,16 @@ scoring kills after their own death.  That test pins the corrected reading.
 from __future__ import annotations
 
 import ast
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from typing import ClassVar
 
+import pytest
+
+import valcatalog
+from vrfview import art as art_mod
 from vrfview import theme
 from vrfview.clock import PlaybackClock
 from vrfview.infer import annotate, two_colour
@@ -30,12 +36,14 @@ from vrfview.model import (
     WIN_UNDETERMINED,
     WIN_WIPE,
     Kill,
+    Loadout,
     Player,
     Replay,
     Round,
     SpikeEvent,
     Ultimate,
 )
+from vrfview.names import resolve
 from vrfview.state import state_at
 
 REPO = Path(__file__).resolve().parent.parent
@@ -386,6 +394,348 @@ class TestLayoutAndTheme(unittest.TestCase):
         assert theme.ramp_at(table, 5.0) == "#000000"
 
 
+CATALOG = valcatalog.Catalog(
+    maps={"/Game/Maps/Infinity/Infinity": "Abyss"},
+    agents={"41fb69c1-4189-7b37-f117-bcaf1e96f1bf": "Astra"},
+    version="release-13.04",
+    source=valcatalog.SOURCE_CONTENT,
+)
+
+ASTRA = "41FB69C1-4189-7B37-F117-BCAF1E96F1BF"
+UNKNOWN_AGENT = "00000000-0000-0000-0000-000000000000"
+
+
+def with_roster(character_ids, map_path="/Game/Maps/Infinity/Infinity"):
+    """A loaded-but-unresolved replay carrying a roster and a map path."""
+    replay = annotate(scenario([]))
+    replay.map_path = map_path
+    replay.map_name = "Infinity"
+    replay.map_name_source = "built-in codename table"
+    replay.loadouts = [
+        Loadout(index=i, subject=f"subject-{i}", character_id=c)
+        for i, c in enumerate(character_ids)
+    ]
+    return replay
+
+
+class TestNames(unittest.TestCase):
+    """The catalogue join: external knowledge, applied and always attributed."""
+
+    def test_map_name_comes_from_the_catalogue_and_says_so(self):
+        replay = resolve(with_roster([]), CATALOG)
+        assert replay.map_name == "Abyss"
+        assert valcatalog.SOURCE_CONTENT in replay.map_name_source
+        assert any("asset path" in n for n in replay.catalog_notes)
+
+    def test_agent_uuids_resolve_across_a_case_difference(self):
+        replay = resolve(with_roster([ASTRA]), CATALOG)
+        assert replay.roster == ["Astra"]
+        assert any("1/1 agent UUIDs resolved" in n for n in replay.catalog_notes)
+
+    def test_an_unknown_uuid_stays_unresolved_and_is_named(self):
+        replay = resolve(with_roster([ASTRA, UNKNOWN_AGENT]), CATALOG)
+        assert replay.roster == ["Astra"]
+        assert replay.loadouts[1].display.startswith("unresolved")
+        assert any(UNKNOWN_AGENT in n for n in replay.catalog_notes)
+
+    def test_an_unknown_map_path_keeps_the_built_in_name(self):
+        replay = resolve(with_roster([], "/Game/Maps/Newest/Newest"), CATALOG)
+        assert replay.map_name == "Infinity"
+        assert any("is in no catalogue entry" in n for n in replay.catalog_notes)
+
+    def test_no_catalogue_leaves_everything_as_read(self):
+        replay = resolve(with_roster([ASTRA]), None)
+        assert replay.map_name == "Infinity"
+        assert replay.roster == []
+        assert "--no-catalog" in replay.catalog_source
+
+    def test_an_empty_catalogue_says_where_to_get_one(self):
+        replay = resolve(with_roster([ASTRA]), valcatalog.Catalog())
+        assert replay.roster == []
+        assert any("catalog" in n for n in replay.catalog_notes)
+
+    def test_the_roster_is_never_attached_to_a_player(self):
+        """No field links a loadout to an actor net id, so none may claim to."""
+        replay = resolve(with_roster([ASTRA]), CATALOG)
+        assert not any(hasattr(p, "agent") for p in replay.players)
+        assert any(
+            "not attributable to actor net IDs" in n for n in replay.catalog_notes
+        )
+
+    def test_subjects_still_read_through_the_loadouts(self):
+        replay = with_roster([ASTRA, UNKNOWN_AGENT])
+        assert replay.subjects == ["subject-0", "subject-1"]
+
+
+# A manifest in the shape fetch_assets.py writes, cut down to what art.py
+# joins on.  Ascent's four transform scalars are the real ones, because the
+# axis-swap test below checks against pixels measured off the real image.
+MANIFEST = {
+    "version": {"branch": "release-13.04", "version": "13.04.00.5304478"},
+    "maps": {
+        "Ascent": {
+            "uuid": "7eaecc1b-4337-bbf6-6ab9-04b8f06b3319",
+            "codename": "Ascent",
+            "map_url": "/Game/Maps/Ascent/Ascent",
+            "asset_path": "ShooterGame/Content/Maps/Ascent/Ascent_PrimaryAsset",
+            "transform": {
+                "x_multiplier": 7e-05,
+                "y_multiplier": -7e-05,
+                "x_scalar_to_add": 0.813895,
+                "y_scalar_to_add": 0.573242,
+            },
+            "files": {
+                "minimap.png": "maps/Ascent/minimap.png",
+                "listview.png": "maps/Ascent/listview.png",
+            },
+            "callouts": [
+                {
+                    "regionName": "Site",
+                    "superRegionName": "A",
+                    "location": {"x": 6153.585, "y": -6626.2114, "z": 499.999},
+                },
+                {"regionName": "Broken", "superRegionName": "", "location": {}},
+            ],
+        },
+        "Summit": {
+            "uuid": "e0b26e08-4dcb-a55b-ec53-b0862a0f8f2e",
+            "codename": None,
+            "map_url": "/Game/Maps/Rig/Rig",
+            "transform": {},
+            "files": {},
+            "callouts": [],
+        },
+    },
+    "agents": {
+        "KAY/O": {
+            "uuid": "601dbbe7-43ce-be57-2a40-4abd24953621",
+            "role": "Initiator",
+            "files": {"icon.png": "agents/KAY_O/icon.png"},
+        },
+        "Jett": {
+            "uuid": "add6443a-41bd-e414-f6ad-e58d267f4e95",
+            "role": "Duelist",
+            "files": {},
+        },
+    },
+    "roles": {"Initiator": {"file": "roles/Initiator.png"}},
+}
+
+# The five callouts docs/valorant-assets.md measured against the real image.
+ASCENT_A_SITE_PX = (358, 146)
+
+
+class TestArt(unittest.TestCase):
+    """Path resolution and the coordinate transform, on a fake cache."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def _write(self, doc=None, files=()):
+        """A manifest plus whichever PNGs are meant to exist on disk."""
+        (self.root / "manifest.json").write_text(
+            json.dumps(MANIFEST if doc is None else doc),
+            encoding="utf-8",
+        )
+        for name in files:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(_png_bytes(1024, 1024))
+        return art_mod.load(self.root)
+
+    def test_a_map_resolves_by_map_url(self):
+        cache = self._write(files=["maps/Ascent/minimap.png"])
+        entry = cache.map_art("/Game/Maps/Ascent/Ascent")
+        assert entry is not None
+        assert entry.name == "Ascent"
+        assert entry.minimap == self.root / "maps/Ascent/minimap.png"
+
+    def test_the_asset_path_is_deliberately_not_the_join_key(self):
+        """valcatalog measured this; art.py must not quietly widen it."""
+        cache = self._write()
+        path = "ShooterGame/Content/Maps/Ascent/Ascent_PrimaryAsset"
+        assert cache.map_art(path) is None
+
+    def test_a_map_falls_back_to_the_codename_leaf(self):
+        cache = self._write()
+        assert cache.map_art("/Game/Maps/Other/Ascent").name == "Ascent"
+
+    def test_a_null_codename_never_matches_a_leaf(self):
+        """Summit has codename null; an empty codename must not match ''."""
+        cache = self._write()
+        assert cache.map_art("/Game/Maps/Nowhere/") is None
+
+    def test_an_agent_resolves_across_a_case_difference(self):
+        cache = self._write(files=["agents/KAY_O/icon.png"])
+        entry = cache.agent_art("601DBBE7-43CE-BE57-2A40-4ABD24953621")
+        assert entry is not None
+        assert entry.name == "KAY/O"
+
+    def test_the_sanitised_folder_is_read_and_never_built(self):
+        """KAY/O lives in agents/KAY_O/; the path comes out of `files`."""
+        cache = self._write(files=["agents/KAY_O/icon.png"])
+        entry = cache.agent_art("601dbbe7-43ce-be57-2a40-4abd24953621")
+        assert entry.icon == self.root / "agents/KAY_O/icon.png"
+        assert "KAY/O" not in str(entry.icon)
+
+    def test_a_role_badge_comes_from_the_roles_table(self):
+        cache = self._write(files=["agents/KAY_O/icon.png", "roles/Initiator.png"])
+        entry = cache.agent_art("601dbbe7-43ce-be57-2a40-4abd24953621")
+        assert entry.role == "Initiator"
+        assert entry.role_icon == self.root / "roles/Initiator.png"
+
+    def test_a_manifest_entry_whose_file_is_absent_resolves_to_none(self):
+        """A half-fetched cache degrades to text, not to a broken image."""
+        cache = self._write()
+        entry = cache.agent_art("601dbbe7-43ce-be57-2a40-4abd24953621")
+        assert entry is not None
+        assert entry.icon is None
+
+    def test_an_agent_with_no_files_still_resolves_its_name(self):
+        cache = self._write()
+        entry = cache.agent_art("add6443a-41bd-e414-f6ad-e58d267f4e95")
+        assert entry.name == "Jett"
+        assert entry.icon is None
+
+    def test_a_missing_cache_is_empty_and_raises_nothing(self):
+        cache = art_mod.load(self.root / "nowhere")
+        assert cache.empty
+        assert "nowhere" in cache.reason
+        assert cache.map_art("/Game/Maps/Ascent/Ascent") is None
+
+    def test_unreadable_json_is_empty_and_raises_nothing(self):
+        (self.root / "manifest.json").write_text("{not json", encoding="utf-8")
+        cache = art_mod.load(self.root)
+        assert cache.empty
+        assert "readable JSON" in cache.reason
+
+    def test_the_transform_swaps_x_and_y(self):
+        """
+        The measured form, not the obvious one.
+
+        docs/valorant-assets.md: the unswapped reading puts 200 of 346 callouts
+        inside the image and this one puts 346 of 346.  Neither crashes, which
+        is exactly why it needs pinning.
+        """
+        cache = self._write()
+        entry = cache.map_art("/Game/Maps/Ascent/Ascent")
+        (callout,) = entry.callouts
+        assert callout.name == "A Site"
+
+        x, y = entry.to_pixels(callout, 1024, 1024)
+        assert (round(x), round(y)) == ASCENT_A_SITE_PX
+
+        t = entry.transform
+        unswapped_u = callout.world_x * t.x_multiplier + t.x_scalar_to_add
+        assert round(unswapped_u * 1024) != ASCENT_A_SITE_PX[0]
+
+    def test_a_callout_with_no_location_is_dropped(self):
+        cache = self._write()
+        entry = cache.map_art("/Game/Maps/Ascent/Ascent")
+        assert [c.name for c in entry.callouts] == ["A Site"]
+
+    def test_a_map_with_no_transform_is_not_plottable(self):
+        """Riot ships the deathmatch arenas with null scalars."""
+        cache = self._write()
+        assert not cache.map_art("/Game/Maps/Rig/Rig").plottable
+
+    def test_png_size_reads_the_ihdr(self):
+        path = self.root / "probe.png"
+        path.write_bytes(_png_bytes(456, 100))
+        assert art_mod.png_size(path) == (456, 100)
+
+    def test_png_size_rejects_a_file_that_is_not_a_png(self):
+        path = self.root / "not.png"
+        path.write_bytes(b"GIF89a" + b"\0" * 32)
+        with pytest.raises(ValueError, match="is not a PNG"):
+            art_mod.png_size(path)
+
+    def test_subsample_never_upscales_and_never_returns_zero(self):
+        assert art_mod.subsample_for((1024, 1024), 64) == 16
+        assert art_mod.subsample_for((512, 512), 64) == 8
+        assert art_mod.subsample_for((256, 128), 128) == 2
+        assert art_mod.subsample_for((456, 100), 456) == 1
+        # Smaller than the target: Tk rejects 0, and there is no upscaling.
+        assert art_mod.subsample_for((32, 32), 64) == 1
+        assert art_mod.subsample_for((0, 0), 64) == 1
+
+    def test_coverage_reports_an_empty_cache_in_one_line(self):
+        lines = art_mod.coverage(art_mod.ArtCache(), "/Game/Maps/Ascent/Ascent", [])
+        assert len(lines) == 1
+        assert "fetch-assets" in lines[0]
+
+    def test_coverage_counts_the_slots_that_resolved(self):
+        cache = self._write(files=["agents/KAY_O/icon.png"])
+        lines = art_mod.coverage(
+            cache,
+            "/Game/Maps/Ascent/Ascent",
+            [
+                "601dbbe7-43ce-be57-2a40-4abd24953621",
+                "add6443a-41bd-e414-f6ad-e58d267f4e95",
+            ],
+        )
+        assert any("1/2 loadout slots" in line for line in lines)
+
+
+class TestRealArtCache(unittest.TestCase):
+    """
+    The cache on this machine, when there is one.
+
+    assets/ is gitignored and may be present but partial, so this skips at
+    runtime rather than by decorator -- the same idiom the catalogue tests use.
+    """
+
+    def setUp(self):
+        self.cache = art_mod.load()
+        if self.cache.empty:
+            raise unittest.SkipTest("no art cache fetched")
+
+    def test_every_ascent_callout_lands_inside_the_image(self):
+        """346/346 was the measurement; per-map it must be all of them."""
+        entry = self.cache.map_art("/Game/Maps/Ascent/Ascent")
+        if entry is None or not entry.callouts:
+            raise unittest.SkipTest("Ascent not in the cache")
+        for callout in entry.callouts:
+            x, y = entry.to_pixels(callout, 1024, 1024)
+            assert 0 <= x <= 1024, callout.name
+            assert 0 <= y <= 1024, callout.name
+
+    def test_the_documented_ascent_pixels_still_hold(self):
+        entry = self.cache.map_art("/Game/Maps/Ascent/Ascent")
+        if entry is None:
+            raise unittest.SkipTest("Ascent not in the cache")
+        found = {c.name: entry.to_pixels(c, 1024, 1024) for c in entry.callouts}
+        if "A Site" not in found:
+            raise unittest.SkipTest("callout set changed upstream")
+        x, y = found["A Site"]
+        assert (round(x), round(y)) == ASCENT_A_SITE_PX
+
+    def test_a_cached_icon_subsamples_to_the_roster_tile_size(self):
+        entry = self.cache.agent_art("add6443a-41bd-e414-f6ad-e58d267f4e95")
+        if entry is None or entry.icon is None:
+            raise unittest.SkipTest("Jett icon not fetched")
+        size = art_mod.png_size(entry.icon)
+        factor = art_mod.subsample_for(size, 64)
+        assert max(size) // factor <= 64
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    """
+    The first 24 bytes of a PNG: signature, IHDR length and type, w, h.
+
+    art.png_size reads no further, so the rest of a real file would be waste.
+    """
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + (13).to_bytes(4, "big")
+        + b"IHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+    )
+
+
 class TestHeadless(unittest.TestCase):
     """The model must stay usable with no display and no Tk build.
 
@@ -395,7 +745,19 @@ class TestHeadless(unittest.TestCase):
     through a sibling either.
     """
 
-    MODEL_MODULES = ("model", "infer", "loader", "state", "layout", "clock", "theme")
+    MODEL_MODULES = (
+        "model",
+        "infer",
+        "loader",
+        "names",
+        "state",
+        "layout",
+        "clock",
+        "theme",
+        # art resolves file paths and coordinates, never pixels; keeping it on
+        # this list is what lets `dump` report art coverage with no Tk present.
+        "art",
+    )
 
     @staticmethod
     def _imported_modules(module: str) -> set[str]:
@@ -420,9 +782,9 @@ class TestHeadless(unittest.TestCase):
                 continue
             walked.add(module)
             for name in self._imported_modules(module):
-                assert (
-                    name.split(".")[0] != "tkinter"
-                ), f"vrfview.{module} imports {name}"
+                assert name.split(".")[0] != "tkinter", (
+                    f"vrfview.{module} imports {name}"
+                )
                 if name.startswith("vrfview.") and name.count(".") == 1:
                     pending.append(name.split(".", 1)[1])
         assert walked >= set(self.MODEL_MODULES)
@@ -435,6 +797,38 @@ class TestReferenceCapture(unittest.TestCase):
         from vrfview.loader import load
 
         cls.replay = annotate(load(JSON))
+
+    def test_the_match_id_is_read_from_the_header(self):
+        """The container names its own match; the filename merely agrees."""
+        assert self.replay.match_id == "039f3991-5472-4119-bed2-838da0935f60"
+
+    def test_the_roster_is_ten_agent_uuids(self):
+        assert len(self.replay.loadouts) == 10
+        assert all(x.character_id for x in self.replay.loadouts)
+        assert len(self.replay.subjects) == 10
+
+    def test_the_roster_resolves_to_the_verified_multiset(self):
+        """The exact composition val-content-v1 confirmed on 2026-08-21."""
+        expected = [
+            "Astra",
+            "Killjoy",
+            "Waylay",
+            "Sova",
+            "Reyna",
+            "Sova",
+            "Reyna",
+            "Brimstone",
+            "Chamber",
+            "Raze",
+        ]
+        from vrfview.loader import load
+
+        catalog = valcatalog.load()
+        if catalog.empty:
+            raise unittest.SkipTest("no content catalogue cached")
+        # A fresh load: resolve mutates, and the shared replay is read as
+        # unresolved by the .vrf/JSON comparison below.
+        assert resolve(annotate(load(JSON)), catalog).roster == expected
 
     def test_counts_match_the_capture(self):
         assert len(self.replay.rounds) == 15
@@ -493,6 +887,8 @@ class TestReferenceCapture(unittest.TestCase):
         assert from_vrf.rounds == self.replay.rounds
         assert from_vrf.players == self.replay.players
         assert from_vrf.length_ms == self.replay.length_ms
+        assert from_vrf.match_id == self.replay.match_id
+        assert from_vrf.loadouts == self.replay.loadouts
 
     @unittest.skipUnless(DEMO.exists(), "reference .vrf not present")
     def test_vrf_loads_without_oodle(self):

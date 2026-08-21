@@ -70,6 +70,7 @@ class Callbacks:
     seek: Callable[[int], None]
     toggle_layer: ToggleLayer
     show_provenance: Callable[[], None]
+    show_map: Callable[[], None]
 
 
 class TimelineStrip:
@@ -294,7 +295,14 @@ class TimelineStrip:
 class ControlBar:
     """Transport, speed, readout and layer toggles."""
 
-    def __init__(self, master: tk.Misc, replay: Replay, cb: Callbacks) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        replay: Replay,
+        cb: Callbacks,
+        *,
+        map_available: bool = False,
+    ) -> None:
         self.replay = replay
         self.cb = cb
         self.frame = ttk.Frame(master, padding=(10, 6))
@@ -354,6 +362,14 @@ class ControlBar:
             side="right",
             padx=4,
         )
+        # Offered only when the art cache actually holds a radar image for
+        # this map: a button that can only report its own absence is worse
+        # than no button.
+        if map_available:
+            ttk.Button(right, text="Map", command=cb.show_map).pack(
+                side="right",
+                padx=4,
+            )
         for name, label in (
             ("kills", "Kills"),
             ("trails", "Trails"),
