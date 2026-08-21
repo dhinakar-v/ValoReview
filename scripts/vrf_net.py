@@ -124,7 +124,10 @@ def main(argv=None) -> int:
         nargs="+",
         help="decompressed block dumps, or a .vrf file",
     )
-    parser.add_argument("--oodle-dll", help="oo2core_*_win64.dll for .vrf input")
+    parser.add_argument(
+        "--oodle-dll",
+        help="oo2core_*_win64.dll for .vrf input (else vendor/, .env or a game)",
+    )
     parser.add_argument(
         "--limit",
         type=int,

@@ -4,7 +4,7 @@ Reader for Valorant replay files (.vrf).
 A .vrf is an Unreal Engine "local file" replay container with Riot-specific
 additions.  Nothing in it is encrypted, but the REPLAYDATA and CHECKPOINT
 payloads are Oodle-compressed (Mermaid) and need an oo2core runtime to read;
-see Oodle.discover() and check_obfuscation().
+see oodlefind for where that DLL comes from, and check_obfuscation().
 
 Layout
 ------
@@ -34,13 +34,13 @@ import argparse
 import ctypes
 import datetime as _dt
 import json
-import os
-import re
 import struct
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import oodlefind
 
 CONTAINER_MAGIC = 0x43F4EFDD  # Riot .vrf container
 DEMO_MAGIC = 0x2CF5A13D  # UE FNetworkDemoHeader
@@ -239,23 +239,15 @@ _OODLE_HEADER_NIBBLE = 0x0C
 # Oodle decoder-type byte -> codec name
 OODLE_CODECS = {5: "LZNA", 6: "Kraken", 10: "Mermaid", 11: "Selkie", 12: "Hydra"}
 
-# Games that ship a redistributable Oodle runtime; any recent one can decode.
-_OODLE_DLL_HINTS = (
-    r"C:\Program Files\Epic Games",
-    r"C:\Program Files (x86)\Steam\steamapps\common",
-    r"D:\Games",
-    r"E:\Games",
-    r"E:\SteamLibrary\steamapps\common",
-)
-
 
 class Oodle:
     """
     ctypes binding for OodleLZ_Decompress from an oo2core_*_win64.dll.
 
-    Valorant statically links Oodle into its shipping exe, so there is no DLL
-    to borrow from the game itself; point --oodle-dll at any oo2core runtime
-    (Oodle 2.5+ decodes these blocks) or set the VRF_OODLE_DLL env var.
+    Valorant statically links Oodle into its shipping exe and exports no Oodle
+    symbols, so there is no DLL to borrow from the game itself.  One has to
+    come from a vendor/ drop-in, VRF_OODLE_DLL in .env, --oodle-dll, or any
+    installed UE4/UE5 game; oodlefind does the looking.
     """
 
     def __init__(self, dll_path: str | Path):
@@ -306,28 +298,12 @@ class Oodle:
 
     @classmethod
     def discover(cls, explicit: str | Path | None = None) -> Oodle:
-        candidates = []
-        if explicit:
-            candidates.append(Path(explicit))
-        env = os.environ.get("VRF_OODLE_DLL")
-        if env:
-            candidates.append(Path(env))
-        for path in candidates:
-            if path.is_file():
-                return cls(path)
-        for hint in _OODLE_DLL_HINTS:
-            root = Path(hint)
-            if not root.is_dir():
-                continue
-            for found in root.rglob("*.dll"):
-                if _OODLE_RE.match(found.name):
-                    return cls(found)
-        raise VrfError(
-            "no oo2core_*_win64.dll found; pass --oodle-dll PATH or set VRF_OODLE_DLL",
-        )
-
-
-_OODLE_RE = re.compile(r"^oo2core_\d+_win64\.dll$", re.IGNORECASE)
+        """Bind the first runtime oodlefind resolves; see that module's order."""
+        try:
+            return cls(oodlefind.locate(explicit))
+        except oodlefind.OodleNotFoundError as exc:
+            # One error type reaches the CLIs, which all catch VrfError.
+            raise VrfError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------
@@ -775,7 +751,11 @@ def main(argv=None) -> int:
         metavar="N",
         help="decompress and decode block N",
     )
-    ap.add_argument("--oodle-dll", metavar="PATH", help="path to oo2core_*_win64.dll")
+    ap.add_argument(
+        "--oodle-dll",
+        metavar="PATH",
+        help="path to oo2core_*_win64.dll (else vendor/, .env or an installed game)",
+    )
     ap.add_argument("--out", metavar="FILE", help="with --decode, write raw block here")
     args = ap.parse_args(argv)
 

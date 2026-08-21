@@ -11,6 +11,7 @@ Decode and replay Valorant `.vrf` replay files.
     docs/           decoding research, findings and session handoffs
     Demos/          .vrf captures (gitignored)
     out/            vrf_to_json output (gitignored)
+    vendor/         Oodle runtime drop-in (gitignored except its README)
 
 `libraries/` is the source root, not a package: `uv sync` installs its contents so
 `import vrf_reader` and `import vrfnet` resolve from anywhere.
@@ -26,6 +27,36 @@ Every runner forwards its arguments and returns the underlying exit code.
     runners\vrf-view.bat dump <replay.json>         headless text dump
 
 Pass `--help` to any of them for the full argument list.
+
+## Oodle
+
+The viewer and the event timeline need no setup: everything they read lives in
+plain chunks. Only `--decode`, `vrf-to-json` without `--no-decompress`, and
+`vrf-net` on a `.vrf` touch the compressed REPLAYDATA and CHECKPOINT payloads,
+and those are Oodle (Mermaid), which needs an `oo2core_*_win64.dll` at runtime.
+
+Valorant cannot supply it. Its shipping exe links Oodle statically and exports
+no Oodle symbols, so there is nothing to load from the game directory. The DLL
+has to come from elsewhere, and `libraries/oodlefind.py` looks in this order:
+
+    --oodle-dll PATH          an argument beats everything
+    VRF_OODLE_DLL             real environment, then the nearest .env
+    vendor/                   drop the DLL in, nothing else to configure
+    cache                     whatever a previous scan resolved
+    Steam and Epic libraries  any installed UE4/UE5 game ships one
+
+The scan globs a few known layouts per game rather than walking whole installs,
+and caches its answer, so it costs a fraction of a second once per machine. The
+first two are configured deliberately, so a path that does not exist is an
+error rather than a silent fall-through to the scan.
+
+To set it explicitly, copy `.env.example` to `.env` and fill in:
+
+    VRF_OODLE_DLL=C:\path\to\oo2core_9_win64.dll
+
+`vendor/README.md` covers where to find a DLL. It is not committed here: Oodle
+is Epic's, licensed for redistribution inside a licensed title rather than as a
+standalone download, so this repository ships none and never will.
 
 ## Development
 

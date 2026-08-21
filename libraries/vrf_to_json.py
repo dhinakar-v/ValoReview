@@ -299,7 +299,11 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Dump a .vrf replay to JSON.")
     ap.add_argument("path")
     ap.add_argument("-o", "--out", required=True, help="output .json path")
-    ap.add_argument("--oodle-dll", metavar="PATH", help="path to oo2core_*_win64.dll")
+    ap.add_argument(
+        "--oodle-dll",
+        metavar="PATH",
+        help="path to oo2core_*_win64.dll (else vendor/, .env or an installed game)",
+    )
     ap.add_argument(
         "--no-decompress",
         action="store_true",
