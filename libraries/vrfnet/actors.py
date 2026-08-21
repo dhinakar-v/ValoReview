@@ -20,16 +20,24 @@ packed NumPayloadBits that covers the remainder of the bunch exactly.  Verified
 on 6,517 of 8,000 sampled bunches (81.4%); a length field that lands exactly on
 the bunch boundary that often is not a coincidence.
 
-What is NOT decoded
--------------------
-The interior of a content-block payload.  docs/vrf-decoding-research.md Part 1
-predicts a flat [packed handle][packed NumBits][payload] loop terminated by
-handle 0, which would make every property skippable without a schema.  That
-loop does not parse here: across both flag groups, zero payloads consume
-cleanly, and the leading packed integers decode to implausible values (billions)
-rather than small handles.  So for this title the property payload is not
-self-delimiting in the documented way, and read_properties below deliberately
-does not pretend otherwise -- it reports the payload rather than guessing at it.
+What this module does not decode
+--------------------------------
+The interior of a content-block payload -- but only because that belongs to
+vrfnet.properties now, not because it is out of reach.  This module reports a
+ContentBlock and stops.
+
+That is a change of position.  This docstring used to record that the payload
+did not parse at all: that the documented [packed handle][packed NumBits]
+[payload] loop yielded implausible values, billions rather than small handles.
+The reading was right and the conclusion was wrong -- the bytes were
+obfuscated, and billions is exactly what a correct packed-int reader returns on
+a keystream.  vrfnet.payload_transform undoes it; the loop underneath is the
+documented one after all.
+
+The spawn transform on an opening bunch is still not decoded, and that one is a
+genuine gap: it was searched for exhaustively across 2,700 offset and scale
+combinations against known coordinates and is not present at any fixed offset
+in the form UE documents.  read_new_actor therefore stops after the archetype.
 """
 
 from __future__ import annotations
@@ -89,11 +97,13 @@ def read_new_actor(reader: BitReader, cache: GuidCache) -> NewActor:
     """
     UPackageMapClient::SerializeNewActor, as far as identity goes.
 
-    Reads the actor and archetype GUIDs.  The spawn transform that follows
-    (location/rotation/scale/velocity, each behind a presence bit and encoded
-    as a quantised vector) is not decoded, so the cursor is left immediately
-    after the archetype -- enough for identity, not enough to reach the
-    content blocks of an opening bunch.
+    Reads the actor and archetype GUIDs.  Whatever follows them is not
+    decoded: UE would put a spawn transform there, but a sweep of 2,700
+    offset and scale combinations against known coordinates found no location
+    at any fixed offset, so the cursor is left immediately after the archetype
+    -- enough for identity, not enough to reach the content blocks of an
+    opening bunch.  Positions come from the movement RPC instead; see
+    vrfnet.movement.
     """
     actor_guid = reader.read_int_packed()
     archetype_guid = reader.read_int_packed()
@@ -131,6 +141,12 @@ class ChannelTable:
     closed: int = 0
     resolved: int = 0
     unresolved: int = 0
+    # Actor net GUID -> archetype path, for every actor ever opened.  Kept
+    # apart from `channels` because that table is not a history: a channel is
+    # dropped when the actor disconnects and the whole table is cleared at a
+    # checkpoint, but who an actor was does not stop being true, and a
+    # consumer reading identities at the end of a run needs all of them.
+    archetypes: dict[int, str] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.channels)
@@ -145,6 +161,8 @@ class ChannelTable:
         )
         self.channels[bunch.ch_index] = channel
         self.opened += 1
+        if actor.archetype_path:
+            self.archetypes[actor.actor_guid] = actor.archetype_path
         if actor.resolved:
             self.resolved += 1
         else:
@@ -159,7 +177,12 @@ class ChannelTable:
         return self.channels.get(ch_index)
 
     def reset(self) -> None:
-        """A checkpoint drops every channel-to-actor association."""
+        """
+        A checkpoint drops every channel-to-actor association.
+
+        `archetypes` deliberately survives: the channel indices are what a
+        checkpoint invalidates, not the identity of the actors they carried.
+        """
         self.channels.clear()
 
     def by_archetype(self) -> dict[str, list[Channel]]:
