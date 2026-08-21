@@ -26,6 +26,8 @@ Every runner forwards its arguments and returns the underlying exit code.
     runners\vrf-to-json.bat <replay.vrf> -o out.json --positions
                                                     and a positions sidecar
     runners\vrf-net.bat actors <block.bin>          decode the replication stream
+    runners\vrf-app.bat                             browse the replay library
+    runners\vrf-app.bat --list                      the same scan, as text
     runners\vrf-view.bat <replay.vrf>               open the 2D viewer
     runners\vrf-view.bat dump <replay.json>         headless text dump
     runners\vrf-view.bat catalog                    what names and art are cached

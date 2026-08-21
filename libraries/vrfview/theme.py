@@ -26,6 +26,25 @@ FAINT = "#4a5162"
 
 TEAM_COLOURS = {"A": "#4ea3ff", "B": "#ff6b5a", "?": "#8a90a2"}
 
+# The brief's own palette, used by the CustomTkinter pages (vrfhome.cards and
+# the Phase 6 viewer).  The canvas constants above stay as they are: they are
+# the schematic's palette and the two are drawn by different toolkits.
+#
+# The brief names accent-red ATK and accent-blue DEF.  Those *semantics* are
+# not adopted -- which team attacked is not recoverable from the file -- so the
+# two colours are team A and team B here, and every label that shows them says
+# A or B.  The hues are the brief's; the meaning is what the data supports.
+APP_BG = "#0d0d0d"
+CARD_BG = "#161616"
+CARD_HOVER = "#1f1f1f"
+TEXT_PRIMARY = "#ece8e1"
+TEXT_MUTED = "#7b7b7b"
+BORDER = "#2a2a2a"
+TOOLTIP_BG = "#1a1a1a"
+ACCENT_A = "#4d9eff"
+ACCENT_B = "#ff4655"
+ACCENT_OK = "#5ddba0"
+
 ULT = "#ffd166"
 SPIKE_ARMED = "#ff5252"
 SPIKE_SAFE = "#5ddba0"

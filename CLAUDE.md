@@ -15,7 +15,7 @@ runners\lint.bat                           # ruff check .   (config: ruff.toml)
 runners\format.bat                         # ruff format .
 ```
 
-Pipeline CLIs: `runners\vrf-reader.bat`, `vrf-to-json.bat`, `vrf-net.bat`, `vrf-view.bat`, `fetch-assets.bat` — see README for their subcommands.
+Pipeline CLIs: `runners\vrf-reader.bat`, `vrf-to-json.bat`, `vrf-net.bat`, `vrf-view.bat`, `vrf-app.bat`, `fetch-assets.bat` — see README for their subcommands.
 
 ## Import layout
 
@@ -38,6 +38,8 @@ Four layers, bottom up:
 **Names — `libraries/valapi.py`, `valcatalog.py`.** `valapi` is a stdlib client for Riot's official API (`docs/valorant-api.md` is its reference); `valcatalog` reduces a `val-content-v1` response — or the `fetch-assets` manifest, which needs no key — to the only two joins a replay needs: map asset path → name, agent UUID → name. `vrfview/names.py` applies them and nothing else consumes them.
 
 **Viewer — `libraries/vrfview/`.** `loader` converges a `.vrf` and a `vrf_to_json` JSON onto one `Replay` (tests assert the two produce equal models); `tracks` decodes positions and codenames out of the replication stream; `infer` derives everything the file does not state; `names` looks up what is external; `state.state_at(t)` recomputes a snapshot from scratch per frame (no accumulation, so seeking backwards is as correct as playing forward); `layout`/`scene`/`controls`/`clock`/`theme` are the Tk UI. The order is read → decode → infer → name, and it matters: `infer` cross-checks its team split against the codenames, and `names` needs them to name anybody. `model`, `infer`, `state` and `layout` import no tkinter *and no vrfnet* — `tracks` is the only module that bridges the two — and must stay runnable headlessly.
+
+**Match list — `libraries/vrfhome/`.** `scan` describes a whole library of `.vrf` files from plain chunks only — map, date, duration, round count, player count, build — caching by `(path, mtime, size)`, and is headless: 4.3 s cold for 101 captures, 0.03 s warm, no Oodle and no display. `cards` is the CustomTkinter page over it. A file that fails to parse becomes a card carrying its error, never a silent omission. Two card facts are load-bearing: the `WIN`/`LOSS` badge the brief demands **cannot be built** (no local player, teams are A/B by inference) so every card shows `scan.RESULT_NOT_IN_FILE`; and `positions_available` is a membership test against `payload_transform.SUPPORTED_BRANCHES`, the decoder's own table, so the MINIMAP/SCHEMATIC chip cannot drift from what the decode will do. On the reference library that is 21 of 101 captures. `scan` must keep importing no tkinter — `tests/test_vrfhome.py` asserts it.
 
 ## Conventions that matter here
 
