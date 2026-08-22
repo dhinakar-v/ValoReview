@@ -103,16 +103,15 @@ def read_replay(args: argparse.Namespace):
 
 
 def _decode_options(args: argparse.Namespace) -> tracks.Options:
-    """Decode knobs, with progress on stderr because this is the slow part."""
+    """Decode knobs, with progress on stderr because this still is not instant."""
 
     def progress(done: int, total: int) -> None:
-        print(f"  decoding block {done}/{total}", end="\r", file=sys.stderr)
+        print(f"  decoding {done}/{total}", end="\r", file=sys.stderr)
         if done == total:
             print(file=sys.stderr)
 
     return tracks.Options(
-        oodle_dll=args.oodle_dll,
-        blocks=args.blocks,
+        parser_exe=args.parser_exe,
         progress=progress,
     )
 
@@ -389,20 +388,14 @@ def _parser() -> argparse.ArgumentParser:
         "--positions",
         action="store_true",
         help="decode player positions and agents from the replication stream; "
-        "needs Oodle and takes minutes on a full match. Given a JSON dump, "
+        "needs the built decoder and a few seconds. Given a JSON dump, "
         "reads the .positions.json sidecar beside it instead",
     )
     parser.add_argument(
-        "--blocks",
-        type=int,
-        default=None,
-        metavar="N",
-        help="stop after N REPLAYDATA blocks when decoding positions",
-    )
-    parser.add_argument(
-        "--oodle-dll",
+        "--parser-exe",
         metavar="PATH",
-        help="oo2core_*_win64.dll to use when decoding positions",
+        help="vrf-positions decoder to use (else vendor/parser/, .env, or the "
+        "build in csharp/VrfPositions)",
     )
     return parser
 

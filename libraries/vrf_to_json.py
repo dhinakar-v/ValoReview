@@ -328,7 +328,7 @@ def main(argv=None) -> int:
         "--positions",
         action="store_true",
         help="also decode player positions into a <out>.positions.json sidecar "
-        "(slow: needs Oodle, minutes on a full match, supported builds only)",
+        "(needs the built decoder, seconds on a full match, supported builds only)",
     )
     ap.add_argument(
         "--positions-hz",
@@ -338,11 +338,10 @@ def main(argv=None) -> int:
         help="sample rate for the positions sidecar (default: the model's 10 Hz)",
     )
     ap.add_argument(
-        "--positions-blocks",
-        type=int,
-        default=None,
-        metavar="N",
-        help="stop the position decode after N REPLAYDATA blocks",
+        "--parser-exe",
+        metavar="PATH",
+        help="vrf-positions decoder to use for --positions (else vendor/parser/, "
+        ".env, or the build in csharp/VrfPositions)",
     )
     ap.add_argument("--indent", type=int, default=2)
     args = ap.parse_args(argv)
@@ -382,11 +381,10 @@ def dump_positions(vrf_path: str, out: Path, args) -> int:
     from vrfview import loader, tracks  # noqa: PLC0415  (layering; see above)
 
     options = tracks.Options(
-        oodle_dll=args.oodle_dll,
-        blocks=args.positions_blocks,
+        parser_exe=args.parser_exe,
         hz=args.positions_hz or tracks.POSITION_HZ,
         progress=lambda done, total: print(
-            f"  positions: block {done}/{total}",
+            f"  positions: {done}/{total}",
             file=sys.stderr,
         ),
     )
