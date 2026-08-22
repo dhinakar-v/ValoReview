@@ -1,10 +1,15 @@
 # Third-party notices
 
-This project depends on two packages at runtime -- `customtkinter` and
-`Pillow`, both installed from PyPI under their own licences -- and it contains
-code **ported by hand** from another project. A port is not a dependency: the
-code is in this repository, so its licence travels with it, and that licence is
-reproduced here in full as it requires.
+This project depends on packages at runtime -- `customtkinter`, `Pillow`,
+`fastapi`, `uvicorn` on the Python side and a short list in `web/package.json`
+on the browser side, all installed from their registries under their own
+licences -- and it contains code **ported by hand** from another project. A
+port is not a dependency: the code is in this repository, so its licence
+travels with it, and that licence is reproduced here in full as it requires.
+
+The same is true of the typefaces. `web/src/fonts/` holds four `woff2` files
+that are **in this repository**, not fetched at run time, so their licence
+travels with them and is recorded below.
 
 Since the positions decoder moved to `csharp/VrfPositions`, there is also a
 third relationship, and it is neither of those: this repository contains a
@@ -116,6 +121,40 @@ of `Shiqan/FortniteReplayDecompressor`; nothing is taken from either by hand.
 
 ---
 
+## The bundled typefaces
+
+`web/src/fonts/` contains four font files, committed rather than fetched, so
+that the browser interface renders identically with no network -- which is the
+usual state of a tool that reads captures off a local disk. All three families
+are licensed under the **SIL Open Font License, Version 1.1**, whose full text
+is reproduced in `web/src/fonts/OFL.txt` beside the files themselves, as that
+licence requires.
+
+| File | Family | Copyright |
+|---|---|---|
+| `Inter.woff2` | Inter (variable, 100..900) | Copyright (c) 2016 The Inter Project Authors, https://github.com/rsms/inter |
+| `BarlowCondensed-600.woff2`, `BarlowCondensed-700.woff2` | Barlow Condensed | Copyright (c) 2017 The Barlow Project Authors, https://github.com/jpt/barlow |
+| `JetBrainsMono.woff2` | JetBrains Mono (variable, 100..800) | Copyright (c) 2020 The JetBrains Mono Project Authors, https://github.com/JetBrains/JetBrainsMono |
+
+All four are the latin subset as served by Google Fonts. The OFL permits
+bundling and redistribution; it forbids selling the fonts on their own and
+requires that any derivative be renamed. Neither applies here -- the files are
+unmodified and are used only to render this project's own interface.
+
+---
+
+## lucide-react
+
+`web/package.json` lists `lucide-react`, which is installed from npm and is
+**not** vendored into this repository -- so this entry is a note rather than a
+licence reproduction. It is ISC-licensed -- *Copyright (c) 2026 Lucide Icons
+and Contributors*, the project itself being a fork of Feather Icons -- and the
+glyphs it draws are inlined into `web/dist/static/` at build time. `npm
+install` fetches its own copy of the licence into
+`node_modules/lucide-react/LICENSE`.
+
+---
+
 ## Disclaimer
 
 This project is an independent tool and is not affiliated with, endorsed by,
@@ -129,4 +168,9 @@ Map images, agent portraits and callout names come from valorant-api.com, a
 community mirror of Riot's published content catalogue; they are Riot's assets,
 cached locally under `assets/` and never redistributed by this repository,
 which gitignores that directory. The transport glyphs in `assets/icons/` are
-drawn by `scripts/make_icons.py` and belong to this project.
+drawn by `scripts/make_icons.py` and belong to this project; the browser
+interface does not use them, and draws Lucide's instead.
+
+The wordmark in `web/src/views/icons.tsx` and the favicon in
+`web/public/favicon.svg` are this project's own, and are deliberately not a
+Riot mark.
