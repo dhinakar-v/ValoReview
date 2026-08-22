@@ -35,6 +35,7 @@ SIZE = 48
 SUPERSAMPLE = 4
 COLOUR = (236, 232, 225, 255)
 
+
 def _canvas() -> tuple[Image.Image, ImageDraw.ImageDraw]:
     side = SIZE * SUPERSAMPLE
     image = Image.new("RGBA", (side, side), (0, 0, 0, 0))

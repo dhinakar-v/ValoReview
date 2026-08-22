@@ -173,9 +173,9 @@ image. **The x and y inputs are swapped**, which is the one thing that is easy t
 wrong and silently produces a plausible-looking wrong answer:
 
 ```python
-u = world_y * x_multiplier + x_scalar_to_add     # 0..1 across minimap.png
-v = world_x * y_multiplier + y_scalar_to_add     # 0..1 down  minimap.png
-px = (u * 1024, v * 1024)                        # minimap.png is 1024x1024
+u = world_y * x_multiplier + x_scalar_to_add  # 0..1 across minimap.png
+v = world_x * y_multiplier + y_scalar_to_add  # 0..1 down  minimap.png
+px = (u * 1024, v * 1024)  # minimap.png is 1024x1024
 ```
 
 The swap is not a guess. Running all 346 callouts in the manifest through both forms:

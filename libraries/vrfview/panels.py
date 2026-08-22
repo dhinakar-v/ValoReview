@@ -166,7 +166,9 @@ class PlayerRow(ctk.CTkFrame):
         self.name.configure(text=self.player.identity, text_color=name_colour)
         self.stripe.configure(
             fg_color=(
-                self.colour if alive else theme.blend(self.colour, theme.APP_BG, DEAD_FADE)
+                self.colour
+                if alive
+                else theme.blend(self.colour, theme.APP_BG, DEAD_FADE)
             ),
         )
 

@@ -741,7 +741,9 @@ class BackgroundPreparation(unittest.TestCase):
                 ),
                 mock.patch.object(app_mod.tracks, "attach", side_effect=decode),
                 mock.patch.object(
-                    app_mod.names, "resolve", side_effect=lambda r, _c: r,
+                    app_mod.names,
+                    "resolve",
+                    side_effect=lambda r, _c: r,
                 ),
             ):
                 client.post(f"/api/replays/{replay_id}/decode")

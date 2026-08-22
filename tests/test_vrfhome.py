@@ -37,17 +37,21 @@ def card(
     build: str = BUILD_SUPPORTED,
     error: str = "",
 ) -> scan.MatchCard:
-    return scan.MatchCard(
-        path=Path(f"Demos/{name}.vrf"),
-        match_id=name,
-        map_path=f"/Game/Maps/Codename/{map_name}",
-        map_name=map_name,
-        recorded_utc=START + timedelta(days=day),
-        length_ms=125_000,
-        rounds=24,
-        players=10,
-        build=build,
-    ) if not error else scan.MatchCard(path=Path(f"Demos/{name}.vrf"), error=error)
+    return (
+        scan.MatchCard(
+            path=Path(f"Demos/{name}.vrf"),
+            match_id=name,
+            map_path=f"/Game/Maps/Codename/{map_name}",
+            map_name=map_name,
+            recorded_utc=START + timedelta(days=day),
+            length_ms=125_000,
+            rounds=24,
+            players=10,
+            build=build,
+        )
+        if not error
+        else scan.MatchCard(path=Path(f"Demos/{name}.vrf"), error=error)
+    )
 
 
 class CardFacts(unittest.TestCase):

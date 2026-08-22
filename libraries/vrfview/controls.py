@@ -241,6 +241,7 @@ class TimelineStrip:
                 width=1,
                 tags="static",
             )
+
     def _draw_casts(self) -> None:
         """
         A tick per ability cast, on its own row above the kills.
@@ -264,6 +265,7 @@ class TimelineStrip:
                 width=1,
                 tags="static",
             )
+
     def _draw_ultimates(self) -> None:
         """A full-height tick per ultimate, from the event stream."""
         c = self.canvas
@@ -278,6 +280,7 @@ class TimelineStrip:
                 width=1,
                 tags="static",
             )
+
     def _draw_spike(self) -> None:
         """Plant, defuse and explode, as glyphs -- the events carry no actor."""
         c = self.canvas
@@ -291,6 +294,7 @@ class TimelineStrip:
                 font=("Segoe UI", 7),
                 tags="static",
             )
+
     def _draw_swap(self) -> None:
         """The side swap, where the file recorded one."""
         c = self.canvas
@@ -353,7 +357,6 @@ class TimelineStrip:
         self.canvas.itemconfigure(self._ghost, state="normal")
         if self.on_hover_time is not None:
             self.on_hover_time(self.x_to_ms(event.x))
-
 
 
 class TransportBar(ctk.CTkFrame):

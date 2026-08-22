@@ -487,7 +487,9 @@ class MatchListPage(ctk.CTkFrame):
             self._rows[Path(card.path)] = widget
 
         self.page_label.configure(text=f"page {self.page_number} of {total}")
-        self.prev_button.configure(state="normal" if self.page_number > 1 else "disabled")
+        self.prev_button.configure(
+            state="normal" if self.page_number > 1 else "disabled",
+        )
         self.next_button.configure(
             state="normal" if self.page_number < total else "disabled",
         )
@@ -526,13 +528,17 @@ class MatchListPage(ctk.CTkFrame):
         holder.grid(row=0, column=0, sticky="ew", pady=40)
         ctk.CTkLabel(
             holder,
-            text=EMPTY_TITLE if not self.result.cards else "Nothing matches that filter",
+            text=EMPTY_TITLE
+            if not self.result.cards
+            else "Nothing matches that filter",
             font=FONT_CARD,
             text_color=theme.TEXT_PRIMARY,
         ).pack()
         ctk.CTkLabel(
             holder,
-            text=EMPTY_HINT if not self.result.cards else "Clear the map or date filter.",
+            text=EMPTY_HINT
+            if not self.result.cards
+            else "Clear the map or date filter.",
             font=FONT_BODY,
             text_color=theme.TEXT_MUTED,
             wraplength=520,

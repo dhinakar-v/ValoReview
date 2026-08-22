@@ -137,7 +137,9 @@ class AgainstARealCapture(unittest.TestCase):
         vrf = VrfFile(str(DEMO_12_10))
         cls.map_url = vrf.demo.maps[0] if vrf.demo.maps else ""
         session = ReplaySession(
-            features=load(), branch=vrf.demo.build, collect_movement=True,
+            features=load(),
+            branch=vrf.demo.build,
+            collect_movement=True,
         )
         oodle = Oodle.discover(None)
         for i, block in enumerate(vrf.data_blocks(kinds=(REPLAYDATA,))):

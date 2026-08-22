@@ -99,7 +99,9 @@ class MatchCard:
 
     @property
     def positions_note(self) -> str:
-        return POSITIONS_AVAILABLE if self.positions_available else POSITIONS_UNAVAILABLE
+        return (
+            POSITIONS_AVAILABLE if self.positions_available else POSITIONS_UNAVAILABLE
+        )
 
     @property
     def duration(self) -> str:
