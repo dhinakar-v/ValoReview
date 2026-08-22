@@ -42,6 +42,11 @@ HEADER = """/*
  * spike events carry no actor ID -- so using the sides' familiar colours would
  * assert something the data does not support.  Every label that shows these
  * says A or B.
+ *
+ * The surfaces are a ramp -- app-bg, card-bg, card-hover, field-bg -- and the
+ * text is three weights down from text-primary.  Everything that is not a
+ * colour (spacing, radii, type, elevation, motion) lives in tokens.css, which
+ * is hand-written: theme.py is a palette, and Tk geometry is not CSS geometry.
  */
 """
 
@@ -52,13 +57,17 @@ COLOURS = (
     ("APP_BG", "--app-bg"),
     ("CARD_BG", "--card-bg"),
     ("CARD_HOVER", "--card-hover"),
+    ("FIELD_BG", "--field-bg"),
     ("TEXT_PRIMARY", "--text-primary"),
     ("TEXT_MUTED", "--text-muted"),
+    ("TEXT_FAINT", "--text-faint"),
     ("BORDER", "--border"),
+    ("LINE_STRONG", "--line-strong"),
     ("TOOLTIP_BG", "--tooltip-bg"),
     ("ACCENT_A", "--accent-a"),
     ("ACCENT_B", "--accent-b"),
     ("ACCENT_OK", "--accent-ok"),
+    ("ACCENT_WARN", "--accent-warn"),
     ("ACCENT", "--accent"),
     ("BACKGROUND", "--canvas-bg"),
     ("PANEL", "--panel"),

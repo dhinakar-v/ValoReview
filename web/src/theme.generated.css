@@ -7,29 +7,38 @@
  * spike events carry no actor ID -- so using the sides' familiar colours would
  * assert something the data does not support.  Every label that shows these
  * says A or B.
+ *
+ * The surfaces are a ramp -- app-bg, card-bg, card-hover, field-bg -- and the
+ * text is three weights down from text-primary.  Everything that is not a
+ * colour (spacing, radii, type, elevation, motion) lives in tokens.css, which
+ * is hand-written: theme.py is a palette, and Tk geometry is not CSS geometry.
  */
 
 :root {
-  --app-bg: #0d0d0d;
-  --card-bg: #161616;
-  --card-hover: #1f1f1f;
-  --text-primary: #ece8e1;
-  --text-muted: #7b7b7b;
-  --border: #2a2a2a;
-  --tooltip-bg: #1a1a1a;
+  --app-bg: #0a0b0d;
+  --card-bg: #101216;
+  --card-hover: #171a20;
+  --field-bg: #1e222a;
+  --text-primary: #e8eaed;
+  --text-muted: #a2a9b4;
+  --text-faint: #6b7280;
+  --border: #262b34;
+  --line-strong: #333a45;
+  --tooltip-bg: #12151b;
   --accent-a: #4d9eff;
   --accent-b: #ff4655;
-  --accent-ok: #5ddba0;
-  --accent: #8b7bd8;
-  --canvas-bg: #12141a;
-  --panel: #1b1e27;
-  --panel-edge: #2a2f3d;
-  --canvas-text: #d7dae3;
-  --muted: #7d8496;
-  --faint: #4a5162;
+  --accent-ok: #3ecf8e;
+  --accent-warn: #f5a623;
+  --accent: #7c8cff;
+  --canvas-bg: #08090b;
+  --panel: #101216;
+  --panel-edge: #262b34;
+  --canvas-text: #e8eaed;
+  --muted: #a2a9b4;
+  --faint: #4b515c;
   --ult: #ffd166;
   --spike-armed: #ff5252;
-  --spike-safe: #5ddba0;
+  --spike-safe: #3ecf8e;
   --spike-boom: #ff9f45;
   --playhead: #ffffff;
 
