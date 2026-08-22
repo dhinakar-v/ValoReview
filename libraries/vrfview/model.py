@@ -136,7 +136,16 @@ class Position:
     Where one actor was at one instant, in the map's own Unreal units.
 
     `yaw` and `pitch` are degrees in 0..360, straight from the movement
-    record's packed angle dword.  There is no interpolation flag: a Position
+    record's packed angle dword.  **Positive pitch is looking up**, and that
+    is measured rather than assumed: at every kill in the reference library
+    the killer's pitch is compared with the true angle to the victim, whose z
+    is also known, and it agrees to a median 0.91 degrees while the negated
+    reading is four times worse.  Nothing else in the file pins the sign, so
+    tests/test_movement.py is where it lives.  Every player sample in the
+    library is within 90 degrees of the horizon, so a pitch outside that is a
+    bug and not a look.
+
+    There is no interpolation flag: a Position
     handed back by `Track.at` carries the timestamp it was actually measured
     at when it is a held sample, and the requested time when it is an
     interpolation between two, so its own `t_ms` says how fresh it is.
@@ -156,7 +165,25 @@ def _lerp(a: float, b: float, f: float) -> float:
 
 
 def _lerp_angle(a: float, b: float, f: float) -> float:
-    """Shortest arc, so a heading crossing 0/360 does not spin the long way."""
+    """
+    Shortest arc, so a heading crossing 0/360 does not spin the long way.
+
+    Used for **both** yaw and pitch.  Pitch is the same kind of quantity --
+    degrees in 0..360 off the same packed angle dword -- and a player looking
+    a degree above the horizon is at 1.0 while a degree below is at 359.0, so
+    interpolating those linearly lands at 180: pointing backwards, at the
+    exact moment somebody flicks across the horizon.  Measured over the whole
+    reference library: at 2,949 kills the killer's decoded pitch is a median
+    0.91 degrees off the true angle to the victim with this, and the linear
+    form's 99th percentile error was 159 degrees.  See tests/test_movement.py.
+
+    A note for the TypeScript port: Python's `%` takes the sign of the
+    divisor and JavaScript's takes the sign of the dividend, so `(-350 + 180)
+    % 360` is 190 here and -170 there.  A naive port makes every crossing of
+    0/360 interpolate the long way round, which reads as a rendering glitch
+    rather than an arithmetic one.  web/src/model/track.ts routes both
+    remainders through a floored `mod`, and tests/golden/track_at.json pins it.
+    """
     delta = (b - a + 180.0) % 360.0 - 180.0
     return (a + delta * f) % 360.0
 
@@ -219,7 +246,10 @@ class Track:
                 y=_lerp(before.y, after.y, f),
                 z=_lerp(before.z, after.z, f),
                 yaw=_lerp_angle(before.yaw, after.yaw, f),
-                pitch=_lerp(before.pitch, after.pitch, f),
+                # An angle, like the yaw beside it, and interpolated as one.
+                # It was linear here until the pitch was first measured
+                # against the kill geometry; see _lerp_angle.
+                pitch=_lerp_angle(before.pitch, after.pitch, f),
             )
         candidates = [p for p in (before, after) if p is not None]
         nearest = min(candidates, key=lambda p: abs(p.t_ms - t_ms))

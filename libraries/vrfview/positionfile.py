@@ -21,8 +21,9 @@ they have always been -- opt-in, attached by `tracks.attach`, and described in
 
 The format
 ----------
-One JSON object.  Version 2 added the ability actors; version 1 files are
-still read, and simply have none.  Samples are stored columnar -- six equal-length arrays per
+One JSON object.  Version 2 added the ability actors and version 3 the
+coordinate each one spawned at; version 1 and 2 files are still read, and
+simply have less.  Samples are stored columnar -- six equal-length arrays per
 actor rather than a dict per sample -- which is about a third of the bytes and
 costs nothing in clarity, since a sample is six numbers and always the same
 six.  Floats are written at full precision: json round-trips a double exactly,
@@ -39,19 +40,26 @@ from pathlib import Path
 from vrfview.model import POSITION_HZ, Position, Track
 
 FORMAT = "vrf-positions"
-VERSION = 2
+VERSION = 3
 # Every version this module can still read.  A v1 file is a real sidecar
 # written by `vrf-to-json --positions` before abilities were decoded, and it is
-# not wrong -- it simply says nothing about them.  Refusing it would throw away
-# a whole decode over a field it was never asked to carry.
-READABLE = (1, 2)
+# not wrong -- it simply says nothing about them.  A v2 file predates the spawn
+# transform being measured, so its casts have a time and no coordinate, which
+# is exactly the state the whole project was in when it was written.  Refusing
+# either would throw away a whole decode over a field it was never asked to
+# carry.
+READABLE = (1, 2, 3)
 SUFFIX = ".positions.json"
 
 # The order the columns are written in, and the order Position takes them.
 COLUMNS = ("t", "x", "y", "z", "yaw", "pitch")
 
-# An ability spawn is stored as exactly [archetype path, milliseconds].
+# An ability spawn is stored as [archetype path, milliseconds], and since
+# version 3 as [archetype path, milliseconds, x, y, z] where the decoder read
+# a spawn transform for it.  Both lengths are read; the short one is a spawn
+# whose coordinate is genuinely unknown, not a defaulted zero.
 _SPAWN_FIELDS = 2
+_SPAWN_FIELDS_LOCATED = 5
 
 
 class PositionFileError(Exception):
@@ -69,12 +77,15 @@ class Sidecar:
     build: str = ""
     hz: int = POSITION_HZ
     # Ability actors as they were seen: actor net ID -> (archetype path,
-    # spawn time).  Stored raw rather than as grouped casts on purpose --
-    # a spawn is a fact off the wire, a cast is a reading of several of them,
-    # and the reading has already changed once.  Keeping the facts means an
-    # improvement to `abilities.casts` takes effect on the next load instead
-    # of needing every cached decode thrown away.
-    ability_spawns: dict[int, tuple[str, int]] = field(default_factory=dict)
+    # spawn time, spawn coordinate or None).  Stored raw rather than as
+    # grouped casts on purpose -- a spawn is a fact off the wire, a cast is a
+    # reading of several of them, and the reading has already changed twice.
+    # Keeping the facts means an improvement to `abilities.casts` takes effect
+    # on the next load instead of needing every cached decode thrown away,
+    # which is exactly what happened when casts learnt where they landed.
+    ability_spawns: dict[int, tuple[str, int, tuple[float, float, float] | None]] = (
+        field(default_factory=dict)
+    )
     ability_tracks: dict[int, Track] = field(default_factory=dict)
 
     @property
@@ -117,9 +128,14 @@ def to_document(sidecar: Sidecar) -> dict:
             str(actor_id): to_columns(track)
             for actor_id, track in sorted(sidecar.positions.items())
         },
+        # Two fields where the spawn transform is unknown and five where it is
+        # read.  A short entry is a coordinate nobody has, and writing three
+        # zeros for it would put every such actor on the map's origin.
         "ability_spawns": {
-            str(actor_id): [path, t_ms]
-            for actor_id, (path, t_ms) in sorted(sidecar.ability_spawns.items())
+            str(actor_id): [path, t_ms, *(location or ())]
+            for actor_id, (path, t_ms, location) in sorted(
+                sidecar.ability_spawns.items(),
+            )
         },
         "ability_tracks": {
             str(actor_id): to_columns(track)
@@ -188,12 +204,21 @@ def read(path: str | Path) -> Sidecar:
     )
 
 
-def _spawn(src: Path, raw_id, entry) -> tuple[str, int]:
-    """One `[archetype path, spawn ms]` pair back, or refuse the file."""
-    if not isinstance(entry, (list, tuple)) or len(entry) != _SPAWN_FIELDS:
-        msg = f"{src}: ability spawn {raw_id!r} is not [path, t]"
+def _spawn(
+    src: Path,
+    raw_id,
+    entry,
+) -> tuple[str, int, tuple[float, float, float] | None]:
+    """One stored ability spawn back, at either length, or refuse the file."""
+    if not isinstance(entry, (list, tuple)) or len(entry) not in (
+        _SPAWN_FIELDS,
+        _SPAWN_FIELDS_LOCATED,
+    ):
+        msg = f"{src}: ability spawn {raw_id!r} is not [path, t] or [path, t, x, y, z]"
         raise PositionFileError(msg)
-    return (str(entry[0]), int(entry[1]))
+    located = len(entry) == _SPAWN_FIELDS_LOCATED
+    location = (float(entry[2]), float(entry[3]), float(entry[4])) if located else None
+    return (str(entry[0]), int(entry[1]), location)
 
 
 def to_columns(track: Track) -> dict[str, list]:

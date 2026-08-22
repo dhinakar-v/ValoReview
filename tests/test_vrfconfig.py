@@ -170,7 +170,9 @@ class SidecarRoundTrip(unittest.TestCase):
         sidecar = positionfile.Sidecar(
             positions={12: _track(12, 20)},
             ability_tracks={99: _track(99, 4)},
-            ability_spawns={99: ("/Game/Characters/Killjoy/Turret", 4200)},
+            ability_spawns={
+                99: ("/Game/Characters/Killjoy/Turret", 4200, (1.5, -2.5, 3.5)),
+            },
             codenames={12: "Hunter"},
             description="a line about the decode",
             match_id="match-1",

@@ -163,7 +163,15 @@ def forward_uv(transform, x: float, y: float, yaw: float) -> tuple[float, float]
         y + PROBE_UU * math.sin(radians),
     )
     du, dv = u1 - u0, v1 - v0
-    length = math.hypot(du, dv)
+    # `sqrt`, not `hypot`, and that is about the TypeScript port rather than
+    # about accuracy.  Both languages have a `hypot` and both specify it as
+    # approximate -- CPython's is a correctly-rounded algorithm and V8's is a
+    # different one -- so two implementations that each used it would be free
+    # to disagree in the last bit, and a last-bit difference in a heading can
+    # stop a marched ray one cell earlier.  `sqrt` is exactly specified in
+    # IEEE-754 and agrees by construction.  There is no overflow to protect
+    # against here: these are uv fractions, of order 1e-4.
+    length = math.sqrt(du * du + dv * dv)
     if length <= 0:
         return (0.0, 0.0)
     return (du / length, dv / length)
@@ -197,22 +205,41 @@ def cone(
     draw -- no heading, or no radius -- and the caller should draw nothing
     rather than fall back to a circle.
     """
-    du, dv = forward
-    if (du == 0.0 and dv == 0.0) or radius <= 0:
+    if radius <= 0:
         return ()
+    rays = ray_directions(forward, fov_degrees=fov_degrees)
+    if not rays:
+        return ()
+    return (origin, *(_march(sight, origin, ray, radius) for ray in rays))
 
+
+def ray_directions(
+    forward: tuple[float, float],
+    *,
+    fov_degrees: float = FOV_DEGREES,
+) -> tuple[tuple[float, float], ...]:
+    """
+    The unit direction of every ray in a cone, before any of them is marched.
+
+    Split out of `cone` so the two halves can be checked separately, which they
+    have to be: these are the only values in the whole model that come out of a
+    libm `cos`, `sin` and `atan2`, and *both* languages specify those as
+    approximate.  Everything downstream of here is exact arithmetic and is
+    compared exactly; these are compared to within a bound and with their unit
+    length asserted.  See web/src/model/__tests__/parity.test.ts.
+    """
+    du, dv = forward
+    if du == 0.0 and dv == 0.0:
+        return ()
     base = math.atan2(dv, du)
     half = math.radians(fov_degrees) / 2
     step = math.radians(RAY_STEP_DEGREES)
     count = max(2, int(math.radians(fov_degrees) / step) + 1)
-
-    points = [origin]
+    out = []
     for i in range(count):
         angle = base - half + (2 * half) * (i / (count - 1))
-        points.append(
-            _march(sight, origin, (math.cos(angle), math.sin(angle)), radius),
-        )
-    return tuple(points)
+        out.append((math.cos(angle), math.sin(angle)))
+    return tuple(out)
 
 
 def _march(

@@ -38,9 +38,10 @@ loader.MAP_NAMES, sourced the same way, and reported as such.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from vrfview.abilities import GRENADE, ULTIMATE, AbilityCast
+from vrfview.abilities import GRENADE, ULTIMATE
 from vrfview.model import Loadout, Player, Replay
 
 if TYPE_CHECKING:
@@ -118,19 +119,14 @@ def _resolve_casts(replay: Replay, catalog: Catalog | None) -> None:
     if not replay.ability_casts:
         return
 
+    # `replace`, not a fresh `AbilityCast` listing every field.  This is a
+    # lookup filling in one field, and rebuilding the record by hand made it
+    # silently drop any field added since -- which is exactly what happened
+    # when casts learnt where they landed: the coordinates were decoded,
+    # stored and read back correctly, and then dropped here on the way past.
+    # A test pins it now, but the shape is what stops it recurring.
     replay.ability_casts = [
-        AbilityCast(
-            t_ms=c.t_ms,
-            codename=c.codename,
-            slot=c.slot,
-            name=c.name,
-            round_no=c.round_no,
-            actor_id=c.actor_id,
-            spawns=c.spawns,
-            kinds=c.kinds,
-            pawns=c.pawns,
-            agent=_agent_for(c.codename, catalog)[0],
-        )
+        replace(c, agent=_agent_for(c.codename, catalog)[0])
         for c in replay.ability_casts
     ]
 

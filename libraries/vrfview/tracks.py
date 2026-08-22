@@ -36,6 +36,12 @@ two were established against the Python decoder and re-run against this one:
     last bit of x, y, z, yaw and pitch.  `vrfnet` is kept in the tree for
     exactly that reason: it is the independent check on this one.
 
+Two more were added when the pitch and the spawn transform were first read
+rather than carried: at 2,949 kills across the whole library the killer's
+pitch agrees with the true angle to the victim to a median of 0.91 degrees,
+and every one of 210 player pawns spawns within 100 uu of its own first
+movement sample.  Both live in tests/test_movement.py.
+
 Identifying player pawns
 ------------------------
 An actor's archetype path names its agent: `/Game/Characters/Hunter/
@@ -50,13 +56,13 @@ capture, including the reconnect.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from vrf_reader import REPLAYDATA, VrfError, VrfFile
 from vrfnet.payload_transform import UnsupportedBuildError, transform_for
 from vrfview import abilities, csharpdecode, positioncache, positionfile
-from vrfview.model import POSITION_HZ, Player, Replay, Track
+from vrfview.model import POSITION_HZ, Replay, Track
 
 # The archetype path of a player pawn: /Game/Characters/<Codename>/<Codename>_PC
 CHARACTERS_ROOT = ("Game", "Characters")
@@ -157,9 +163,11 @@ class Extraction:
             )
         extra = ""
         if self.spawns:
+            located = sum(1 for s in self.spawns if s.location is not None)
             extra = (
                 f"; {len(self.spawns)} ability actors, "
-                f"{len(self.ability_positions)} of them with a track"
+                f"{len(self.ability_positions)} of them with a track and "
+                f"{located} with a spawn coordinate"
             )
         return (
             f"{self.build}: {self.samples:,} positions for "
@@ -205,7 +213,11 @@ def extract(
     # the number belongs in the provenance line and costs nothing to read here.
     out.blocks = sum(1 for _ in vrf.data_blocks(kinds=(REPLAYDATA,)))
 
-    out.spawns = abilities.spawns_from(decoded.archetypes, decoded.first_seen)
+    out.spawns = abilities.spawns_from(
+        decoded.archetypes,
+        decoded.first_seen,
+        decoded.spawn_locations,
+    )
     _sort(decoded, actor_ids=actor_ids, out=out)
 
     # decoded.archetypes carries every actor that ever opened a channel, not
@@ -310,8 +322,8 @@ def attach(
         return replay
 
     if options.cache:
-        cached = positioncache.cache_path(path)
-        if cached.is_file() and _apply_sidecar(
+        cached = positioncache.entry(path)
+        if cached is not None and _apply_sidecar(
             replay,
             cached,
             cached=True,
@@ -366,7 +378,7 @@ def sidecar_for(replay: Replay, found: Extraction) -> positionfile.Sidecar:
         match_id=replay.match_id,
         build=found.build,
         hz=found.hz,
-        ability_spawns={s.actor_id: (s.path, s.t_ms) for s in found.spawns},
+        ability_spawns={s.actor_id: (s.path, s.t_ms, s.location) for s in found.spawns},
         ability_tracks=found.ability_positions,
     )
 
@@ -452,8 +464,13 @@ def _apply_sidecar(
     _name_casts(
         replay,
         abilities.spawns_from(
-            {a: path for a, (path, _t) in stored.ability_spawns.items()},
-            {a: t / 1000 for a, (_p, t) in stored.ability_spawns.items()},
+            {a: path for a, (path, _t, _xyz) in stored.ability_spawns.items()},
+            {a: t / 1000 for a, (_p, t, _xyz) in stored.ability_spawns.items()},
+            {
+                a: xyz
+                for a, (_p, _t, xyz) in stored.ability_spawns.items()
+                if xyz is not None
+            },
         ),
     )
     return True
@@ -482,16 +499,17 @@ def _round_number(replay: Replay):
 
 
 def _name_pawns(replay: Replay, codenames: dict[int, str]) -> None:
-    """Fill in each player's codename, in place, keeping any it already had."""
+    """
+    Fill in each player's codename, in place, keeping any it already had.
+
+    `replace`, not a fresh `Player` listing every field: this fills in one
+    field, and rebuilding a frozen record by hand silently drops any field
+    added to it since.  `names.resolve` did exactly that to an ability cast's
+    coordinates, which were decoded, stored and read back correctly and then
+    lost on the way past.
+    """
     replay.players = [
-        Player(
-            actor_id=p.actor_id,
-            team=p.team,
-            label=p.label,
-            merged_from=p.merged_from,
-            codename=codenames.get(p.actor_id, p.codename),
-            agent=p.agent,
-        )
+        replace(p, codename=codenames.get(p.actor_id, p.codename))
         for p in replay.players
     ]
 

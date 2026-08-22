@@ -58,15 +58,32 @@ listing every archetype seen; the strings in the tests are that census verbatim.
   post-death pair).  `snapshot_instants` finds them by that signature and
   `casts` drops them -- see there for the cost.
 
-What this cannot say
---------------------
-Where the ability went.  `vrfnet.actors.read_new_actor` stops after the
-archetype GUID, because the spawn transform was searched for across 2,700
-offset and scale combinations and is not there; and of every ability archetype
-in the census, only the `Pawn_` ones ever emit a movement record, because the
-RPC that carries positions is `ReceiveRemoteCharacterUpdates` and a thrown
-projectile is not a character.  A smoke therefore has a time and an identity
-and **no coordinate**, and no consumer may supply one.
+Where a cast is, and where it is not
+------------------------------------
+Only the `Pawn_` ones ever emit a movement record, because the RPC that
+carries positions is `ReceiveRemoteCharacterUpdates` and a thrown projectile
+is not a character.  So there is still **no arc**: a projectile has a start
+and an end and nothing in between, and nothing here may draw a curve.
+
+What there is now is a start.  `vrfnet.actors.read_new_actor` never read the
+spawn transform -- it was searched for across 2,700 offset and scale
+combinations and not found -- but `csharp/VrfPositions` does, off the channel's
+own `ActorSpawned`, and the measurement says those coordinates are real:
+
+  * across the 21 playable captures every one of 210 player pawns has a spawn
+    location within 100 uu of its own first movement sample, a median of 0.0
+    and a maximum of 91.7 -- and a player's first decoded position is ground
+    truth for where they spawned;
+  * every one of 18,946 ability actors has one;
+  * and 98% to 100% of each kind lands inside the radar image's own playable
+    silhouette, where a coordinate drawn at random would land inside about a
+    third of the time.  The exception is `Actor_`, 13 instances across the
+    library, which land tens of thousands of units off the map -- so an
+    unrecognised kind is still not to be trusted, and `AbilityCast.landed`
+    refuses one rather than ranking it last.
+
+A smoke therefore has a time, an identity **and a coordinate**.  What no
+consumer may supply is the path it took to get there.
 """
 
 from __future__ import annotations
@@ -118,6 +135,17 @@ CAST_KINDS = (KIND_ABILITY, KIND_PAWN, KIND_PROJECTILE)
 # (`..._TurretAttack`) rather than the ability itself.
 NAMING_KINDS = (KIND_PAWN, KIND_ABILITY, KIND_PROJECTILE, KIND_GAMEOBJECT)
 
+# Which spawn gets to say *where* the cast ended up, best first -- and note
+# that this is very nearly the reverse of NAMING_KINDS, because the two
+# questions have different best witnesses.  The `Ability_` actor appears at
+# the caster's own feet (a median 1 uu from them, measured), so it names the
+# ability well and says nothing about where the ability went.  The
+# `GameObject_` is the thing left standing in the world -- a smoke, a wall --
+# and it appears where it came to rest, a median 1,296 uu away.  A pawn is
+# first only so that the rule reads completely; a pawn has a track, and a
+# track always outranks a spawn point.
+PLACING_KINDS = (KIND_PAWN, KIND_GAMEOBJECT, KIND_PROJECTILE, KIND_ABILITY)
+
 NO_POSITION = "no position on wire"
 
 # How many *distinct agents* have to spawn an ability on one exact millisecond
@@ -168,6 +196,22 @@ class AbilityRef:
 
 
 @dataclass(frozen=True)
+class Placement:
+    """One actor a cast put in the world, at the coordinate it appeared at."""
+
+    actor_id: int
+    kind: str
+    name: str
+    x: float
+    y: float
+    z: float
+
+    @property
+    def display(self) -> str:
+        return humanise(self.name)
+
+
+@dataclass(frozen=True)
 class AbilitySpawn:
     """One actor an ability created, at the instant its channel opened."""
 
@@ -177,6 +221,10 @@ class AbilitySpawn:
     # The archetype path this was parsed from, kept so a sidecar can store the
     # fact rather than the reading of it.  See positionfile.Sidecar.
     path: str = ""
+    # Where the channel said this actor appeared, if the decoder read a spawn
+    # transform for it.  Optional because a v1 or v2 sidecar predates the
+    # measurement and simply has none -- see positionfile.
+    location: tuple[float, float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -203,11 +251,44 @@ class AbilityCast:
     # Actor ids of the `Pawn_` spawns, which are the only ones with a track.
     pawns: tuple[int, ...] = ()
     agent: str = ""
+    # Every actor this cast put in the world that will never move, at the
+    # coordinate its channel opened at.  Facts, in spawn order; `landed`
+    # below is the reading over them.  Empty for a cast decoded before the
+    # spawn transform was measured -- a v1 or v2 sidecar carries none.
+    placements: tuple[Placement, ...] = ()
 
     @property
     def identity(self) -> str:
         """The best name this cast has: the agent if looked up, else the code."""
         return self.agent or self.codename
+
+    @property
+    def landed(self) -> Placement | None:
+        """
+        Where this cast ended up, or None if nothing here can say.
+
+        One cast opens several channels at several places -- the `Ability_`
+        at the caster's feet, the `Projectile_` in flight, the `GameObject_`
+        where the smoke came to rest -- so "the cast's position" is a choice
+        between them and `PLACING_KINDS` is where that choice is written down.
+        Taking the first spawn instead would mark every smoke at the thrower,
+        which is a plausible wrong answer and therefore the expensive kind.
+
+        A cast with a pawn returns None: the pawn has a track, and a track
+        says where the thing is *now* rather than where it started.
+
+        A kind `PLACING_KINDS` does not name is refused rather than ranked
+        last.  `Actor_` is the reason: 13 of them across the library, landing
+        tens of thousands of units off the map, and an unrecognised kind is
+        exactly the case where there is nothing to fall back on.
+        """
+        if self.pawns:
+            return None
+        ranked = sorted(
+            (p for p in self.placements if p.kind in PLACING_KINDS),
+            key=lambda p: PLACING_KINDS.index(p.kind),
+        )
+        return ranked[0] if ranked else None
 
     @property
     def display_name(self) -> str:
@@ -277,6 +358,7 @@ def _slot_from(parts: list[str], tokens: list[str]) -> str | None:
 def spawns_from(
     archetypes: dict[int, str],
     first_seen: dict[int, float],
+    locations: dict[int, tuple[float, float, float]] | None = None,
 ) -> list[AbilitySpawn]:
     """
     Every ability actor in a decoded session, in the order it appeared.
@@ -286,7 +368,12 @@ def spawns_from(
     surviving a checkpoint reset.  An actor with no recorded time is skipped
     rather than placed at zero: a cast at the wrong instant is worse than one
     that is missing, because the timeline would show it in the wrong round.
+
+    `locations` is optional and stays optional: a sidecar written before the
+    spawn transform was measured has none, and a cast with no coordinate is
+    the state this whole module lived in until then.
     """
+    locations = locations or {}
     out = []
     for actor_id, path in archetypes.items():
         ref = parse(path)
@@ -301,6 +388,7 @@ def spawns_from(
                 actor_id=actor_id,
                 ref=ref,
                 path=path,
+                location=locations.get(actor_id),
             ),
         )
     out.sort(key=lambda s: (s.t_ms, s.actor_id))
@@ -364,10 +452,35 @@ def casts(
                 kinds=tuple(sorted({s.ref.kind for s in group})),
                 pawns=tuple(s.actor_id for s in group if s.ref.moves),
                 agent=codenames.get(codename, ""),
+                placements=_placements(group),
             ),
         )
     out.sort(key=lambda c: (c.t_ms, c.codename, c.slot))
     return out
+
+
+def _placements(group: list[AbilitySpawn]) -> tuple[Placement, ...]:
+    """
+    Every spawn in a cast that has a coordinate and will never have a track.
+
+    A `Pawn_` is excluded because it moves: its own samples say where it is at
+    each instant, and a spawn point beside them would be a second, staler
+    answer to the same question.  Everything else in a cast is created once
+    and stays put, so the point its channel opened at is the only position it
+    will ever have -- and, since the transform was measured, a real one.
+    """
+    return tuple(
+        Placement(
+            actor_id=spawn.actor_id,
+            kind=spawn.ref.kind,
+            name=spawn.ref.name,
+            x=spawn.location[0],
+            y=spawn.location[1],
+            z=spawn.location[2],
+        )
+        for spawn in group
+        if spawn.location is not None and not spawn.ref.moves
+    )
 
 
 def snapshot_instants(spawns: list[AbilitySpawn]) -> set[int]:

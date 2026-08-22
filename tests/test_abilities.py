@@ -349,3 +349,140 @@ class TestTravel(unittest.TestCase):
 
     def test_an_empty_track_is_zero_rather_than_an_error(self):
         assert abilities.travel(Track(actor_id=1)) == 0.0
+
+
+class TestPlacements(unittest.TestCase):
+    """
+    Where a cast ended up, and the one field that is allowed to say so.
+
+    The measurement behind all of this is in `abilities`' own docstring: every
+    one of 18,946 ability actors across the reference library has a spawn
+    coordinate, 98% to 100% of each kind lands inside the radar's playable
+    silhouette, and a player pawn's spawn point sits a median 0.0 uu from its
+    own first movement sample.  So a smoke has a place now.  What it still does
+    not have is a path.
+    """
+
+    SMOKE_AT_THE_CASTER = (
+        "/Game/Characters/Wraith/S0/Ability_Q/Ability_Wraith_Q_Smoke"
+        ".Default__Ability_Wraith_Q_Smoke_C"
+    )
+    SMOKE_WHERE_IT_LANDED = (
+        "/Game/Characters/Wraith/S0/Ability_Q/GameObject_Wraith_Q_Smoke"
+        ".Default__GameObject_Wraith_Q_Smoke_C"
+    )
+    TURRET_PAWN = (
+        "/Game/Characters/Killjoy/S0/Ability_E/Pawn_Killjoy_E_Turret"
+        ".Default__Pawn_Killjoy_E_Turret_C"
+    )
+
+    def smoke(self):
+        return abilities.spawns_from(
+            {1: self.SMOKE_AT_THE_CASTER, 2: self.SMOKE_WHERE_IT_LANDED},
+            {1: 2.0, 2: 2.1},
+            {1: (100.0, 100.0, 50.0), 2: (4000.0, -1000.0, 60.0)},
+        )
+
+    def test_a_smoke_is_marked_where_it_came_to_rest(self):
+        """
+        Not where it was thrown, which is where the first spawn opens.
+
+        The `Ability_` actor appears at the caster's own feet -- a median 1 uu
+        from them, measured -- and preferring it would put every smoke on the
+        thrower.  That looks entirely plausible on a minimap, which is what
+        makes it worth a rule of its own rather than an ordering accident.
+        """
+        cast = abilities.casts(self.smoke())[0]
+        assert {p.actor_id for p in cast.placements} == {1, 2}
+        assert cast.landed is not None
+        assert (cast.landed.actor_id, cast.landed.kind) == (2, "GameObject")
+        assert (cast.landed.x, cast.landed.y) == (4000.0, -1000.0)
+
+    def test_a_pawn_is_placed_by_its_track_and_never_by_its_spawn(self):
+        """A track says where the turret is now; a spawn point says where it began."""
+        spawns = abilities.spawns_from(
+            {3: self.TURRET_PAWN},
+            {3: 5.0},
+            {3: (10.0, 20.0, 30.0)},
+        )
+        cast = abilities.casts(spawns)[0]
+        assert cast.pawns == (3,)
+        assert cast.placements == ()
+        assert cast.landed is None
+
+    def test_a_spawn_with_no_coordinate_is_absent_rather_than_at_the_origin(self):
+        """
+        A v1 or v2 sidecar carries no coordinates at all, and is not wrong.
+
+        Defaulting it to (0, 0, 0) would put every cast in a decode made before
+        the spawn transform was measured on the middle of the map.
+        """
+        spawns = abilities.spawns_from(
+            {1: self.SMOKE_AT_THE_CASTER, 2: self.SMOKE_WHERE_IT_LANDED},
+            {1: 2.0, 2: 2.1},
+            None,
+        )
+        cast = abilities.casts(spawns)[0]
+        assert cast.placements == ()
+        assert cast.landed is None
+
+    def test_an_unrecognised_kind_is_refused_rather_than_ranked_last(self):
+        """
+        `Actor_` is why.  Thirteen across the library, tens of thousands of
+        units off the map, and nothing to fall back on when it is all a cast
+        has -- so `landed` says nothing rather than saying that.
+        """
+        stray = (
+            "/Game/Characters/Wraith/S0/Ability_Q/Actor_Wraith_Q_Thing"
+            ".Default__Actor_Wraith_Q_Thing_C"
+        )
+        spawns = abilities.spawns_from(
+            {1: self.SMOKE_AT_THE_CASTER, 9: stray},
+            {1: 2.0, 9: 2.2},
+            {1: (100.0, 100.0, 50.0), 9: (-90000.0, 90000.0, 0.0)},
+        )
+        cast = abilities.casts(spawns)[0]
+        assert {p.kind for p in cast.placements} == {"Ability", "Actor"}
+        assert cast.landed is not None
+        assert cast.landed.kind == "Ability"
+
+
+class TestNamingKeepsEveryOtherField(unittest.TestCase):
+    """
+    A lookup fills in one field and must not quietly drop the rest.
+
+    `names.resolve` rebuilt each `AbilityCast` by listing its fields, so the
+    coordinates a cast had just learnt were decoded, stored, read back -- and
+    then lost on the way past.  Nothing failed; the casts simply had no
+    placements, which looks exactly like a decode that never found any.
+    """
+
+    def test_resolving_an_agent_changes_the_agent_and_nothing_else(self):
+        from dataclasses import fields
+
+        from vrfview import names
+        from vrfview.model import Player, Replay
+
+        before = abilities.AbilityCast(
+            t_ms=1000,
+            codename="Wraith",
+            slot="Q",
+            name="Smoke",
+            round_no=1,
+            actor_id=7,
+            spawns=2,
+            kinds=("Ability", "GameObject"),
+            pawns=(),
+            placements=(abilities.Placement(2, "GameObject", "Smoke", 1.0, 2.0, 3.0),),
+        )
+        replay = Replay(players=[Player(actor_id=7, codename="Wraith")])
+        replay.ability_casts = [before]
+        names.resolve(replay, None)
+
+        after = replay.ability_casts[0]
+        assert after.agent == "Omen"
+        for entry in fields(before):
+            if entry.name != "agent":
+                assert getattr(after, entry.name) == getattr(before, entry.name), (
+                    f"names.resolve dropped AbilityCast.{entry.name}"
+                )
