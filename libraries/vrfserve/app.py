@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 import vrfconfig
@@ -49,6 +49,11 @@ WEB_HINT = "the web interface is not built; run: cd web && npm install && npm ru
 
 NO_SUCH_REPLAY = "no replay with that id in the current scan"
 NO_SUCH_MAP = "no art for that map"
+
+# Where Vite is told to emit the bundle. Not its default of `assets`: that
+# is where Riot's art is served from, and a bundle there would be shadowed
+# by it -- the page would load and its own JavaScript would 404.
+SPA_ASSETS = "static"
 
 # Below this a response is not worth compressing; a metadata payload is
 # comfortably above it and a page of cards usually is too.
@@ -254,15 +259,32 @@ def _mount_static(app: FastAPI, config: Settings) -> None:
         def no_art(path: str) -> None:  # noqa: ARG001  (the path is the 404)
             raise HTTPException(status_code=404, detail=art_mod.FETCH_HINT)
 
-    if config.web_built:
-        app.mount(
-            "/",
-            StaticFiles(directory=str(config.web_dir), html=True),
-            name="web",
-        )
+    if not config.web_built:
+
+        @app.get("/", response_class=PlainTextResponse)
+        def unbuilt() -> str:
+            """One sentence naming what is missing, never a stand-in page."""
+            return WEB_HINT
+
         return
 
-    @app.get("/", response_class=PlainTextResponse)
-    def unbuilt() -> str:
-        """One sentence naming what is missing, never a stand-in page."""
-        return WEB_HINT
+    index = config.web_dir / "index.html"
+
+    # The page routes on the client, so /replay/<id> is a real address that no
+    # file answers to.  StaticFiles alone would 404 it, which breaks every
+    # bookmark and every reload away from the root.  Files win where they
+    # exist; everything else that is not the API gets the page and lets the
+    # router read the URL.
+    app.mount(
+        f"/{SPA_ASSETS}",
+        StaticFiles(directory=str(config.web_dir / SPA_ASSETS)),
+        name="web-static",
+    )
+
+    @app.get("/{path:path}", response_class=FileResponse)
+    def page(path: str) -> FileResponse:
+        candidate = (config.web_dir / path).resolve()
+        root = config.web_dir.resolve()
+        if path and candidate.is_file() and candidate.is_relative_to(root):
+            return FileResponse(candidate)
+        return FileResponse(index)

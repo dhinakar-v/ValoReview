@@ -4,8 +4,9 @@ Decode and replay Valorant `.vrf` replay files.
 
 ## Layout
 
-    libraries/      importable code -- vrf_reader.py, vrf_to_json.py, vrfnet/, vrfview/
-    scripts/        standalone CLIs -- vrf_net.py, vrf_view.py, fetch_assets.py
+    libraries/      importable code -- vrf_reader.py, vrf_to_json.py, vrfnet/, vrfview/, vrfserve/
+    scripts/        standalone CLIs -- vrf_net.py, vrf_view.py, vrf_serve.py, fetch_assets.py
+    web/            the browser interface (React over vrfserve; web/dist gitignored)
     runners/        .bat launchers; each one works from any directory
     tests/          test suite
     docs/           decoding research, findings, API reference and session handoffs
@@ -28,6 +29,8 @@ Every runner forwards its arguments and returns the underlying exit code.
     runners\vrf-net.bat actors <block.bin>          decode the replication stream
     runners\vrf-app.bat                             browse the replay library
     runners\vrf-app.bat --list                      the same scan, as text
+    runners\vrf-serve.bat                           the same library, in a browser
+    runners\vrf-serve.bat --routes                  list the endpoints, bind nothing
     runners\make-icons.bat                          draw the transport glyphs
     runners\vrf-view.bat <replay.vrf>               open one replay directly
     runners\vrf-view.bat dump <replay.json>         headless text dump
@@ -168,14 +171,35 @@ it up. `libraries/valapi.py` implements the call for the day a production key is
 granted, and diagnoses the 403 rather than blaming the key.
 `docs/valorant-api.md` is the full endpoint and DTO reference.
 
+## The browser interface
+
+`runners\vrf-serve.bat` scans `DEMO_PATH` and serves it on `http://127.0.0.1:8000`,
+binding the loopback interface and nothing else. It serves what the file states,
+what was decoded out of it, what was looked up and what was inferred — each
+labelled as which — and `/docs` carries the generated OpenAPI reference.
+
+The page lives in `web/` and is built with `cd web && npm install && npm run build`;
+the server mounts `web/dist` at `/` when it is there, and says which command builds
+it when it is not. In development run `npm run dev` alongside the server: Vite
+proxies `/api` and `/assets` across, so both modes are same-origin and no CORS is
+granted to anyone. `web/README.md` covers the rest, including why each npm
+dependency is there.
+
+The CustomTkinter app (`runners\vrf-app.bat`) still works and is unchanged. Both
+read the same model through `vrfview.pipeline`.
+
 ## Development
 
-Requires [uv](https://docs.astral.sh/uv/). The decoding pipeline is stdlib + tkinter;
-the desktop app adds `customtkinter` and `Pillow` (see `requirements.txt`).
-`python-dotenv` is deliberately not used — `libraries/envfile.py` already reads `.env`
-with the same precedence and mutates nothing.
+Requires [uv](https://docs.astral.sh/uv/). The decoding pipeline is stdlib and stays
+that way; the interfaces on top of it are not. `customtkinter` is the desktop widget
+set, `Pillow` reads the radar PNG's alpha channel for the sight mask and draws the
+transport glyphs, and `fastapi`/`uvicorn` are the web interface (see
+`requirements.txt`). `python-dotenv` is deliberately not used — `libraries/envfile.py`
+already reads `.env` with the same precedence and mutates nothing.
 
     uv sync                       # create .venv and install the project + dev tools
     runners\test.bat              # run tests      (uv run pytest)
     runners\lint.bat              # lint           (config: ruff.toml)
     runners\format.bat            # format
+    runners\make-theme.bat        # regenerate web/src/theme.generated.css
+    cd web && npm test            # the browser tests

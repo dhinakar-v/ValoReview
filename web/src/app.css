@@ -1,0 +1,352 @@
+/*
+ * Layout and type. Colours come from theme.generated.css, which is written
+ * from libraries/vrfview/theme.py -- do not add a hex value here.
+ *
+ * The typefaces are the brief's: Tungsten (falling back to Impact) for
+ * headings, DIN Next (falling back to Arial) for body, and a monospace stack
+ * for anything that has to line up. Neither of the first two is bundled --
+ * this is a local app and shipping ~200KB of webfont for a heading is a poor
+ * trade -- so the fallbacks are what most machines will actually render, and
+ * the stacks are written so that looks deliberate rather than broken.
+ */
+
+@import "./theme.generated.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--app-bg);
+  color: var(--text-primary);
+  font-family: "DIN Next", "DIN Next LT Pro", Arial, Helvetica, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+.display {
+  font-family: Tungsten, Impact, "Haettenschweiler", "Arial Narrow Bold", sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+code,
+.mono,
+.numeric {
+  font-family: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--card-hover);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button[aria-pressed="true"] {
+  border-color: var(--accent-a);
+  color: var(--accent-a);
+}
+
+/* -- shell ------------------------------------------------------------- */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.page-head {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 20px 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-head h1 {
+  font-size: 26px;
+}
+
+.page-head .spacer {
+  flex: 1;
+}
+
+.page-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 0;
+}
+
+.page-foot {
+  border-top: 1px solid var(--border);
+  padding: 12px 0 20px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.error {
+  color: var(--accent-b);
+}
+
+.ok {
+  color: var(--accent-ok);
+}
+
+/* A sentence in the place a picture would go. Never a stand-in drawing. */
+.sentence {
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 28px 24px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+}
+
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 8px;
+}
+
+/* -- match list -------------------------------------------------------- */
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.card {
+  display: grid;
+  grid-template-columns: 182px 1fr auto;
+  align-items: center;
+  gap: 18px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.card:hover:not(:disabled) {
+  background: var(--card-hover);
+}
+
+.card-thumb {
+  width: 182px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 2px;
+  background: var(--tooltip-bg);
+}
+
+.card-thumb.absent {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.card-map {
+  font-size: 17px;
+}
+
+.card-line {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.chip {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 2px 7px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chip.a {
+  color: var(--accent-a);
+  border-color: var(--accent-a);
+}
+
+.chip.ok {
+  color: var(--accent-ok);
+  border-color: var(--accent-ok);
+}
+
+.chip.bad {
+  color: var(--accent-b);
+  border-color: var(--accent-b);
+}
+
+/* -- viewer ------------------------------------------------------------ */
+
+.viewer-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+  gap: 24px;
+  align-items: start;
+}
+
+.panel {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+
+.panel h2 {
+  font-size: 15px;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+}
+
+table.rows {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.rows th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 8px 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+table.rows td {
+  padding: 5px 8px 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+table.rows tr:last-child td {
+  border-bottom: none;
+}
+
+.team-a {
+  color: var(--team-a);
+}
+
+.team-b {
+  color: var(--team-b);
+}
+
+.team-unknown {
+  color: var(--team-unknown);
+}
+
+/* -- provenance -------------------------------------------------------- */
+
+.provenance section {
+  margin-bottom: 16px;
+}
+
+.provenance h3 {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--accent-a);
+  margin-bottom: 6px;
+  text-transform: none;
+}
+
+.provenance dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 14px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.provenance dt {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.provenance dd {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.provenance .bare {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
