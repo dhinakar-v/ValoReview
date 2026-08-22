@@ -1,0 +1,109 @@
+/*
+ * Everything that is not a colour.
+ *
+ * The colours are generated: `theme.generated.css` is written by
+ * scripts/make_theme.py from libraries/vrfview/theme.py, because the palette
+ * carries an argument and the argument has to live beside the values.  This
+ * file is hand-written, and deliberately so -- theme.py is a palette, and Tk
+ * geometry is not CSS geometry.  There is no second copy of a spacing scale in
+ * Python to drift from.
+ *
+ * The rule the colour file states applies here too: **no hex value in this
+ * file**.  The elevation shadows are built with color-mix against the `black`
+ * keyword rather than a literal, so nothing here is a palette decision.
+ *
+ * The scales are small on purpose.  Eight spacing steps, four radii, nine type
+ * sizes; a scale nobody can hold in their head is a scale that gets bypassed
+ * with a one-off pixel value, which is exactly the state this replaces -- the
+ * old stylesheet had paddings at 2, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20,
+ * 24 and 28.
+ */
+
+:root {
+  /* -- space ----------------------------------------------------------- */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* -- radius ---------------------------------------------------------- */
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* -- type ------------------------------------------------------------ */
+  /* The fallback tails are the old stacks, so a checkout with the woff2
+     files stripped still looks deliberate rather than broken. */
+  --font-display: "Barlow Condensed", Tungsten, Impact, "Arial Narrow Bold",
+    sans-serif;
+  --font-ui: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui,
+    Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "SF Mono", Menlo,
+    monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 26px;
+  --text-3xl: 34px;
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --track-tight: -0.01em;
+  --track-wide: 0.06em;
+  --track-wider: 0.1em;
+
+  /* -- elevation ------------------------------------------------------- */
+  /* Not a hex: `black` is a keyword, and what these express is depth rather
+     than a colour the palette gets to decide. */
+  --shadow-1: 0 1px 2px color-mix(in srgb, black 40%, transparent);
+  --shadow-2: 0 4px 12px color-mix(in srgb, black 45%, transparent);
+  --shadow-3: 0 12px 32px color-mix(in srgb, black 55%, transparent);
+
+  /* -- motion ---------------------------------------------------------- */
+  --dur-fast: 90ms;
+  --dur-base: 160ms;
+  --dur-slow: 280ms;
+  --ease: cubic-bezier(0.2, 0, 0.2, 1);
+
+  /* -- layout ---------------------------------------------------------- */
+  --page-max: 1440px;
+  --bar-h: 52px;
+  --rail-w: 380px;
+
+  /* -- stacking -------------------------------------------------------- */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-overlay: 100;
+  --z-tooltip: 200;
+}
+
+/*
+ * Someone who has asked for less motion has asked for less motion, and a
+ * transition is the one thing here that can be turned off without changing
+ * what anything says.  Zeroing the tokens does it in one place; the sound
+ * module reads the same query and stays silent for the same reason.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+  }
+}

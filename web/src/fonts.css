@@ -1,0 +1,72 @@
+/*
+ * The three bundled typefaces.
+ *
+ * These used to be stacks with no files behind them -- Tungsten falling back to
+ * Impact, DIN Next falling back to Arial -- on the argument that shipping a
+ * webfont for a heading was a poor trade for a local app.  The trade changed
+ * when the fallbacks turned out to be what every machine actually rendered:
+ * the interface was Impact and Arial, not the brief's faces, and an analytics
+ * tool that renders in Impact reads as an accident.
+ *
+ * So they are bundled, and bundled rather than linked: this app runs against a
+ * local server and is expected to work with no network at all, and a Google
+ * Fonts <link> would render the fallbacks offline and then reflow the whole
+ * page when it did have a connection.
+ *
+ * Four files, 124KB, latin subset.  Inter and JetBrains Mono are the variable
+ * builds, so one file each covers every weight; Barlow Condensed is static and
+ * needs one per weight.  Licences are in fonts/OFL.txt and THIRD_PARTY.md.
+ *
+ * The relative url()s matter: Vite fingerprints these into dist/static/, which
+ * is where the bundle goes and deliberately not /assets, which the Python
+ * server owns for Riot's art.
+ */
+
+/* Display: headings and the map name.  Condensed, uppercase, tight -- the role
+   the brief gave Tungsten, which is not a face anybody can ship. */
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/BarlowCondensed-600.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/BarlowCondensed-700.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* UI: everything that is a sentence or a label.  One variable file, 100..900. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/Inter.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Numeric: anything that has to line up in a column -- timestamps, actor ids,
+   build strings, archetype paths, the clock readout. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/JetBrainsMono.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}

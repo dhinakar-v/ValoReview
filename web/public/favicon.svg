@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!--
+    The same mark as views/icons.tsx::Wordmark: a playhead crossing a timeline.
+    Written twice on purpose -- a browser tab icon is fetched as a file before
+    any JavaScript runs, so it cannot come from a component.
+  -->
+  <rect width="24" height="24" rx="5" fill="#0a0b0d"/>
+  <g fill="none" stroke="#7c8cff" stroke-width="1.9" stroke-linecap="round">
+    <path d="M4 7h6M14 7h6M4 17h4M12 17h8M11 12h9"/>
+    <circle cx="7" cy="12" r="2.8"/>
+  </g>
+</svg>
