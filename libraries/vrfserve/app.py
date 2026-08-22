@@ -385,7 +385,15 @@ def _add_replay_routes(
             preparation.resume()
         return _replay_doc(replay, replay_id, config)
 
-    @app.get(f"{API}/replays/{{replay_id}}/positions")
+    # `response_model` documents the body without validating it: the handler
+    # returns pre-serialised bytes and FastAPI hands a `Response` straight back,
+    # which is what keeps a twelve-megabyte document from being re-encoded per
+    # request.  Without it this route had no schema in the OpenAPI document at
+    # all, and `schema.PositionsDoc` was referenced by nothing.
+    @app.get(
+        f"{API}/replays/{{replay_id}}/positions",
+        response_model=schema.PositionsDoc,
+    )
     def read_positions(replay_id: str) -> Response:
         """
         The decoded tracks, in the format the sidecar and the cache already use.

@@ -1,11 +1,19 @@
 /**
  * What the server sends.
  *
- * Hand-written for now and kept deliberately thin, mirroring
- * `libraries/vrfserve/schema.py`.  `npm run types` regenerates the full set
- * from the running server's OpenAPI document into `schema.d.ts`; until a route
- * settles it is cheaper to declare only the fields this page reads than to
- * regenerate on every backend edit.
+ * **Hand-written, and that is the decision rather than a stopgap.**  It mirrors
+ * `libraries/vrfserve/schema.py` and declares only the fields this page reads.
+ *
+ * There was a `npm run types` that would have generated the full set from the
+ * running server's OpenAPI document into `schema.d.ts`, and it is gone: the
+ * file it names had never once been generated, so the script and the two
+ * paragraphs describing it amounted to a claim that this file was derived when
+ * it never has been.  A generated file would also drop every comment below,
+ * and those comments are the reason a reader can tell a `codename` from an
+ * `agent`.  The pydantic models stay the contract --
+ * `tests/test_vrfserve.py::WireBuilders` asserts every dict the server builds
+ * validates against them -- so a field that changes shape fails in Python
+ * first, which is where it should fail.
  *
  * Two shapes here carry an argument rather than just data, and both are
  * commented where they are declared: a player's `codename` and `agent` are

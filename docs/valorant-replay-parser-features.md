@@ -293,17 +293,23 @@ decoded by this parser on a supported build:
   that needs a *local player*, and nothing in the file names one, so
   `scan.RESULT_NOT_IN_FILE` stays correct.
 - **Economy** -- decoder written, one registration line from working.
-- **Ability spawn coordinates.** `CLAUDE.md` states "the spawn transform is not
-  decoded at all, so a smoke has a time and no coordinate". `ActorSpawned`
-  carries `Location`. `csharp/VrfPositions` already emits it as
-  `spawn_locations`; nothing consumes it yet.
+- ~~**Ability spawn coordinates.**~~ **Landed.** `ActorSpawned` carries
+  `Location`, `csharp/VrfPositions` emits it as `spawn_locations`, and it is
+  now consumed: `abilities.Placement`, `AbilityCast.landed`, and the sidecar
+  from version 3. The measurement that settled it is in `CLAUDE.md` and
+  `tests/test_positions.py::SpawnLocationsAreRealCoordinates`.
 
 ### Still out of reach, for both projects
 
 - **Player display names / Riot IDs.** `Subject` is a UUID; the name is not in
   the file, and `val-match-v1` is 403 without a production key.
-- **Spike plant/defuse position, planter, or timer.** Only an opaque
-  `BombState` int and `AresRoundOutcome.{Defuse, Detonate}`.
+- **The spike planter, and the plant timer.** Only an opaque `BombState` int
+  and `AresRoundOutcome.{Defuse, Detonate}`. The plant *position* is no longer
+  on this list: planting spawns a `/Game/GameModes/Bomb/TimedBomb` actor, so
+  the coordinate arrives through `ActorSpawned` like any other placement --
+  274 of 274 plants across the reference library, one to one, all inside the
+  radar silhouette (`tests/test_positions.py::SpikePlantsAreRealCoordinates`).
+  Who planted it stays unattributable: the coordinate says where, not who.
 - **Ability range, radius or damage figures** -- not in the replay and not in
   `val-content-v1`.
 - **Projectile arcs.** Confirmed from the other direction here: only `Pawn_`
@@ -316,8 +322,10 @@ decoded by this parser on a supported build:
 - **CHECKPOINT and EVENT chunks**, which it skips entirely -- the whole event
   timeline and every match-card fact.
 - **`vrfhome`**: a cached, headless scan of a 101-file library in 4.3 s cold.
-- **Names and art**: `valapi`/`valcatalog`/`names` join map and agent names
-  offline; there is no equivalent.
+- **Names and art**: `names` joins map and agent names offline from built-in
+  tables; there is no equivalent. (`valapi` and `valcatalog` were the live
+  catalogue behind this and have since been deleted -- every `resolve` call
+  arrived with `None`, so the plumbing read as live while being dead.)
 - **A viewer at all.**
 - **The honesty conventions**: read-vs-inferred kept apart, every derivation
   noted, `RESULT_NOT_IN_FILE` rather than a guessed badge, and a sentence

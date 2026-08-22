@@ -16,8 +16,9 @@
  *   generated health, armour, credits, the weapon, and ATK/DEF itself
  *
  * The generated half all comes from `model/synthetic.ts` and nowhere else, and
- * the page carries `SIMULATED_NOTE` wherever these numbers appear.  A `.vrf`
- * replicates none of it to a spectator recording -- see `provenance.ABSENT`.
+ * the page carries `SIMULATED_NOTE` wherever these numbers appear.  Nothing
+ * decoded today states any of it; that module's own header says which of them
+ * the format genuinely lacks and which the decoder merely does not ask for.
  *
  * A card is not a button and does not select: hovering one raises the same
  * tooltip a marker does, because the roster and the map are two views of the

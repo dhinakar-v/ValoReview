@@ -2,11 +2,16 @@
  * The numbers a `.vrf` does not carry, generated in one place.
  *
  * Health, armour, credits, the weapon in somebody's hands and which side was
- * attacking are **not in the file and are not decoded anywhere** -- see
- * `libraries/vrfview/provenance.ABSENT`, which is a constant rather than a
- * derivation precisely so "this capture resolved nothing" stays distinguishable
- * from "the format never carries it".  They are generated here because the
- * interface was asked to show them.
+ * attacking are **not decoded anywhere today**.  They are generated here
+ * because the interface was asked to show them.
+ *
+ * That absence is worth stating precisely, because two very different things
+ * look the same on a card: "this capture resolved nothing" and "the format
+ * never carries it".  Only the weapon is now known to be the second kind.  The
+ * rest are the first: they are in the container and the decoder does not ask
+ * for them, because `csharp/VrfPositions/Program.cs` enables one of the
+ * parser's ten export categories.  Whichever of these a real decode lands,
+ * delete its generator here rather than teaching this module a new source.
  *
  * Three rules make that survivable, and none of them is decoration:
  *

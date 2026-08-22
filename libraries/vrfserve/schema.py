@@ -419,3 +419,10 @@ class PositionsDoc(BaseModel):
     tracks: dict[str, ColumnsDoc]
     ability_spawns: dict[str, list]
     ability_tracks: dict[str, ColumnsDoc]
+    # `[t_ms, x, y, z]` per plant.  This was missing while the route sent it,
+    # which nothing noticed for the same reason the route sent it unchecked:
+    # the handler returns pre-serialised bytes, so no response ever passed
+    # through this model.  Declaring it on the route is what makes the OpenAPI
+    # document describe the endpoint at all; `TestPositionsDocIsTheDocument`
+    # is what keeps this list equal to what `to_document` actually writes.
+    spike_plants: list[tuple[int, float, float, float]]

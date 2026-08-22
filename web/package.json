@@ -10,8 +10,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:report": "playwright show-report e2e/report",
-    "lint": "tsc --noEmit",
-    "types": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/api/schema.d.ts"
+    "docshots": "playwright test --config playwright.docshots.config.ts",
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
@@ -33,7 +33,6 @@
     "@types/three": "^0.185.4",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^29.1.1",
-    "openapi-typescript": "^7.5.0",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
     "vitest": "^3.2.7"

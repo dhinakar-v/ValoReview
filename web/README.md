@@ -7,8 +7,9 @@ The browser half of the replay analyzer. React over the FastAPI server in
     npm run dev        vite on 5173, proxying /api and /assets to 127.0.0.1:8000
     npm run build      writes dist/, which the Python server mounts at /
     npm test           vitest
+    npm run test:e2e   playwright, against a real Chromium
+    npm run docshots   rewrite the root README's screenshots in docs/images/ui/
     npm run lint       tsc --noEmit
-    npm run types      regenerate src/api/schema.d.ts from a running server
 
 `runners\vrf-serve.bat` starts the Python side. In development run both: Vite
 proxies `/api` and `/assets` across, so development and production are equally
@@ -307,10 +308,17 @@ assertion was confirmed to fail against the code it fixes.
 
 ## Types
 
-`src/api/types.ts` mirrors `libraries/vrfserve/schema.py` by hand for now.
-`npm run types` generates the full set from the running server's OpenAPI
-document into `src/api/schema.d.ts`; until the routes settle it is cheaper to
-declare the fields the pages actually read.
+`src/api/types.ts` mirrors `libraries/vrfserve/schema.py` **by hand**, and
+declares only the fields the pages actually read.
+
+There used to be a `npm run types` here that generated the full set from the
+running server's OpenAPI document into `src/api/schema.d.ts`. It has been
+removed along with its `openapi-typescript` dependency, because that file had
+never been generated even once -- so a script, this section and the header of
+`types.ts` all described a derived file that did not exist. Hand-written is now
+what the repository says as well as what it does, and the comments in
+`types.ts` -- which a generated file would not carry -- are what make the
+difference between a `codename` and an `agent` legible.
 
 The pydantic models are the contract either way, and
 `tests/test_vrfserve.py::WireBuilders` asserts every dict the server builds
@@ -354,6 +362,9 @@ on this side of the wire; `tests/test_vrfview.py` pins it on the other.
 
 ## Two test tiers, because jsdom cannot see a drawing
 
+(And a third that is not a tier: see *The screenshots the README is made of*,
+below.)
+
 `npm test` is vitest under jsdom: the model ports against Python's fixtures,
 and `MapStage.test.tsx` against every sentence the page says. It runs in three
 seconds and needs no server, no `.vrf` and no `assets/`.
@@ -385,6 +396,28 @@ and so **four of the twenty-one playable captures drew no players at all in 3D**
 — every marker lifted three and a half map-widths out of frame while the ground
 rendered perfectly underneath. It read as a quiet map rather than as a fault,
 which is exactly why a screenshot review would not have caught it.
+
+## The screenshots the README is made of
+
+`e2e/docshots.spec.ts` renders seven views and writes them to
+`docs/images/ui/`, which is **committed** -- unlike `gallery.spec.ts`, whose
+pictures go to the gitignored `e2e/results/` and are working material for
+whoever is looking at the interface that day.
+
+It is generated rather than shot by hand for the same reason the rest of `e2e/`
+computes instead of eyeballing: a hand-taken screenshot is a moment nobody can
+find again, so a README re-shot after a UI change quietly becomes a README about
+a different match. The moment here is `firstCrowdedEvent(model, 8, 0.25)`,
+reached by pressing the real transport a computed number of times.
+
+**It is excluded from `npm run test:e2e`** -- `playwright.config.ts` ignores the
+file and `playwright.docshots.config.ts` is the only thing that runs it. A test
+run must not rewrite committed files as a side effect of testing, or the diff
+turns up in whatever branch happened to run the suite. That second config also
+sets `reducedMotion: "reduce"`, which zeroes every duration token in `app.css`:
+the match list reveals its rows on a transition carrying a per-row
+`--enter-delay`, and the first two attempts at that shot photographed rows
+part-way through appearing.
 
 ## The model, and why there are two of them
 

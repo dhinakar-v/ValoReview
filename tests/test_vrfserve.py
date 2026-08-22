@@ -894,6 +894,32 @@ class Positions(unittest.TestCase):
         replay = _replay()
         assert tracks.sidecar_of(replay).ability_spawns == {}
 
+    def test_the_document_and_its_model_declare_the_same_fields(self):
+        """
+        `PositionsDoc` drifted from the document because nothing compared them.
+
+        The route hands back pre-serialised bytes, so no response has ever been
+        validated against this model, and the model was referenced by no route
+        and no test -- so when `spike_plants` was added to `to_document` at
+        version 4, the model simply did not gain it and nothing said so.  The
+        endpoint also had no `response_model`, which meant the OpenAPI document
+        did not describe this route at all.
+
+        Key-set equality rather than `model_validate`, because validation only
+        catches the half where the model demands more than the document sends.
+        The half that actually happened is the other one.
+        """
+        replay = _replay()
+        replay.positions = {
+            1: Track(
+                actor_id=1,
+                samples=(Position(t_ms=0, actor_id=1, x=1.5, y=-2.5, z=64.0),),
+            ),
+        }
+        document = positionfile.to_document(tracks.sidecar_of(replay))
+        assert set(document) == set(schema.PositionsDoc.model_fields)
+        schema.PositionsDoc.model_validate(document)
+
 
 class BackgroundPreparation(unittest.TestCase):
     """

@@ -25,6 +25,10 @@
  * description meta are static HTML read before any JavaScript runs, so they
  * cannot import this. `public/favicon.svg` duplicates `Wordmark` for the same
  * reason and says so in the same words.
+ *
+ * **And a third, in the repository's `README.md`**, which is read by GitHub
+ * rather than by a browser and so imports nothing at all. It is the one copy
+ * no test can reach, which is the reason it is written down here.
  */
 export const PRODUCT_NAME = "ValoReview";
 

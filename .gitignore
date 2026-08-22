@@ -246,4 +246,10 @@ web/e2e/report/
 # material -- reference captures of the game's own interface and annotated
 # screenshots of this one -- so the folder and the notes beside it are kept
 # out of the tree along with the .md that indexes them.
-images/
+#
+# Anchored with a leading slash, and that is load-bearing: a bare `images/`
+# matches at every depth, so it silently swallowed docs/images/ as well -- the
+# README's own screenshots, which are committed on purpose. A `!docs/images/`
+# negation cannot fix that, because git does not descend into an excluded
+# directory and so never reaches the rule that would un-exclude it.
+/images/

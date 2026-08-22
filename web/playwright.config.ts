@@ -31,6 +31,12 @@ export const API_URL = "http://127.0.0.1:8000";
 
 export default defineConfig({
   testDir: "./e2e",
+  // `docshots.spec.ts` writes the README's committed screenshots into
+  // docs/images/ui/.  A test run must not rewrite committed files as a side
+  // effect of testing -- the diff would turn up in whatever branch happened to
+  // run the suite -- so it is reachable only through
+  // `playwright.docshots.config.ts`, which is what `npm run docshots` uses.
+  testIgnore: "**/docshots.spec.ts",
   // The suite drives one library and one replay; parallel workers would race
   // for the server's two open-replay slots rather than finish any sooner.
   fullyParallel: false,
