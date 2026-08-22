@@ -48,15 +48,6 @@ function Crumbs() {
       </nav>
     );
   }
-  if (pathname.startsWith("/map/")) {
-    return (
-      <nav className="crumbs" aria-label="Breadcrumb">
-        <Link to="/">Replays</Link>
-        <span className="sep">/</span>
-        <span className="here">Map reference</span>
-      </nav>
-    );
-  }
   return (
     <nav className="crumbs" aria-label="Breadcrumb">
       <span className="here">Library</span>

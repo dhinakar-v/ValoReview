@@ -21,16 +21,6 @@ export interface DemoRoot {
   described: string;
 }
 
-export interface ArtSummary {
-  described: string;
-  empty: boolean;
-  root: string;
-  source: string;
-  version: string;
-  maps: number;
-  agents: number;
-}
-
 export interface Decoder {
   /** Gates the DECODE button. False means no .NET SDK and no drop-in. */
   found: boolean;
@@ -42,7 +32,6 @@ export interface Decoder {
 
 export interface Config {
   demo_root: DemoRoot;
-  art: ArtSummary;
   decoder: Decoder;
   catalog_source: string;
   web_built: boolean;
@@ -71,37 +60,16 @@ export interface Card {
   duration: string;
   rounds: number;
   players: number;
-  build: string;
   size_bytes: number;
   /** Non-empty when the file would not parse. The card is shown anyway. */
   error: string;
   readable: boolean;
-  positions_available: boolean;
-  positions_note: string;
   playable: boolean;
-  /**
-   * Always "result not in file". A replay has no local player and teams are A
-   * and B by inference, so the WIN/LOSS badge cannot be built and the card
-   * says so rather than leaving a gap where a verdict should be.
-   */
-  result: string;
   prewarm: Prewarm | null;
-}
-
-export interface LibraryCounts {
-  total: number;
-  playable: number;
-  /** Held back by the default filter, counted here rather than dropped. */
-  hidden: number;
-  failed: number;
 }
 
 export interface Library {
   root: DemoRoot;
-  described: string;
-  read: number;
-  cached: number;
-  counts: LibraryCounts;
   maps_present: string[];
   page: number;
   page_count: number;
@@ -226,18 +194,6 @@ export interface SightMaskDoc {
   probe_uu: number;
 }
 
-export interface ProvenanceEntry {
-  label: string;
-  value: string;
-  bare: boolean;
-}
-
-export interface ProvenanceSection {
-  title: string;
-  label_width: number;
-  entries: ProvenanceEntry[];
-}
-
 export interface Replay {
   id: string;
   source: string;
@@ -275,7 +231,6 @@ export interface Replay {
   notes: string[];
   /** Looked up elsewhere. A different kind of claim, kept in a different list. */
   catalog_notes: string[];
-  provenance: ProvenanceSection[];
 }
 
 export interface Callout {
@@ -306,21 +261,7 @@ export interface MapArt {
   callouts: Callout[];
 }
 
-export interface MapSummary {
-  name: string;
-  codename: string;
-  map_url: string;
-  plottable: boolean;
-  listview_url: string | null;
-  minimap_url: string | null;
-  callout_count: number;
-}
-
 export interface LibraryQuery {
-  refresh?: boolean;
-  playable_only?: boolean;
   map_name?: string;
-  date?: string;
   page?: number;
-  descending?: boolean;
 }

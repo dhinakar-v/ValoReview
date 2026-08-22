@@ -50,8 +50,6 @@ export interface ReplayModel {
   replay: Replay;
   positions: Map<number, Track>;
   abilityTracks: Map<number, Track>;
-  /** Prose from the decoder, shown verbatim. Empty tracks are a real answer. */
-  positionSource: string;
 }
 
 function toTrack(actorId: number, columns: Columns): Track {
@@ -84,7 +82,6 @@ export function buildModel(replay: Replay, positions: PositionsDoc | null): Repl
     replay,
     positions: positions ? toTracks(positions.tracks) : new Map(),
     abilityTracks: positions ? toTracks(positions.ability_tracks) : new Map(),
-    positionSource: positions?.position_source || replay.position_source,
   };
 }
 

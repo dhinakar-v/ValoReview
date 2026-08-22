@@ -1,5 +1,5 @@
 /**
- * The four things the map stage must not quietly stop saying.
+ * The three things the map stage must not quietly stop saying.
  *
  * Every one of them fails *silently* if it regresses.  A missing sentence
  * leaves a plausible-looking panel; a DECODE button that can only refuse looks
@@ -15,10 +15,8 @@
  *     things.
  *   * **The sight caption is the server's own text**, rendered verbatim.  It
  *     travels in the same document as the cells so nothing can draw a wedge
- *     without having been handed it.
- *   * **The 3D caption says there is no geometry.**  The scene is a picture at
- *     one flat height with people floating above it, and that has to be stated
- *     rather than inferred by whoever is looking.
+ *     without having been handed it -- and it is absent while the layer is off,
+ *     because a caption is a claim about what is on screen.
  *
  * There is no canvas here.  jsdom has no 2D context and no WebGL, so what is
  * asserted is the sentences and the controls -- the drawing itself is pinned by
@@ -31,7 +29,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Decoder, MapArt, Replay, SightMaskDoc } from "../api/types";
 import { MapStage } from "./MapStage";
-import { SCENE_CAPTION } from "./sceneCaption";
 import { usePlayback } from "./playback";
 
 const CAPTION =
@@ -67,7 +64,6 @@ const REPLAY: Replay = {
   catalog_source: "",
   notes: [],
   catalog_notes: [],
-  provenance: [],
 };
 
 const ART: MapArt = {
@@ -236,17 +232,5 @@ describe("the captions", () => {
     show({ has_positions: true });
     expect(await screen.findByText("SIGHT")).toBeTruthy();
     expect(screen.queryByText(CAPTION)).toBeNull();
-  });
-
-  it("says the 3D scene has no floor, wall or ceiling geometry", async () => {
-    show({ has_positions: true });
-    expect(await screen.findByText("3D")).toBeTruthy();
-    usePlayback.setState({ mode: "3d" });
-    expect(await screen.findByText(SCENE_CAPTION)).toBeTruthy();
-  });
-
-  it("repeats what the decoder said about this capture, verbatim", async () => {
-    show({ has_positions: true });
-    expect(await screen.findByText("a decode")).toBeTruthy();
   });
 });

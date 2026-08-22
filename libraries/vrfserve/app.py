@@ -3,9 +3,8 @@ The HTTP interface: routes, mounts, and nothing that decides anything.
 
 Every handler here reads something the rest of the project already computed and
 hands it over.  There is no inference in this file and there is not meant to be:
-`infer` derives, `names` looks up, `tracks` decodes, `provenance` accounts for
-all three, and a route that started deciding things would be a fifth place a
-claim could come from.
+`infer` derives, `names` looks up and `tracks` decodes, and a route that started
+deciding things would be a fourth place a claim could come from.
 
 Handlers are plain `def`, not `async def`, and that is deliberate.  FastAPI runs
 a sync handler in a threadpool and an async one on the event loop, so a
@@ -191,18 +190,6 @@ def decoder_doc(parser_exe: str | None) -> dict:
     }
 
 
-def art_doc(cache: ArtCache) -> dict:
-    return {
-        "described": cache.described,
-        "empty": cache.empty,
-        "root": str(cache.root),
-        "source": cache.source,
-        "version": cache.version,
-        "maps": len(cache.maps),
-        "agents": len(cache.agents),
-    }
-
-
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the application over one scan of one replay directory."""
     config = settings if settings is not None else Settings()
@@ -250,7 +237,6 @@ def _add_config_routes(app: FastAPI, config: Settings) -> None:
         """Where the server looked, and what it found there."""
         return {
             "demo_root": demo_root_doc(vrfconfig.demo_root(config.demo_path)),
-            "art": art_doc(config.art),
             "decoder": decoder_doc(config.parser_exe),
             "catalog_source": getattr(config.catalog, "described", "") or "",
             "web_built": config.web_built,
@@ -264,18 +250,6 @@ def _add_library_routes(
     config: Settings,
     preparation: _Preparation,
 ) -> None:
-    @app.get(f"{API}/jobs")
-    def read_jobs() -> dict:
-        """
-        What the background decode has prepared, per capture.
-
-        Polled rather than streamed. At four seconds a capture there is nothing
-        a stream would tell a reader that a refresh does not, and an SSE
-        endpoint would be a connection to keep alive for the sake of a progress
-        bar nobody has time to read.
-        """
-        return {"statuses": preparation.all()}
-
     @app.get(f"{API}/library", response_model=schema.LibraryDoc)
     def read_library(query: Annotated[schema.LibraryQuery, Query()]) -> dict:
         """
@@ -286,34 +260,19 @@ def _add_library_routes(
         the epoch -- and a second implementation of that in another language is
         exactly the drift this project spends its docstrings avoiding.
 
-        A capture held back by `playable_only` is counted in `counts.hidden`,
-        never silently dropped: there is no schematic to fall back to, so the
-        honest thing is to say how many are not shown and let one request show
-        them.
+        Only playable captures are listed.  A build with no payload transform
+        has no positions to draw and there is no schematic to fall back to, so
+        the interface offers nothing to open; the filter is applied here rather
+        than being asked for, because there is no longer a request that would
+        turn it off.
         """
-        if query.refresh:
-            library.rescan(cache=False)
         result = library.result
-        cards = scan.filter_cards(
-            result.cards,
-            map_name=query.map_name,
-            date=query.date,
-        )
-        if query.playable_only:
-            cards = [c for c in cards if c.playable]
-        cards = scan.sort_cards(cards, descending=query.descending)
+        cards = scan.filter_cards(result.cards, map_name=query.map_name)
+        cards = [c for c in cards if c.playable]
+        cards = scan.sort_cards(cards)
         root = result.root or vrfconfig.demo_root(config.demo_path)
         return {
             "root": demo_root_doc(root),
-            "described": result.described,
-            "read": result.read,
-            "cached": result.cached,
-            "counts": {
-                "total": len(result.cards),
-                "playable": len(result.playable),
-                "hidden": len(result.hidden),
-                "failed": len(result.failed),
-            },
             "maps_present": scan.maps_present(result.cards),
             "page": query.page,
             "page_count": scan.page_count(cards),
@@ -387,11 +346,6 @@ def _add_replay_routes(
         with entry.lock:
             return _replay_doc(entry.replay, replay_id, config)
 
-    @app.delete(f"{API}/replays/{{replay_id}}")
-    def close_replay(replay_id: str) -> dict:
-        """Let go of an open replay.  An unknown id is not an error to close."""
-        return {"closed": library.close(replay_id)}
-
     @app.post(f"{API}/replays/{{replay_id}}/decode", response_model=schema.ReplayDoc)
     def decode_replay(replay_id: str) -> dict:
         """
@@ -464,22 +418,6 @@ def _add_map_routes(app: FastAPI, config: Settings) -> None:
     # earns more here than it does on the desktop -- and building one costs
     # opening a 1024x1024 PNG, which is not something to do per request.
     silhouettes = sight.SightCache()
-
-    @app.get(f"{API}/maps", response_model=list[schema.MapSummary])
-    def read_maps() -> list[dict]:
-        art = config.art
-        return [
-            {
-                "name": entry.name,
-                "codename": entry.codename,
-                "map_url": entry.map_url,
-                "plottable": entry.plottable,
-                "listview_url": wire.asset_url(entry.listview, art.root),
-                "minimap_url": wire.asset_url(entry.minimap, art.root),
-                "callout_count": len(entry.callouts),
-            }
-            for entry in sorted(art.maps.values(), key=lambda m: m.name)
-        ]
 
     @app.get(f"{API}/maps/{{key}}", response_model=schema.MapDoc)
     def read_map(key: str) -> dict:

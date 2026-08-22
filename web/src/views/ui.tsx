@@ -296,33 +296,6 @@ export function Field({
   );
 }
 
-export function StatTile({
-  label,
-  value,
-  icon,
-  note,
-  tone,
-}: {
-  label: string;
-  value: number | string;
-  icon?: Glyph;
-  note?: string;
-  tone?: "ok" | "warn" | "bad";
-}) {
-  return (
-    <div className="stat">
-      <span className="stat-label">
-        {icon ? <Icon glyph={icon} size={12} /> : null}
-        {label}
-      </span>
-      <span className={tone ? `stat-value ${tone}` : "stat-value"}>
-        {typeof value === "number" ? value.toLocaleString() : value}
-      </span>
-      {note ? <span className="stat-note">{note}</span> : null}
-    </div>
-  );
-}
-
 export type Tab = { id: string; label: string; icon?: Glyph; count?: number };
 
 /**

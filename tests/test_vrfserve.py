@@ -69,7 +69,7 @@ def _supplier():
     return lambda *_args, **_kwargs: _replay()
 
 
-def _replay() -> Replay:
+def _replay(build: str = "++Ares-Core+release-12.10") -> Replay:
     replay = Replay(
         source="capture.vrf",
         match_id="m-1",
@@ -77,7 +77,7 @@ def _replay() -> Replay:
         map_name="Haven",
         map_name_source="built-in table",
         length_ms=60_000,
-        build="++Ares-Core+release-12.10",
+        build=build,
         recorded_utc="2026-08-21T19:04:00Z",
     )
     replay.rounds = [Round(number=1, index=0, start_ms=0, end_ms=60_000)]
@@ -212,13 +212,6 @@ class WireBuilders(unittest.TestCase):
         doc = wire.loadout(_replay().loadouts[0], None)
         assert "actor_id" not in doc
 
-    def test_the_provenance_sections_travel_with_the_replay(self):
-        doc = wire.replay_doc(_replay(), "abc123", None)
-        titles = [s["title"] for s in doc["provenance"]]
-        assert "READ FROM THE FILE" in titles
-        assert "INFERRED (marked * in the interface)" in titles
-        assert "NOT IN THE FILE" in titles
-
     def test_a_replay_carries_whether_a_decode_could_ever_work(self):
         """
         `wire` is handed the answer rather than deriving it, and here is why.
@@ -296,37 +289,22 @@ class Endpoints(unittest.TestCase):
         doc = response.json()
         schema.LibraryDoc.model_validate(doc)
         assert doc["cards"] == []
-        assert doc["counts"]["total"] == 0
         # And it says where it looked, rather than just showing nothing.
-        assert str(self.tmp) in doc["described"]
+        assert str(self.tmp) in doc["root"]["described"]
 
-    def test_an_unreadable_capture_becomes_a_card_carrying_its_error(self):
-        """A file that fails to parse is never a silent omission."""
-        client = self._with_broken_capture()
-        doc = client.get("/api/library?playable_only=false").json()
-        assert len(doc["cards"]) == 1
-        card = doc["cards"][0]
-        assert card["file_name"] == "broken.vrf"
-        assert card["error"]
-        assert not card["readable"]
-
-    def test_the_default_filter_holds_captures_back_but_counts_them(self):
-        client = self._with_broken_capture()
-        shown = client.get("/api/library").json()
-        assert shown["cards"] == []
-        assert shown["counts"]["total"] == 1
-        assert shown["counts"]["hidden"] == 1
-
-    def test_every_card_says_the_result_is_not_in_the_file(self):
+    def test_only_playable_captures_are_listed(self):
         """
-        The WIN/LOSS badge the brief asks for cannot be built.
+        The filter is the handler's, not the request's.
 
-        There is no local player in a replay and teams are A and B by
-        inference, so the card carries the sentence rather than a verdict.
+        A build with no payload transform has no positions to draw and there is
+        no schematic to fall back to, so there is nothing behind such a card to
+        open.  There is no longer a query that turns this off, which is the
+        point of asserting it: a stray `playable_only=false` must not resurrect
+        the old behaviour.
         """
         client = self._with_broken_capture()
-        doc = client.get("/api/library?playable_only=false").json()
-        assert doc["cards"][0]["result"] == scan.RESULT_NOT_IN_FILE
+        assert client.get("/api/library").json()["cards"] == []
+        assert client.get("/api/library?playable_only=false").json()["cards"] == []
 
     def test_an_unknown_replay_id_is_a_404(self):
         assert self.client.get("/api/replays/" + "0" * 16).status_code == 404
@@ -334,11 +312,6 @@ class Endpoints(unittest.TestCase):
     def test_a_traversal_shaped_id_is_a_404_like_any_other_unknown_string(self):
         for hostile in ("..", "..%2F..%2Fetc", "%2E%2E%5C%2E%2E"):
             assert self.client.get(f"/api/replays/{hostile}").status_code == 404
-
-    def test_closing_something_that_is_not_open_is_not_an_error(self):
-        response = self.client.delete("/api/replays/" + "0" * 16)
-        assert response.status_code == 200
-        assert response.json() == {"closed": False}
 
     def test_a_replay_says_whether_a_decode_could_ever_work(self):
         """
@@ -350,16 +323,18 @@ class Endpoints(unittest.TestCase):
         `vrfhome.scan.positions_available` the match list asks, so a card and a
         replay cannot disagree about a capture.
         """
-        client = self._with_broken_capture()
-        card = client.get("/api/library?playable_only=false").json()["cards"][0]
-        assert not card["positions_available"]
-        assert "no payload transform" in card["positions_note"]
+        doc = wire.replay_doc(
+            _replay(build="++Ares-Core+release-11.11"),
+            "abc123",
+            None,
+            available=scan.positions_available("++Ares-Core+release-11.11"),
+            note=scan.positions_note("++Ares-Core+release-11.11"),
+        )
+        assert not doc["positions_available"]
+        assert "no payload transform" in doc["positions_note"]
 
     def test_an_unknown_map_is_a_404(self):
         assert self.client.get("/api/maps/Nowhere").status_code == 404
-
-    def test_no_art_means_no_maps_and_no_traceback(self):
-        assert self.client.get("/api/maps").json() == []
 
     def test_an_unbuilt_page_is_a_sentence_naming_the_command(self):
         """Never a stand-in page: say what is missing."""
@@ -382,8 +357,9 @@ class MapsAreAddressedByName(unittest.TestCase):
     sends the display name as `map_key` and the route resolves that.
 
     The pair below is the whole test: whatever `map_key` a replay document
-    carries must be a key `/api/maps` answers to.  Sent by one function and
-    resolved by another, that agreement is exactly the kind that rots quietly.
+    carries must be a key `/api/maps/{key}` answers to.  Sent by one function
+    and resolved by another, that agreement is exactly the kind that rots
+    quietly.
     """
 
     def setUp(self):
@@ -410,10 +386,6 @@ class MapsAreAddressedByName(unittest.TestCase):
         response = self.client.get(f"/api/maps/{key}")
         assert response.status_code == 200
         assert response.json()["map_url"] == "/Game/Maps/Triad/Triad"
-
-    def test_every_summary_names_itself_by_that_same_key(self):
-        for summary in self.client.get("/api/maps").json():
-            assert self.client.get(f"/api/maps/{summary['name']}").status_code == 200
 
     def test_the_internal_map_path_is_not_a_key(self):
         """
@@ -957,12 +929,12 @@ class BackgroundPreparation(unittest.TestCase):
 
     def test_it_does_not_start_when_it_was_not_asked_for(self):
         with self._client(prewarm=False) as client:
-            assert client.get("/api/jobs").json() == {"statuses": {}}
+            assert client.app.state.preparation.all() == {}
 
     def test_an_unreadable_capture_is_never_queued(self):
         """`Prewarmer` queues only playable cards; nothing here changes that."""
         with self._client(prewarm=True) as client:
-            statuses = client.get("/api/jobs").json()["statuses"]
+            statuses = client.app.state.preparation.all()
         assert statuses == {}
 
     def test_a_decode_pauses_and_resumes_the_queue_around_itself(self):

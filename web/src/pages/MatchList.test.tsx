@@ -1,15 +1,15 @@
 /**
- * The two things the match list must not quietly stop doing.
+ * What the match list must not quietly stop doing.
  *
- * A capture whose build has no payload transform is held back by the default
- * filter, and the footer has to say how many.  A library that shows 21 of 101
- * files without mentioning the other 80 is lying about what is on the disk, and
- * the failure mode is silent -- the page looks perfectly reasonable.
+ * A capture that will not parse is still shown, carrying its error, rather than
+ * being dropped from the list -- a library that silently omits a file is lying
+ * about what is on the disk, and the failure mode is silent: the page looks
+ * perfectly reasonable.
  *
- * Every card carries `result not in file` where the brief asks for a WIN/LOSS
- * badge.  That badge cannot be built: there is no local player in a replay and
- * the teams are A and B by inference.  The sentence is the claim; an empty
- * space where a verdict belongs reads as a bug rather than as an absence.
+ * Where there is no thumbnail the card names the map in *words*.  A stand-in
+ * drawing in the place a picture goes reads as the picture however it is
+ * captioned, which is why the assertion here is that there is no `<img>` at all
+ * in that state.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -34,14 +34,10 @@ const CARD: Card = {
   duration: "26:11",
   rounds: 15,
   players: 10,
-  build: "++Ares-Core+release-12.10",
   size_bytes: 49_283_746,
   error: "",
   readable: true,
-  positions_available: true,
-  positions_note: "positions decode on this build",
   playable: true,
-  result: "result not in file",
   prewarm: null,
 };
 
@@ -52,10 +48,6 @@ const LIBRARY: Library = {
     source: "default Demos/ (DEMO_PATH is unset)",
     described: "Demos -- default Demos/ (DEMO_PATH is unset)",
   },
-  described: "21 of 101 replays in Demos; 80 hidden",
-  read: 12,
-  cached: 89,
-  counts: { total: 101, playable: 21, hidden: 80, failed: 0 },
   maps_present: ["Haven"],
   page: 1,
   page_count: 1,
@@ -70,15 +62,6 @@ function show(library: Library = LIBRARY) {
       ? library
       : {
           demo_root: library.root,
-          art: {
-            described: "no art cache found",
-            empty: true,
-            root: "assets",
-            source: "none",
-            version: "",
-            maps: 0,
-            agents: 0,
-          },
           decoder: {
             found: false,
             path: "",
@@ -112,29 +95,22 @@ afterEach(() => {
 });
 
 describe("the match list", () => {
-  it("counts the captures it is not showing", async () => {
-    show();
-    expect(await screen.findByText(/80 not shown/)).toBeTruthy();
-  });
-
-  it("says the result is not in the file rather than leaving a gap", async () => {
-    show();
-    expect(await screen.findByText("result not in file")).toBeTruthy();
-  });
-
-  it("repeats the scanner's own sentence about where it looked", async () => {
-    show();
-    expect(await screen.findByText(LIBRARY.described)).toBeTruthy();
-  });
-
   it("names the map where there is no thumbnail, rather than drawing one", async () => {
     const { container } = show();
     expect(await screen.findAllByText("Haven")).toBeTruthy();
     expect(container.querySelector("img")).toBeNull();
   });
 
+  it("shows a capture that would not parse, carrying its error", async () => {
+    show({
+      ...LIBRARY,
+      cards: [{ ...CARD, readable: false, error: "unexpected chunk type 7" }],
+    });
+    expect(await screen.findByText("unexpected chunk type 7")).toBeTruthy();
+  });
+
   it("says where it looked when the library is empty", async () => {
-    show({ ...LIBRARY, cards: [], counts: { total: 0, playable: 0, hidden: 0, failed: 0 } });
+    show({ ...LIBRARY, cards: [] });
     expect(await screen.findByText(/No replays in Demos/)).toBeTruthy();
   });
 });

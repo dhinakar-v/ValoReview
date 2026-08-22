@@ -32,16 +32,6 @@ class DemoRootDoc(BaseModel):
     described: str
 
 
-class ArtDoc(BaseModel):
-    described: str
-    empty: bool
-    root: str
-    source: str
-    version: str
-    maps: int
-    agents: int
-
-
 class DecoderDoc(BaseModel):
     """
     Whether positions can be decoded at all, and by what.
@@ -61,7 +51,6 @@ class ConfigDoc(BaseModel):
     """Where the server is looking, and what it found there."""
 
     demo_root: DemoRootDoc
-    art: ArtDoc
     decoder: DecoderDoc
     catalog_source: str
     web_built: bool
@@ -90,32 +79,15 @@ class CardDoc(BaseModel):
     duration: str
     rounds: int
     players: int
-    build: str
     size_bytes: int
     error: str
     readable: bool
-    positions_available: bool
-    positions_note: str
     playable: bool
-    # Always `scan.RESULT_NOT_IN_FILE`.  Sent rather than omitted so the card
-    # shows the sentence instead of a gap where a verdict should be.
-    result: str
     prewarm: PrewarmDoc | None
-
-
-class LibraryCounts(BaseModel):
-    total: int
-    playable: int
-    hidden: int
-    failed: int
 
 
 class LibraryDoc(BaseModel):
     root: DemoRootDoc
-    described: str
-    read: int
-    cached: int
-    counts: LibraryCounts
     maps_present: list[str]
     page: int
     page_count: int
@@ -127,21 +99,17 @@ class LibraryQuery(BaseModel):
     """
     How the match list is asked for.
 
-    A model rather than six parameters because these travel together and
+    A model rather than two parameters because these travel together and
     because FastAPI then documents them as one shape, which is the shape the
     browser's query builder wants.
 
-    `playable_only` defaults on: a capture whose build has no payload transform
-    cannot show a position, and there is no schematic to fall back to.  The
-    rest are counted in the response and one request away, never dropped.
+    Which captures are listed is not among them: only playable ones are, and
+    the handler applies that itself rather than accepting a request to do
+    otherwise.
     """
 
-    refresh: bool = False
-    playable_only: bool = True
     map_name: str = ""
-    date: str = ""
     page: int = 1
-    descending: bool = False
 
 
 class CalloutDoc(BaseModel):
@@ -212,16 +180,6 @@ class SightDoc(BaseModel):
     ray_step_degrees: float
     seed_cells: int
     probe_uu: float
-
-
-class MapSummary(BaseModel):
-    name: str
-    codename: str
-    map_url: str
-    plottable: bool
-    listview_url: str | None
-    minimap_url: str | None
-    callout_count: int
 
 
 class PlayerDoc(BaseModel):
@@ -336,18 +294,6 @@ class AbilityCastDoc(BaseModel):
     landed: PlacementDoc | None
 
 
-class ProvenanceEntry(BaseModel):
-    label: str
-    value: str
-    bare: bool
-
-
-class ProvenanceSection(BaseModel):
-    title: str
-    label_width: int
-    entries: list[ProvenanceEntry]
-
-
 class ReplayDoc(BaseModel):
     """Everything about one replay except the position samples."""
 
@@ -386,7 +332,6 @@ class ReplayDoc(BaseModel):
     notes: list[str]
     # Looked up elsewhere.  A different kind of claim, kept in a different list.
     catalog_notes: list[str]
-    provenance: list[ProvenanceSection]
 
 
 class ColumnsDoc(BaseModel):

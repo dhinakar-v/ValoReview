@@ -17,7 +17,6 @@ import type {
   Library,
   LibraryQuery,
   MapArt,
-  MapSummary,
   Replay,
   SightMaskDoc,
 } from "./types";
@@ -72,15 +71,12 @@ export const api = {
   // larger and because a replay is worth showing before they arrive.
   positions: (id: string) =>
     get<PositionsDoc>(`/api/replays/${encodeURIComponent(id)}/positions`),
-  maps: () => get<MapSummary[]>("/api/maps"),
   map: (key: string) => get<MapArt>(`/api/maps/${encodeURIComponent(key)}`),
   // The playable silhouette a sight cone is raycast against, thresholded in
   // Python, with the sentence that says what it is travelling beside it. A map
   // with no radar image on disk 404s: the layer is unavailable, not empty.
   sight: (key: string) =>
     get<SightMaskDoc>(`/api/maps/${encodeURIComponent(key)}/sight`),
-  closeReplay: (id: string) =>
-    fetch(`/api/replays/${encodeURIComponent(id)}`, { method: "DELETE" }),
   decode: async (id: string): Promise<Replay> => {
     // Synchronous on purpose: the decode is about four seconds, which is
     // inside a request, so there is no job to poll and no stream to open.

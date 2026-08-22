@@ -4,7 +4,7 @@
  * Everything the file states, everything inferred from it, everything looked
  * up -- and, where a capture has been decoded, the map it happened on.  The
  * map is `MapStage`, which owns the two views, the layers and the transport;
- * this page owns the tables around it and the provenance panel beside it.
+ * this page owns the tables around it.
  *
  * The split is deliberate.  A snapshot is recomputed sixty times a second and
  * the roster is not, so the playhead lives in a store the canvas reads inside
@@ -26,7 +26,6 @@ import { api } from "../api/client";
 import type { Player, Replay, Round } from "../api/types";
 import { glyphs } from "../views/icons";
 import { MapStage } from "../views/MapStage";
-import { Provenance } from "../views/Provenance";
 import { Failed, Loading, Page } from "../views/Shell";
 import { Button, Chip, Panel, TabPanel, Tabs, Toolbar } from "../views/ui";
 import type { Tab } from "../views/ui";
@@ -272,11 +271,6 @@ export function ViewerPage() {
   const actions = (
     <Toolbar>
       <Chip icon={glyphs.rounds}>{clock(replay.length_ms)}</Chip>
-      {replay.map_key ? (
-        <Link to={`/map/${encodeURIComponent(replay.map_key)}`}>
-          <Button label="MAP" icon={glyphs.map} />
-        </Link>
-      ) : null}
       {back}
     </Toolbar>
   );
@@ -287,18 +281,9 @@ export function ViewerPage() {
       actions={actions}
       footer={<span className="mono">{replay.source}</span>}
     >
-      <div className="viewer-grid">
-        <div>
-          <MapStage replay={replay} decoder={config.data?.decoder} />
-          <Roster replay={replay} />
-          <Timeline replay={replay} />
-        </div>
-        <div className="rail">
-          <Panel title="Provenance" icon={glyphs.noFile}>
-            <Provenance sections={replay.provenance} />
-          </Panel>
-        </div>
-      </div>
+      <MapStage replay={replay} decoder={config.data?.decoder} />
+      <Roster replay={replay} />
+      <Timeline replay={replay} />
     </Page>
   );
 }

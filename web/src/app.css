@@ -472,10 +472,10 @@ option {
   overflow-y: auto;
   padding-bottom: var(--space-6);
   scrollbar-color: var(--line-strong) transparent;
-  /* Three regions on this page scroll inside themselves, and reaching the end
-     of one of them should stop rather than start scrolling whatever is behind
-     it -- the rail hitting its end and dragging the page under it is how a
-     provenance section gets lost mid-read. */
+  /* Two regions on this page scroll inside themselves, and reaching the end of
+     one of them should stop rather than start scrolling whatever is behind it
+     -- a table hitting its end and dragging the page under it is how the row
+     you were reading gets lost. */
   overscroll-behavior: contain;
 }
 
@@ -505,10 +505,9 @@ option {
   color: var(--accent-ok);
 }
 
-/* `StatTile` takes ok/warn/bad and only one of them was defined outside a
-   `.dot`/`.chip` compound, so the match list's UNREADABLE count -- given
-   `tone="bad"` precisely so a non-zero one stands out -- rendered in the
-   same colour as a zero. */
+/* Bare tone utilities, defined outside the `.dot`/`.chip` compounds that also
+   take ok/warn/bad. A tone that only existed inside a compound silently fell
+   back to the body colour wherever it was used on its own. */
 .warn {
   color: var(--accent-warn);
 }
@@ -632,48 +631,6 @@ option {
   color: var(--accent-b);
   border-color: color-mix(in srgb, var(--accent-b) 45%, var(--border));
   background: color-mix(in srgb, var(--accent-b) 12%, var(--app-bg));
-}
-
-/* -- stat tiles -------------------------------------------------------- */
-
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: var(--space-4);
-  margin-bottom: var(--space-5);
-}
-
-.stat {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-4) var(--space-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.stat-label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-2xs);
-  letter-spacing: var(--track-wider);
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.stat-value {
-  font-family: var(--font-mono);
-  font-size: var(--text-2xl);
-  font-weight: var(--weight-medium);
-  font-variant-numeric: tabular-nums;
-  line-height: var(--leading-tight);
-}
-
-.stat-note {
-  font-size: var(--text-xs);
-  color: var(--text-faint);
 }
 
 /* -- tabs -------------------------------------------------------------- */
@@ -818,47 +775,6 @@ a.card:hover {
 
 /* -- viewer ------------------------------------------------------------ */
 
-.viewer-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, var(--rail-w));
-  gap: var(--space-6);
-  align-items: start;
-}
-
-/*
- * The provenance rail scrolls inside itself.
- *
- * It is the longest thing on the page by some margin -- every claim the viewer
- * makes, with its source -- and letting it set the page height meant the
- * tables under the map were a thousand pixels further down than they needed to
- * be.  Sticky plus its own overflow keeps it beside the map instead of below
- * everything.
- */
-.rail {
-  position: sticky;
-  top: 0;
-  max-height: calc(100vh - var(--bar-h) - var(--space-8));
-  overflow-y: auto;
-  scrollbar-color: var(--line-strong) transparent;
-  overscroll-behavior: contain;
-}
-
-.rail .panel {
-  margin-bottom: 0;
-}
-
-@media (max-width: 1100px) {
-  .viewer-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .rail {
-    position: static;
-    max-height: none;
-    overflow: visible;
-  }
-}
-
 table.rows {
   width: 100%;
   border-collapse: collapse;
@@ -984,52 +900,6 @@ table.rows tr:last-child td {
   color: var(--text-faint);
   line-height: var(--leading-normal);
   margin: var(--space-4) 0 0;
-}
-
-/* -- provenance -------------------------------------------------------- */
-
-.provenance section {
-  margin-bottom: var(--space-5);
-}
-
-.provenance section:last-child {
-  margin-bottom: 0;
-}
-
-.provenance h3 {
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  letter-spacing: var(--track-wider);
-  color: var(--accent);
-  margin-bottom: var(--space-2);
-  text-transform: none;
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border);
-}
-
-.provenance dl {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: var(--space-1) var(--space-4);
-  margin: 0;
-  font-size: var(--text-sm);
-}
-
-.provenance dt {
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-
-.provenance dd {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.provenance .bare {
-  grid-column: 1 / -1;
-  color: var(--text-muted);
-  white-space: pre-wrap;
 }
 
 /* -- map stage --------------------------------------------------------- */

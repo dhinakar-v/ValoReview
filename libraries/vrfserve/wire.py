@@ -29,7 +29,6 @@ from __future__ import annotations
 import base64
 from typing import TYPE_CHECKING
 
-from vrfview import provenance as provenance_mod
 from vrfview import sight as sight_mod
 from vrfview.abilities import NO_POSITION, travel
 
@@ -250,21 +249,6 @@ def ability_cast(cast, replay: Replay, cache: ArtCache | None) -> dict:
     }
 
 
-def sections(replay: Replay, cache: ArtCache | None) -> list[dict]:
-    """The provenance account, heading by heading."""
-    return [
-        {
-            "title": section.title,
-            "label_width": section.label_width,
-            "entries": [
-                {"label": e.label, "value": e.value, "bare": e.bare}
-                for e in section.entries
-            ],
-        }
-        for section in provenance_mod.sections(replay, cache).sections
-    ]
-
-
 def replay_doc(
     replay: Replay,
     replay_id: str,
@@ -353,7 +337,6 @@ def replay_doc(
         "catalog_source": replay.catalog_source,
         "notes": list(replay.notes),
         "catalog_notes": list(replay.catalog_notes),
-        "provenance": sections(replay, cache),
     }
 
 
@@ -361,10 +344,9 @@ def card(entry, replay_id: str, cache: ArtCache | None, prewarm: dict | None) ->
     """
     One row of the match list, as the scanner describes it.
 
-    `result` is `scan.RESULT_NOT_IN_FILE` for every capture and always will be:
-    the WIN/LOSS badge needs a local player, and a replay has none.  It is sent
-    rather than omitted so the interface shows the sentence instead of quietly
-    leaving a gap where a verdict should be.
+    `playable` is still sent although the list is now filtered to it: the card
+    is the scanner's own description of a capture, and a reader of this dict
+    should not have to know which query produced it to know what it is.
     """
     art = cache.map_art(entry.map_path) if cache else None
     return {
@@ -381,13 +363,9 @@ def card(entry, replay_id: str, cache: ArtCache | None, prewarm: dict | None) ->
         "duration": entry.duration,
         "rounds": entry.rounds,
         "players": entry.players,
-        "build": entry.build,
         "size_bytes": entry.size_bytes,
         "error": entry.error,
         "readable": entry.readable,
-        "positions_available": entry.positions_available,
-        "positions_note": entry.positions_note,
         "playable": entry.playable,
-        "result": entry.result,
         "prewarm": prewarm,
     }

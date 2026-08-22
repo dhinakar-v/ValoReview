@@ -11,7 +11,7 @@
  * callouts.  So this scene is the radar image as a ground plane, players at
  * their own replicated height, and nothing else.  No walls, no floors, no
  * extruded elevation bands.  That constraint is not a limitation to work
- * around; it is the thing the caption has to say, and `SCENE_CAPTION` says it.
+ * around; it is what this view is.
  *
  * Coordinates
  * -----------
@@ -71,8 +71,6 @@ import { segments } from "../model/track";
 import { applyTransform } from "../model/transform";
 import { palette, teamColour, useImages } from "./images";
 import { selectedActor, usePlayback } from "./playback";
-
-export { SCENE_CAPTION } from "./sceneCaption";
 
 /** Marker sizes, in scene units — which are fractions of the radar's side. */
 const BODY_RADIUS = 0.006;

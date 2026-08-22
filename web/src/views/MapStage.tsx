@@ -37,7 +37,6 @@ import type { Decoder, Replay } from "../api/types";
 import { buildModel } from "../model/replay";
 import { Icon, Spinner, glyphs } from "./icons";
 import { MinimapCanvas } from "./MinimapCanvas";
-import { SCENE_CAPTION } from "./sceneCaption";
 import { Failed } from "./Shell";
 import { play } from "./sound";
 import { Transport } from "./Transport";
@@ -48,17 +47,16 @@ import { usePlayback, usePlaybackDriver } from "./playback";
 // `three` and its two wrappers are about a megabyte of the bundle, and the 2D
 // view is the default and is not a stepping stone to this one. Loading the
 // scene the first time somebody asks for it means the readable view costs
-// nothing for a renderer it never uses -- and `SCENE_CAPTION` lives in its own
-// module so rendering the sentence does not pull in the thing it describes.
+// nothing for a renderer it never uses.
 const Scene3D = lazy(async () => ({ default: (await import("./Scene3D")).Scene3D }));
 
 /**
- * The map stage: two views over one snapshot, and the words under both.
+ * The map stage: two views over one snapshot, and the sight caption under them.
  *
- * The sight caption is never held here as a constant, precisely so it cannot
- * drift: the sentence saying what a cone is travels in the same document as the
- * cells it is raycast against, so nothing can draw a wedge without having been
- * handed it.
+ * That caption is never held here as a constant, precisely so it cannot drift:
+ * the sentence saying what a cone is travels in the same document as the cells
+ * it is raycast against, so nothing can draw a wedge without having been handed
+ * it.
  */
 export function MapStage({
   replay,
@@ -254,10 +252,8 @@ export function MapStage({
       />
 
       <Captions
-        is3d={mode === "3d"}
         sightCaption={maskDoc?.caption ?? null}
         maskUnavailable={maskUnavailable}
-        positionSource={model.positionSource}
       />
     </div>
   );
@@ -317,36 +313,26 @@ function Layers({ hasMask, is3d }: { hasMask: boolean; is3d: boolean }) {
 }
 
 /**
- * Every claim the view is making, in words, under the view making it.
+ * Every claim the sight layer is making, in words, under the view making it.
  *
- * The sight caption is the server's own text and is rendered verbatim; the 3D
- * caption is this file's, and both are here for the same reason -- each view
- * states something weaker than it looks, and the picture cannot say so itself.
+ * The caption is never held here as a constant, precisely so it cannot drift:
+ * the sentence saying what a cone is travels in the same document as the cells
+ * it is raycast against, and is rendered verbatim.
  *
- * The mark beside each is `aria-hidden`, because two of these sentences are
- * matched exactly by tests and a glyph that joined the text node would change
- * what they are.
+ * The mark beside each is `aria-hidden`, because one of these sentences is
+ * matched exactly by a test and a glyph that joined the text node would change
+ * what it is.
  */
 function Captions({
-  is3d,
   sightCaption,
   maskUnavailable,
-  positionSource,
 }: {
-  is3d: boolean;
   sightCaption: string | null;
   maskUnavailable: string | null;
-  positionSource: string;
 }) {
   const showSight = usePlayback((state) => state.showSight);
   return (
     <div className="captions">
-      {is3d ? (
-        <p>
-          <Icon glyph={glyphs.view3d} size={12} />
-          <span>{SCENE_CAPTION}</span>
-        </p>
-      ) : null}
       {showSight && sightCaption ? (
         <p>
           <Icon glyph={glyphs.sight} size={12} />
@@ -359,10 +345,6 @@ function Captions({
           <span>{maskUnavailable}</span>
         </p>
       ) : null}
-      <p className="mono">
-        <Icon glyph={glyphs.decode} size={12} />
-        <span>{positionSource}</span>
-      </p>
     </div>
   );
 }

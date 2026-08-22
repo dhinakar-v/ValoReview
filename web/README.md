@@ -36,9 +36,9 @@ a line here saying what it buys.
 | Package | What it buys |
 |---|---|
 | `react`, `react-dom` | The view layer. |
-| `react-router-dom` | Real URLs. `/map/:key` is not a convenience: the map reference must be reachable *without* a replay, and a route that can only receive a map key is how the desktop guarantee — `mapref.show` is handed no `Replay` — survives becoming an address. |
-| `@tanstack/react-query` | Fetch state. Refetch-on-focus is off: a local server reading files off a disk does not go stale on its own, and a rescan is a button. It also owns the decode mutation, which replaces the whole replay rather than patching the tracks. |
-| `zustand` | The playhead, the view mode and the layer toggles, shared by three components that are not each other's children. Lifting them into the page would re-render the roster, the round table and the provenance panel sixty times a second; the canvas and the scene subscribe to nothing at all and read `getState()` inside their own animation frame. |
+| `react-router-dom` | Real URLs. `/replay/<id>` is an address a reader can keep, share and reload; a page that routed in component state would put every capture behind the same URL and lose the back button with it. |
+| `@tanstack/react-query` | Fetch state. Refetch-on-focus is off: a local server reading files off a disk does not go stale on its own. It also owns the decode mutation, which replaces the whole replay rather than patching the tracks. |
+| `zustand` | The playhead, the view mode and the layer toggles, shared by three components that are not each other's children. Lifting them into the page would re-render the roster and the round table sixty times a second; the canvas and the scene subscribe to nothing at all and read `getState()` inside their own animation frame. |
 | `three` | The 3D scene. There is no smaller way to put a textured plane and ten markers in a perspective camera, and writing WebGL by hand to avoid a dependency would be a much larger thing to maintain than the dependency. |
 | `@react-three/fiber` | `three` as React components, so the scene's lifetime is the component's and `useFrame` is the per-frame hook. The alternative is a manual renderer, a manual resize observer and a manual teardown, all of which this already gets right. |
 | `@react-three/drei` | `OrbitControls` and `Html`. Orbit is a camera rig everybody writes the same way and nobody writes correctly the first time; `Html` is what puts a callout label in the scene without a text-geometry pipeline. |
@@ -238,9 +238,9 @@ Smaller, and each for a stated reason in `app.css`: `touch-action:
 manipulation` on the interactive set (no 300ms wait before a press registers on
 a control that is pressed in sequence), `-webkit-tap-highlight-color:
 transparent` (the hover and active states already say a press landed),
-`overscroll-behavior: contain` on the three regions that scroll inside
-themselves (the rail dragging the page under it is how a provenance section
-gets lost mid-read), `text-wrap: balance` on headings, and explicit
+`overscroll-behavior: contain` on the regions that scroll inside themselves (a
+table dragging the page under it is how the row you were reading gets lost),
+`text-wrap: balance` on headings, and explicit
 `width`/`height` on all three `<img>` elements.
 
 Those dimensions are measured, not assumed. Every published `minimap.png` is
@@ -297,13 +297,14 @@ validates against them.
 Each of these is load-bearing, and each is pinned by a test in
 `src/pages/*.test.tsx` or `src/views/MapStage.test.tsx`:
 
-- **A capture with no payload transform is held back, never dropped.** The
-  footer counts it and SHOW ALL lists it. A library that displays 21 of 101
-  files without mentioning the other 80 is lying about what is on the disk.
-- **Every card says `result not in file`.** The WIN/LOSS badge the brief asks
-  for cannot be built — there is no local player in a replay and the teams are
-  A and B by inference — and a blank space where a verdict belongs reads as a
-  bug rather than as an absence.
+- **The list is captures whose build has a payload transform, and only those.**
+  The filter is `/api/library`'s own and there is no request that turns it off:
+  a build with no transform has no positions to decode and no schematic to fall
+  back to, so there is nothing behind such a card to open. What is on the disk
+  beyond that is not stated anywhere in the interface.
+- **A capture that will not parse is still listed, carrying its error.** A file
+  the scanner could not read is a fact about the library, and dropping it
+  silently is the failure that looks like nothing happening.
 - **Where a map cannot be drawn, there is a sentence.** Never a schematic,
   never a placeholder drawing. A diagram in the place a map goes reads as a map
   however it is captioned, so the two things that can be missing — the decode
@@ -318,10 +319,6 @@ Each of these is load-bearing, and each is pinned by a test in
   the wedge is — the radar silhouette, not collision, 2D only — travels in the
   same document as the cells it is raycast against, so there is no state in
   which the page has one and not the other.
-- **The 3D scene says it has no geometry.** The ground is Riot's radar image at
-  one flat height and the heights are the players' own replicated z; there is
-  no floor, wall or ceiling anywhere in this project, and on Split a player in
-  heaven and one in the tunnel beneath sit above the same pixel.
 - **Where `Track.at` refuses, nothing is drawn.** Not a last-known position, in
   either view. The refusal exists to stop a plausible coordinate being
   invented, and a fallback downstream of it would undo exactly that.
