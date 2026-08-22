@@ -33,6 +33,7 @@ import {
   rgbDistance,
   stepToEvent,
   type Pixels,
+  toggleLayer,
 } from "./harness";
 
 /**
@@ -76,13 +77,18 @@ test.describe("the 2D minimap", () => {
 
     // Utility off: ability markers are drawn in team colours too, and this
     // test is about players. The toggle is part of the interface, not a hook.
-    await page.getByRole("button", { name: "UTILITY", exact: true }).click();
+    await toggleLayer(page, "UTILITY");
 
-    const { presses, tMs } = firstCrowdedEvent(model);
-    await stepToEvent(page, presses);
+    const moment = firstCrowdedEvent(model);
+    const tMs = moment.tMs;
+    await stepToEvent(page, moment);
     // The playhead is exact, so the readout is the arithmetic's own witness.
+    // It reads *into the round* over the round's own length, because the
+    // transport is scoped to a round -- a scrubber spanning twenty-six minutes
+    // gave round four about forty pixels.
+    const round = replay.rounds.find((entry) => entry.number === moment.roundNo)!;
     await expect(page.locator(".clock-readout")).toHaveText(
-      `${clockText(tMs)} / ${clockText(replay.length_ms)}`,
+      `${clockText(tMs - round.start_ms)} / ${clockText(round.duration_ms)}`,
     );
 
     const image = await readCanvas(page, canvas);
@@ -136,10 +142,11 @@ test.describe("the 2D minimap", () => {
   test("the sight cone points where the player is facing", async ({ page }) => {
     const { art, sight, model } = await openFirstPlayable(page);
     const canvas = page.locator("canvas.minimap");
-    await page.getByRole("button", { name: "UTILITY", exact: true }).click();
+    await toggleLayer(page, "UTILITY");
 
-    const { presses, tMs } = firstCrowdedEvent(model);
-    await stepToEvent(page, presses);
+    const moment = firstCrowdedEvent(model);
+    const tMs = moment.tMs;
+    await stepToEvent(page, moment);
 
     const first = await readCanvas(page, canvas);
     const box = placeSquare(first.width, first.height);
@@ -173,7 +180,7 @@ test.describe("the 2D minimap", () => {
     );
     expect(polygon.length, "this player has a cone to draw").toBeGreaterThan(2);
 
-    await page.getByRole("button", { name: "SIGHT", exact: true }).click();
+    await toggleLayer(page, "SIGHT");
     // The sentence travels with the mask, and is rendered verbatim.
     await expect(page.getByText(sight.caption, { exact: true })).toBeVisible();
     const lit = await readCanvas(page, canvas);
@@ -217,21 +224,28 @@ test.describe("the 2D minimap", () => {
   test("scrubbing backwards lands on exactly the same frame", async ({ page }) => {
     const { model } = await openFirstPlayable(page);
     const canvas = page.locator("canvas.minimap");
-    await page.getByRole("button", { name: "UTILITY", exact: true }).click();
+    await toggleLayer(page, "UTILITY");
 
-    const { presses } = firstCrowdedEvent(model);
-    await stepToEvent(page, presses);
+    const moment = firstCrowdedEvent(model);
+    await stepToEvent(page, moment);
     const there = await readCanvas(page, canvas);
     const readout = await page.locator(".clock-readout").textContent();
 
-    // Forward past a round boundary and back. `stateAt` accumulates nothing, so
-    // the returning frame has to be the outgoing one to the pixel.
-    await stepToEvent(page, 40);
+    // Out to the end of the round and back to its start. `stateAt` accumulates
+    // nothing, so the returning frame has to be the outgoing one to the pixel.
+    await page.getByTitle("To the end").click();
     await page.getByTitle("Back to the start").click();
-    await stepToEvent(page, presses);
+    await stepToEvent(page, moment);
     const back = await readCanvas(page, canvas);
 
     expect(await page.locator(".clock-readout").textContent()).toBe(readout);
+    // Size first, and it is not a formality: the two reads are compared index
+    // by index, so a canvas that grew by a row between them reports tens of
+    // thousands of differing pixels and says nothing about what was drawn.
+    expect(
+      [back.width, back.height],
+      "the canvas is the same size in both reads",
+    ).toEqual([there.width, there.height]);
     let differing = 0;
     for (let i = 0; i < there.data.length; i += 4) {
       if (there.data[i] !== back.data[i] || there.data[i + 1] !== back.data[i + 1]) {

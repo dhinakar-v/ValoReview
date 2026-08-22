@@ -12,12 +12,18 @@
  * the PNG decoder, no dependency is added, and the 2D and 3D views are read the
  * same way, which is what makes comparing them meaningful.
  *
- * **The playhead is stepped, never guessed.**  `usePlayback` starts paused at
- * zero and `>>` seeks to the next entry in `Replay.event_times`, so pressing it
- * N times from the start lands on exactly `event_times[N - 1]`.  The clock
- * readout is only second-resolution and a strip click is a fraction of a pixel,
- * but this is exact -- which is what lets a test compute where every player
- * should be and then look there.
+ * **The playhead is stepped, never guessed.**  `>>` seeks to the next entry in
+ * `Replay.event_times`, so a press lands on an exact millisecond rather than
+ * near one.  The clock readout is only second-resolution and a rail click is a
+ * fraction of a pixel, but this is exact -- which is what lets a test compute
+ * where every player should be and then look there.
+ *
+ * **Stepping is scoped to a round**, because the transport is: a chip picks a
+ * round, the rail spans it, and `>>` walks that round's events and stops at its
+ * end.  So a target is reached in two moves rather than one -- click the chip,
+ * then press N times -- and `firstCrowdedEvent` returns both numbers.  Pressing
+ * `>>` from the top of the capture would stop at the first round boundary and
+ * every assertion after it would be about the wrong instant.
  */
 
 import { expect, type Locator, type Page } from "@playwright/test";
@@ -82,7 +88,46 @@ export async function openFirstPlayable(page: Page): Promise<Opened> {
   // The stage only exists once the art and the tracks have both landed.
   await expect(page.locator("canvas.minimap")).toBeVisible();
 
+  await waitForArt(page);
+
   return { id, replay, positions, art, sight, model: buildModel(replay, positions) };
+}
+
+/**
+ * Wait until every picture on the page has actually arrived.
+ *
+ * The canvas draws an agent portrait where one has loaded and a plain dot
+ * where it has not, so a frame read before the icons arrive is a legitimately
+ * different drawing of the same instant -- which is indistinguishable from the
+ * non-determinism `scrubbing backwards` exists to catch.
+ *
+ * `networkidle` was the instrument here and it **lied**, measurably: at the
+ * first read 37 of the page's 59 images were still incomplete and the last one
+ * landed fifteen seconds later, so the first frame drew ten dots and the second
+ * ten portraits -- a stable 5,017-pixel difference between two reads of the same
+ * millisecond, and one that only appeared when another spec had run first.
+ * Idle means five hundred quiet milliseconds, and this page asks for ten
+ * portraits and forty ability icons at about 450KB each: the requests queue six
+ * at a time behind the browser's own connection limit, so there are quiet
+ * moments all the way through the load.
+ *
+ * The question is "has every picture arrived", so that is what is asked --
+ * of the DOM, which holds the same portrait URLs the canvas asks for, so the
+ * canvas's own copies are served from the memory cache by the time this returns.
+ * It is asked twice with a frame between, because `document.images` grows as
+ * cards mount and "all complete" is momentarily true of a shorter list.
+ */
+export async function waitForArt(page: Page): Promise<void> {
+  const allComplete = () => {
+    const images = Array.from(document.images);
+    return images.length > 0 && images.every((image) => image.complete);
+  };
+  for (let round = 0; round < 2; round += 1) {
+    await page.waitForFunction(allComplete, undefined, { timeout: 60_000 });
+    await page.evaluate(
+      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+    );
+  }
 }
 
 /**
@@ -97,33 +142,107 @@ export async function openFirstPlayable(page: Page): Promise<Opened> {
  * reaches a round with utility on the map rather than ten people standing in
  * two spawn rooms.
  */
-export function firstCrowdedEvent(
-  model: ReplayModel,
-  wanted = 8,
-  after = 0,
-): { presses: number; tMs: number } {
-  const times = model.replay.event_times;
-  const from = after * model.replay.length_ms;
-  for (let i = 0; i < times.length; i += 1) {
-    const tMs = times[i]!;
+export interface Moment {
+  /** The round to pick first, 1-based as `infer` numbers them. */
+  roundNo: number;
+  /** How many times `>>` reaches the moment from that round's start. */
+  presses: number;
+  tMs: number;
+}
+
+/**
+ * An event time, as the two presses that reach it.
+ *
+ * Which round it falls in, and how far into that round's own event list -- the
+ * list `>>` walks once a chip has been pressed. An event sitting exactly on a
+ * round's first millisecond needs no presses at all, because picking the chip
+ * already seeks there.
+ */
+export function momentAt(model: ReplayModel, tMs: number): Moment {
+  const replay = model.replay;
+  const round =
+    replay.rounds.find((entry) => tMs >= entry.start_ms && tMs < entry.end_ms) ??
+    replay.rounds[0];
+  if (round === undefined) {
+    throw new Error("the capture records no rounds");
+  }
+  const inside = replay.event_times.filter((t) => t > round.start_ms && t < round.end_ms);
+  const at = inside.indexOf(tMs);
+  return { roundNo: round.number, presses: at < 0 ? 0 : at + 1, tMs };
+}
+
+export function firstCrowdedEvent(model: ReplayModel, wanted = 8, after = 0): Moment {
+  const replay = model.replay;
+  const from = after * replay.length_ms;
+  for (const tMs of replay.event_times) {
     if (tMs < from) {
       continue;
     }
     const snap = stateAt(model, tMs);
-    const drawn = model.replay.players.filter(
+    const drawn = replay.players.filter(
       (player) => positionOf(snap, player.actor_id) !== null,
     ).length;
     if (drawn >= wanted) {
-      return { presses: i + 1, tMs };
+      return momentAt(model, tMs);
     }
   }
   throw new Error(`no event time has ${wanted} players on the map`);
 }
 
-/** Press `>>` the given number of times, landing on an exact event time. */
-export async function stepToEvent(page: Page, presses: number): Promise<void> {
+/** Pick a round by its chip, which seeks to that round's first millisecond. */
+export async function pickRound(page: Page, roundNo: number): Promise<void> {
+  await page.locator(".round-chip").nth(roundNo - 1).click();
+}
+
+/**
+ * Open the layers menu, which the layer switches now live inside.
+ *
+ * They used to be four buttons on the stage head; there are nine of them and a
+ * head cannot carry nine beside a map name without the map getting smaller.
+ * The labels are unchanged and still exact -- UTILITY, TRAILS, SIGHT, CALLOUTS
+ * -- so this is one press before the press, not a rewrite of what a spec looks
+ * for.  `MapStage.test.tsx` has the same helper.
+ */
+export async function openLayers(page: Page): Promise<void> {
+  const button = page.getByRole("button", { name: "LAYERS", exact: true });
+  if ((await button.getAttribute("aria-expanded")) !== "true") {
+    await button.click();
+  }
+}
+
+/**
+ * Switch one layer, and put the menu away again.
+ *
+ * Closing matters: the popover floats over the top-right of the map, and a
+ * spec that left it open would screenshot a panel across the canvas it is
+ * about to count pixels in.
+ */
+export async function toggleLayer(page: Page, name: string): Promise<void> {
+  await openLayers(page);
+  // The row, not the input: the input is clipped to a pixel so a reader still
+  // announces it, and clicking it directly lands on the drawn box instead.
+  // A person clicks the label, and so does this.
+  await page
+    .locator(".check-row")
+    .filter({ has: page.getByText(name, { exact: true }) })
+    .click();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "LAYERS", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false");
+}
+
+/**
+ * Reach a moment: pick its round, then press `>>` into it.
+ *
+ * Both halves are the interface a person uses, which is the rule the rest of
+ * this suite follows -- a test that seeked by writing to the store would pass
+ * against a transport that no longer works.
+ */
+export async function stepToEvent(page: Page, moment: Moment): Promise<void> {
+  await pickRound(page, moment.roundNo);
   const next = page.getByTitle("Next event");
-  for (let i = 0; i < presses; i += 1) {
+  for (let i = 0; i < moment.presses; i += 1) {
     await next.click();
   }
 }
@@ -136,6 +255,23 @@ export async function stepToEvent(page: Page, presses: number): Promise<void> {
  * in CSS pixels and lines up with everything `placeSquare` computes.
  */
 export async function readCanvas(page: Page, target: Locator): Promise<Pixels> {
+  /*
+    Park the pointer first.
+
+    A Playwright element screenshot clips the *page* to the element's box; it
+    does not isolate the element, so anything painted over the canvas is in the
+    read. Hovering a player -- on the map or on their roster card -- draws that
+    marker at three times the size and names it, which is about five thousand
+    pixels of legitimate difference between two reads of the same instant. The
+    pointer ends up over a roster card by accident often enough to matter: it is
+    where it was left when the layers menu closed.
+
+    The top-left corner is the back button, which changes nothing that is drawn.
+  */
+  await page.mouse.move(2, 2);
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
   const shot = (await target.screenshot()).toString("base64");
   return page.evaluate(async (base64) => {
     const image = new Image();
