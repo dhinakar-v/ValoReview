@@ -221,10 +221,34 @@ All of that lives inside the bit-packed UE replication stream, which the parser 
 > **Abilities too, on those builds.** Every ability opens actor channels whose archetype paths name
 > the agent and the keybind -- `/Game/Characters/Killjoy/S0/Ability_E/Pawn_Killjoy_E_Turret` -- so
 > `libraries/vrfview/abilities.py` reads casts out of them even though section 6 above shows there
-> is no ability event of any kind. What that still cannot give is *where*: the spawn transform is
-> not decoded, and of every ability archetype seen in a full capture only the `Pawn_` ones emit a
-> movement record, so a drone and a turret have paths and a thrown smoke has a time and nothing
-> else. No ability range, radius or damage figure exists in the replay or in Riot's catalogue.
+> is no ability event of any kind. No ability range, radius or damage figure exists in the replay
+> or in Riot's catalogue, so the only figure shown is the measured path length of a pawn's own
+> track.
+>
+> **A smoke has a coordinate, measured 2026-08-22.** This section used to say the spawn transform
+> was not decoded and a thrown smoke therefore had a time and nothing else. That is no longer
+> true. `csharp/VrfPositions` reads each channel's own `ActorSpawned` transform, and the check
+> that established those are real coordinates uses only data already in hand: a player's first
+> decoded position is ground truth for where they spawned, and across the 21 playable captures
+> every one of 210 player pawns has a spawn location within 100 uu of its own first movement
+> sample -- a median of 0.0 and a maximum of 91.7. Every one of 18,946 ability actors has one,
+> and 98% to 100% of each kind lands inside the radar image's playable silhouette, where a random
+> coordinate would land inside about a third of the time. The exception is `Actor_`: 13 across the
+> library, tens of thousands of units off the map, so an unrecognised kind is refused rather than
+> ranked last. `tests/test_movement.py::SpawnLocationsAreRealCoordinates` is the standing check.
+>
+> **What is still not decodable is the *path*.** Only the `Pawn_` archetypes emit a movement
+> record -- the RPC that carries positions is `ReceiveRemoteCharacterUpdates` and a thrown
+> projectile is not a character -- so a drone and a turret have tracks, and everything else has a
+> start point and an end point and nothing in between. **No consumer may draw a curve.**
+>
+> **Pitch points where the player was looking, measured 2026-08-22.** `Position.pitch` was decoded
+> from the first and rendered by nothing, because no source states which half of 0..360 means up.
+> Measured the way the coordinates were -- at every kill, against the true angle to a victim whose
+> z is also known -- it agrees to a median 0.91 degrees over 2,949 kills, 98.4% inside 10 degrees
+> against yaw's 98.7%, and the negated reading is four times worse. **Positive is up.** The same
+> measurement caught `Track.at` interpolating pitch linearly while interpolating yaw as an angle,
+> which put a player crossing the horizon at 180 degrees: p99 error 159 degrees, now 11.4.
 >
 > None of it applies to `039f3991...`: the transforms are derived per build against the shipped
 > binary and 11.11 is long gone from the live client, so this capture correctly refuses. The list

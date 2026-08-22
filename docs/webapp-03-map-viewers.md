@@ -84,7 +84,7 @@ shortest-round-trip floats and `JSON.parse` recovers the same double. A
 tolerance would hide precisely the class of bug this is for. Never `Math.fround`.
 
 `tests/golden/` is committed — it is synthetic and needs no `.vrf`, unlike
-`Demos/`, `out/` and `assets/`.
+`Demos/`, `out/`, `assets/` and `.cache/`.
 
 `state.py` and `model.py` thereby acquire an honest new role: they are the
 reference implementation the fixtures are generated from, even once no Python
