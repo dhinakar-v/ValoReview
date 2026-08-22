@@ -1,0 +1,912 @@
+r"""
+Write the fixtures that keep the Python model and the TypeScript one honest.
+
+    runners\make-golden.bat            write tests/golden/
+    runners\make-golden.bat --check    fail if any file is out of date
+    runners\make-golden.bat --print    write nothing, list what it would write
+
+Why this exists
+---------------
+`state.state_at` is 0.127 ms on a 199,180-sample replay and a round trip to the
+server is not, so the playback model moves into the browser: the clock, the
+track lookup, the snapshot, the transform and the sight cone are all ported to
+TypeScript.  That leaves two implementations of one set of rules, in two
+languages, and nothing but discipline holding them together.
+
+This is what holds them together instead.  It builds one synthetic `Replay`
+and writes what every branch of that model produces for it.
+`tests/test_golden.py` asserts **Python** still reproduces these files byte for
+byte, and `web/src/model/__tests__/parity.test.ts` asserts **TypeScript**
+computes the same values from the same inputs.  So a Python change that would
+break the browser fails in Python's own CI first, and regenerating a fixture is
+a deliberate act that shows up as a diff.
+
+`libraries/vrfview/state.py` and `model.py` thereby acquire an honest new role:
+they are the reference implementation these are generated from, even once no
+Python path renders a frame.
+
+Exact equality, not a tolerance
+-------------------------------
+Both languages are IEEE-754 doubles, the operations are identical (`a + (b-a)
+* f`), Python's `json` writes shortest-round-trip floats and `JSON.parse`
+recovers the same double.  A tolerance would hide precisely the class of bug
+these exist for -- a `%` that takes the sign of the dividend instead of the
+divisor is a few degrees wrong most of the time and 180 degrees wrong at the
+moment somebody crosses north.
+
+The two sides assert different things, and that is not an oversight.  Python
+regenerates the file and compares bytes, because it wrote them.  TypeScript
+compares *values*, because `JSON.stringify` and `json.dumps` disagree about how
+to spell a float -- Python writes `1.0` and `1e-05` where JavaScript writes `1`
+and `0.00001` -- while both recover the identical double from either spelling.
+Byte equality across the two would be a test of number formatting rather than
+of the model.
+
+Getting that exactness took three corrections, each of which is written down
+where it lives, because each is a rule a port would otherwise break again:
+
+  * `((a % n) + n) % n` is the obvious way to give JavaScript Python's sign,
+    and it rounds twice where Python rounds once -- 9.8 comes back as
+    9.800000000000011.  `web/src/model/angles.ts` ports CPython's `float_rem`
+    instead.
+  * `math.radians` multiplies by a stored `pi / 180`; `(x * Math.PI) / 180`
+    does not, and a last-bit difference in an angle can stop a marched ray a
+    whole cell earlier.
+  * `hypot` is specified as *approximate* in both languages and implemented
+    differently in each, so `sight.forward_uv` uses `sqrt`, which IEEE-754
+    specifies exactly.  That one changed the Python.
+
+**One thing genuinely cannot be exact**, and it is separated out rather than
+papered over: `atan2`, `cos` and `sin` are approximate in both languages by
+specification, so `sight.ray_directions` is written into the fixture beside
+each cone.  The far end compares the directions within a bound and then marches
+*Python's own* directions through `_march`, which is plain arithmetic, and
+matches the polygon to the bit.  So the only tolerance in the whole suite
+covers three library calls, and the occlusion the cone actually depends on --
+which cell stopped which ray -- stays exact.
+
+The synthetic replay
+--------------------
+Small enough to read in a diff and shaped to hit every branch that has one:
+four players over two teams, three rounds with a side swap, a kill at a round
+boundary, a suicide, a reconnect-free roster, one ultimate, a full spike cycle,
+and four tracks between them covering an exact sample hit, a gap short enough
+to interpolate, a gap too long, a lone sample inside the hold window and one
+past it, a yaw crossing 0 to 360 and back, and a negative yaw.  No `.vrf` is
+involved and none is needed, which is why `tests/golden/` is committed where
+`Demos/`, `out/` and `assets/` are not.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import sys
+from pathlib import Path
+
+from vrfhome import scan
+from vrfserve import wire
+from vrfview import abilities, clock, positionfile, sight, tracks
+from vrfview.art import Callout, Transform
+from vrfview.model import (
+    Kill,
+    Player,
+    Position,
+    Replay,
+    Round,
+    SpikeEvent,
+    Track,
+    Ultimate,
+)
+from vrfview.state import state_at
+
+OUT = Path("tests") / "golden"
+
+# Written with a trailing newline and two-space indent so a regenerated
+# fixture reads as a diff rather than as one line that changed.
+INDENT = 2
+
+HEADER = (
+    "Generated by scripts/make_golden.py.  Do not edit: run "
+    "runners\\make-golden.bat.  tests/test_golden.py asserts Python still "
+    "reproduces this byte for byte; web/src/model/__tests__/parity.test.ts "
+    "asserts TypeScript computes the same values."
+)
+
+MATCH_ID = "golden-0000-0000-0000-000000000000"
+BUILD = "++Ares-Core+release-12.10"
+
+# Long enough for three rounds and a side swap, short enough to read.
+ROUND_MS = 40_000
+ROUNDS = 3
+LENGTH_MS = ROUND_MS * ROUNDS
+
+# Abyss, out of assets/manifest.json.  A real transform rather than a tidy one,
+# because a tidy one hides the sign of a multiplier and the axis swap both.
+ABYSS = Transform(
+    x_multiplier=8.1e-05,
+    y_multiplier=-8.1e-05,
+    x_scalar_to_add=0.5,
+    y_scalar_to_add=0.5,
+)
+
+# A silhouette small enough to write out in full: a square of open cells with
+# one blocked column through the middle, so a ray either stops at the wall, or
+# passes through the doorway in it, or leaves the grid entirely.
+MASK_SIZE = 16
+MASK_WALL_COLUMN = 8
+MASK_DOOR_ROW = 4
+
+
+# --------------------------------------------------------------------------
+# The synthetic replay
+# --------------------------------------------------------------------------
+
+
+def _players() -> list[Player]:
+    return [
+        Player(actor_id=101, team="A", label="A1", codename="Hunter", agent="Sova"),
+        Player(actor_id=102, team="A", label="A2", codename="Killjoy", agent="Killjoy"),
+        Player(actor_id=201, team="B", label="B1", codename="Wushu", agent="Jett"),
+        Player(actor_id=202, team="B", label="B2", codename="Wraith", agent="Omen"),
+    ]
+
+
+def _rounds() -> list[Round]:
+    return [
+        Round(
+            number=n + 1,
+            index=n,
+            start_ms=n * ROUND_MS,
+            end_ms=(n + 1) * ROUND_MS,
+            winner=("A", "B", "A")[n],
+            reason=("wipe", "explode", "defuse")[n],
+        )
+        for n in range(ROUNDS)
+    ]
+
+
+def _kills() -> list[Kill]:
+    """
+    Six deaths, placed where a snapshot has to make a decision.
+
+    The last one lands on the exact millisecond a round ends, which is the
+    boundary `Round.contains` resolves with a half-open interval: it belongs to
+    the round that starts there and not to the one that finishes.
+    """
+    return [
+        Kill(t_ms=5_000, killer=101, victim=201, round_no=1),
+        Kill(t_ms=12_500, killer=202, victim=102, round_no=1),
+        Kill(t_ms=12_500, killer=101, victim=202, round_no=1),
+        # A suicide: it counts as a death and never as a kill.
+        Kill(t_ms=48_000, killer=201, victim=201, round_no=2),
+        Kill(t_ms=55_250, killer=202, victim=101, round_no=2),
+        Kill(t_ms=ROUND_MS * 2, killer=101, victim=202, round_no=3),
+    ]
+
+
+def _spike() -> list[SpikeEvent]:
+    """A full cycle in round 2, and a plant that is defused in round 3."""
+    return [
+        SpikeEvent(t_ms=50_000, kind="planted", round_no=2),
+        SpikeEvent(t_ms=70_000, kind="exploded", round_no=2),
+        SpikeEvent(t_ms=95_000, kind="planted", round_no=3),
+        SpikeEvent(t_ms=110_000, kind="defused", round_no=3),
+    ]
+
+
+def _samples(
+    actor_id: int,
+    entries: list[tuple[int, float, float, float, float, float]],
+):
+    return tuple(
+        Position(t_ms=t, actor_id=actor_id, x=x, y=y, z=z, yaw=yaw, pitch=pitch)
+        for t, x, y, z, yaw, pitch in entries
+    )
+
+
+def _tracks() -> dict[int, Track]:
+    """
+    Four trajectories, each carrying a branch of `Track.at` on its back.
+
+    101 is dense and ordinary, with a yaw that crosses 0 to 360 between two
+    consecutive samples -- the case a naive `%` port gets 180 degrees wrong.
+    102 has a gap of 5 seconds, well past MAX_INTERPOLATE_MS, so the middle of
+    it is `None` rather than a straight line through a wall.  201 is one lone
+    sample, so it holds for MAX_HOLD_MS and then stops answering.  202 carries
+    a negative yaw, which the packed angle dword does not produce but the
+    arithmetic must survive, and a yaw crossing 360 back to 0.
+    """
+    return {
+        101: Track(
+            actor_id=101,
+            samples=_samples(
+                101,
+                [
+                    (0, 1000.0, -2000.0, 100.0, 10.0, 0.0),
+                    (100, 1100.0, -2000.0, 100.0, 350.0, -2.5),
+                    # 350 -> 10 is +20 the short way and -340 the long way.
+                    (200, 1200.0, -1950.0, 105.0, 10.0, 5.0),
+                    (300, 1300.0, -1900.0, 110.0, 90.0, 12.0),
+                    (1_000, 2000.0, -1500.0, 120.0, 180.0, -30.0),
+                    (5_000, 4000.0, 500.0, 90.0, 270.0, 0.0),
+                    (12_500, 5000.0, 1500.0, 80.0, 0.0, 0.0),
+                    (55_250, -3000.0, 2000.0, 60.0, 45.0, 8.0),
+                ],
+            ),
+        ),
+        102: Track(
+            actor_id=102,
+            samples=_samples(
+                102,
+                [
+                    (0, -1000.0, 2000.0, 50.0, 0.0, 0.0),
+                    (400, -900.0, 2100.0, 50.0, 5.0, 1.0),
+                    # A five-second silence: interpolating across it would
+                    # draw a line through whatever is between the two points.
+                    (5_400, 3000.0, -1000.0, 55.0, 200.0, -1.0),
+                    (12_500, 3200.0, -1100.0, 55.0, 205.0, 0.0),
+                ],
+            ),
+        ),
+        201: Track(
+            actor_id=201,
+            samples=_samples(201, [(48_000, 900.0, 900.0, 40.0, 123.5, -7.25)]),
+        ),
+        202: Track(
+            actor_id=202,
+            samples=_samples(
+                202,
+                [
+                    (12_400, -500.0, -500.0, 30.0, -20.0, 0.0),
+                    (12_500, -480.0, -520.0, 30.0, 20.0, 3.0),
+                    (55_000, 100.0, 100.0, 35.0, 359.0, -1.0),
+                    # 359 -> 1 crosses 360 the other way.
+                    (55_400, 140.0, 140.0, 35.0, 1.0, 1.0),
+                    (80_000, 700.0, -700.0, 45.0, 200.0, 0.0),
+                ],
+            ),
+        ),
+    }
+
+
+def _ability_tracks() -> dict[int, Track]:
+    """One drone that moves, so a cast with a track has one to look up."""
+    return {
+        900: Track(
+            actor_id=900,
+            samples=_samples(
+                900,
+                [
+                    (6_000, 4100.0, 600.0, 95.0, 0.0, 0.0),
+                    (6_500, 4400.0, 900.0, 95.0, 45.0, 0.0),
+                    (7_000, 4700.0, 1200.0, 95.0, 45.0, 0.0),
+                ],
+            ),
+        ),
+    }
+
+
+def _spawns() -> list[abilities.AbilitySpawn]:
+    """
+    Four ability actors: a drone that moves, and one smoke thrown across a map.
+
+    The smoke is the case the spawn transform was measured for.  Its
+    `Ability_` actor opens at the caster's own feet and its `GameObject_` opens
+    where the smoke came to rest, thousands of units away, so which of the two
+    a marker uses is a decision -- and `AbilityCast.landed` is where it is made.
+    """
+    raw = [
+        (
+            899,
+            (
+                "/Game/Characters/Hunter/S0/Ability_E/Ability_Hunter_E_Drone"
+                ".Default__Ability_Hunter_E_Drone_C"
+            ),
+            5_900,
+            (4000.0, 500.0, 90.0),
+        ),
+        (
+            900,
+            (
+                "/Game/Characters/Hunter/S0/Ability_E/Pawn_Hunter_E_Drone"
+                ".Default__Pawn_Hunter_E_Drone_C"
+            ),
+            6_000,
+            (4050.0, 550.0, 92.0),
+        ),
+        (
+            910,
+            (
+                "/Game/Characters/Wraith/S0/Ability_Q/Ability_Wraith_Q_Smoke"
+                ".Default__Ability_Wraith_Q_Smoke_C"
+            ),
+            52_000,
+            (100.0, 100.0, 30.0),
+        ),
+        (
+            911,
+            (
+                "/Game/Characters/Wraith/S0/Ability_Q/GameObject_Wraith_Q_Smoke"
+                ".Default__GameObject_Wraith_Q_Smoke_C"
+            ),
+            52_100,
+            (4200.0, -1800.0, 45.0),
+        ),
+    ]
+    return abilities.spawns_from(
+        {actor: path for actor, path, _t, _xyz in raw},
+        {actor: t / 1000 for actor, _p, t, _xyz in raw},
+        {actor: xyz for actor, _p, _t, xyz in raw},
+    )
+
+
+def build_replay() -> Replay:
+    """The one replay every fixture below is computed from."""
+    replay = Replay(
+        source="golden.vrf",
+        match_id=MATCH_ID,
+        map_path="/Game/Maps/Infinity/Infinity",
+        map_name="Abyss",
+        map_name_source="built-in table",
+        length_ms=LENGTH_MS,
+        recorded_utc="2026-08-22T00:00:00Z",
+        build=BUILD,
+        side_swap_ms=ROUND_MS * 2,
+        players=_players(),
+        rounds=_rounds(),
+        kills=_kills(),
+        ultimates=[Ultimate(t_ms=52_000, actor_id=202, round_no=2)],
+        spike=_spike(),
+        notes=["teams split by two-colouring the kill graph"],
+        catalog_notes=["agent names from the built-in codename table"],
+        positions=_tracks(),
+        position_source="synthetic: written by scripts/make_golden.py",
+        ability_tracks=_ability_tracks(),
+    )
+    replay.ability_casts = abilities.casts(
+        _spawns(),
+        round_of=lambda t: r.number if (r := replay.round_at(t)) else 0,
+        codenames={p.codename: p.agent for p in replay.players if p.codename},
+    )
+    return replay
+
+
+# --------------------------------------------------------------------------
+# Serialising a Snapshot
+# --------------------------------------------------------------------------
+
+
+def _position(entry: Position | None) -> dict | None:
+    if entry is None:
+        return None
+    return {
+        "t_ms": entry.t_ms,
+        "actor_id": entry.actor_id,
+        "x": entry.x,
+        "y": entry.y,
+        "z": entry.z,
+        "yaw": entry.yaw,
+        "pitch": entry.pitch,
+    }
+
+
+def _by_actor(mapping: dict[int, Position]) -> list[dict]:
+    """
+    Int-keyed dicts as records, exactly as `vrfserve.wire` does it.
+
+    A JSON object key cannot be an integer, and stringifying one forces the far
+    end to parse it back and to sort a list of strings numerically.  The same
+    convention in both places means one shape to hold in the head.
+    """
+    return [_position(mapping[actor]) for actor in sorted(mapping)]
+
+
+def snapshot_doc(snap) -> dict:
+    """
+    One `Snapshot` as plain data -- the shape the TypeScript port must produce.
+
+    This lives here rather than in `vrfserve.wire` because the server never
+    sends a snapshot: the browser recomputes one per frame, which is the whole
+    reason the model was ported.  So this shape exists only to compare two
+    implementations, and its home is the thing that does the comparing.
+    """
+    return {
+        "t_ms": snap.t_ms,
+        "round": None if snap.round is None else snap.round.number,
+        "alive": sorted(snap.alive),
+        "dead_since": [
+            {"actor_id": actor, "t_ms": snap.dead_since[actor]}
+            for actor in sorted(snap.dead_since)
+        ],
+        "recent_kills": [
+            {
+                "t_ms": kill.t_ms,
+                "killer": kill.killer,
+                "victim": kill.victim,
+                "round_no": kill.round_no,
+                "age": age,
+            }
+            for kill, age in snap.recent_kills
+        ],
+        "recent_ults": [
+            {"actor_id": actor, "age": age} for actor, age in snap.recent_ults
+        ],
+        "round_kills": [
+            {"t_ms": k.t_ms, "killer": k.killer, "victim": k.victim}
+            for k in snap.round_kills
+        ],
+        "ulted_this_round": sorted(snap.ulted_this_round),
+        "spike_state": snap.spike_state,
+        "spike_since_ms": snap.spike_since_ms,
+        "kd": [
+            {
+                "actor_id": actor,
+                "kills": snap.kd[actor][0],
+                "deaths": snap.kd[actor][1],
+            }
+            for actor in sorted(snap.kd)
+        ],
+        "score": list(snap.score),
+        "positions": _by_actor(snap.positions),
+        "death_positions": _by_actor(snap.death_positions),
+        # Identified rather than copied: `actor_id`, `slot` and `codename` are
+        # all fields the replay document already carries, so the far end can
+        # point at its own cast rather than hold a second copy of one -- and
+        # the internal name is humanised on the wire, which would make a
+        # verbatim `name` here unreproducible over there.
+        "round_casts": [
+            {
+                "t_ms": c.t_ms,
+                "actor_id": c.actor_id,
+                "codename": c.codename,
+                "slot": c.slot,
+            }
+            for c in snap.round_casts
+        ],
+        "ability_positions": _by_actor(snap.ability_positions),
+    }
+
+
+def snapshot_instants(replay: Replay) -> list[int]:
+    """
+    Every instant worth asking about, and each one for a stated reason.
+
+    t=0 and t=length are the ends, and one instant past the end is in here on
+    purpose: `state_at` clamps rather than refuses, so a scrubber dragged off
+    the end still draws -- and the last two snapshots are therefore identical,
+    which is the assertion and not a duplicate.  Each round boundary is asked
+    about on both sides, because
+    `Round.contains` is half-open and getting that backwards moves a kill into
+    the wrong round.  Every kill is asked at the millisecond and at plus and
+    minus one, because a kill is the one event whose exact instant decides
+    whether somebody is drawn alive, dead or not at all.
+    """
+    wanted = {0, replay.length_ms, replay.length_ms + 5_000}
+    # A regular sweep as well as the interesting instants, so a port that
+    # happens to be right at every event and wrong between them is caught.
+    wanted |= set(range(0, replay.length_ms, 10_000))
+    for rnd in replay.rounds:
+        wanted |= {
+            rnd.start_ms - 1,
+            rnd.start_ms,
+            rnd.start_ms + 1,
+            rnd.end_ms - 1,
+            rnd.end_ms,
+        }
+    for kill in replay.kills:
+        wanted |= {kill.t_ms - 1, kill.t_ms, kill.t_ms + 1}
+    for event in replay.spike:
+        wanted |= {event.t_ms, event.t_ms + 1}
+    for cast in replay.ability_casts:
+        wanted |= {cast.t_ms, cast.t_ms + 500}
+    # Inside 102's five-second gap, where `Track.at` refuses.
+    wanted.add(3_000)
+    # Inside 201's hold window, and past it.
+    wanted |= {49_000, 51_000}
+    return sorted(t for t in wanted if t >= 0)
+
+
+# --------------------------------------------------------------------------
+# The fixtures
+# --------------------------------------------------------------------------
+
+
+def replay_fixture(replay: Replay) -> dict:
+    """The wire form, exactly as `/api/replays/{id}` sends it, with no art."""
+    return wire.replay_doc(
+        replay,
+        "golden",
+        None,
+        available=scan.positions_available(replay.build),
+        note=scan.positions_note(replay.build),
+    )
+
+
+def positions_fixture(replay: Replay) -> dict:
+    """
+    The columnar tracks, exactly as `/api/replays/{id}/positions` sends them.
+
+    Through `tracks.sidecar_of`, which is what the endpoint uses, so this is
+    the real wire shape and not a second description of it -- including its
+    empty `ability_spawns`, which is deliberate there and documented there.
+    """
+    return positionfile.to_document(tracks.sidecar_of(replay))
+
+
+def track_at_fixture(replay: Replay) -> dict:
+    """
+    Every branch of `Track.at`, per actor, with the instant that reaches it.
+
+    The `why` on each case is not decoration: when this fixture changes, the
+    diff has to say which rule moved.
+    """
+    cases = [
+        (101, 0, "the first sample, hit exactly"),
+        (101, 50, "interpolated between two samples 100 ms apart"),
+        (101, 150, "interpolated across a yaw crossing 350 -> 10"),
+        (101, 100, "the sample at 350 degrees, hit exactly"),
+        (101, 650, "interpolated across a 700 ms gap, inside the limit"),
+        (101, 2_000, "a 4,000 ms gap: too long to interpolate, held from 1,000"),
+        (101, 3_500, "the same gap, past the hold window on both sides"),
+        (101, 55_250, "the last sample, hit exactly"),
+        (101, 56_000, "held past the last sample, inside 2,000 ms"),
+        (101, 58_000, "past the hold window after the last sample"),
+        (102, 3_000, "the middle of a 5,000 ms gap: no position at all"),
+        (102, 600, "held after 400, inside the hold window"),
+        (102, 200, "interpolated inside a 400 ms gap"),
+        (201, 48_000, "the lone sample, hit exactly"),
+        (201, 46_500, "held backwards from the lone sample"),
+        (201, 49_900, "held forwards from the lone sample"),
+        (201, 45_000, "past the hold window before the lone sample"),
+        (201, 51_000, "past the hold window after the lone sample"),
+        (202, 12_450, "interpolated from a negative yaw to a positive one"),
+        (202, 55_200, "interpolated across a yaw crossing 359 -> 1"),
+        (202, 0, "before the first sample, past the hold window"),
+        (999, 0, "an actor with no track at all"),
+    ]
+    return {
+        "_": HEADER,
+        "max_interpolate_ms": 1_000,
+        "max_hold_ms": 2_000,
+        "cases": [
+            {
+                "actor_id": actor,
+                "t_ms": t,
+                "why": why,
+                "at": _position(
+                    replay.positions[actor].at(t)
+                    if actor in replay.positions
+                    else None,
+                ),
+            }
+            for actor, t, why in cases
+        ],
+    }
+
+
+def snapshots_fixture(replay: Replay) -> dict:
+    return {
+        "_": HEADER,
+        "kill_fade_ms": 2_500,
+        "ult_fade_ms": 1_500,
+        "snapshots": [
+            snapshot_doc(state_at(replay, t)) for t in snapshot_instants(replay)
+        ],
+    }
+
+
+def transform_fixture() -> dict:
+    """
+    Abyss's own transform, and points chosen so a wrong one cannot look right.
+
+    The axis swap is the thing being pinned: world *y* feeds u.  Running all
+    346 callouts in the manifest through the unswapped form lands 200 of them
+    inside the image and through this form 346 of 346, and the wrong version
+    does not crash -- it produces a plausible picture.  A negative multiplier
+    is in here for the same reason: taking its magnitude mirrors the map.
+    """
+    points = [
+        (0.0, 0.0, "the world origin, at the centre of this radar"),
+        (1000.0, 2000.0, "both positive, so the swap is visible"),
+        (2000.0, 1000.0, "the same pair swapped, which must not agree"),
+        (-4000.0, 6000.0, "mixed signs"),
+        (10000.0, 0.0, "far enough out that a dropped sign leaves the image"),
+        (-6172.8, 6172.8, "on the edges, at 1/8.1e-05 halved"),
+    ]
+    callouts = [
+        Callout("A Site", 4000.0, -2000.0),
+        Callout("B Main", -3500.0, 1500.0),
+        Callout("Mid", 0.0, 0.0),
+    ]
+    return {
+        "_": HEADER,
+        "transform": {
+            "x_multiplier": ABYSS.x_multiplier,
+            "y_multiplier": ABYSS.y_multiplier,
+            "x_scalar_to_add": ABYSS.x_scalar_to_add,
+            "y_scalar_to_add": ABYSS.y_scalar_to_add,
+            "usable": ABYSS.usable,
+            "vertical_scale": (abs(ABYSS.x_multiplier) + abs(ABYSS.y_multiplier)) / 2,
+        },
+        "points": [
+            {
+                "world_x": x,
+                "world_y": y,
+                "why": why,
+                "uv": list(ABYSS.apply(x, y)),
+            }
+            for x, y, why in points
+        ],
+        "callouts": [
+            {
+                "name": c.name,
+                "world_x": c.world_x,
+                "world_y": c.world_y,
+                "uv": list(ABYSS.apply(c.world_x, c.world_y)),
+            }
+            for c in callouts
+        ],
+    }
+
+
+def build_mask() -> sight.SightMap:
+    """
+    A silhouette with one wall in it, and one doorway through the wall.
+
+    Small enough to reason about by hand: a ray fired east from the left half
+    either stops at column 8, or passes through the gap at row 4, and one fired
+    at the edge leaves the grid -- which is the case `blocked` uses `floor` for,
+    because `int` truncates toward zero and would wrap it into column 0.
+    """
+    cells = bytearray(MASK_SIZE * MASK_SIZE)
+    for row in range(MASK_SIZE):
+        for col in range(MASK_SIZE):
+            open_here = col != MASK_WALL_COLUMN or row == MASK_DOOR_ROW
+            cells[row * MASK_SIZE + col] = 1 if open_here else 0
+    return sight.SightMap(size=MASK_SIZE, cells=bytes(cells))
+
+
+def cone_fixture() -> dict:
+    """
+    The raycaster, from `blocked` up to a whole polygon.
+
+    An empty polygon is a real case and is in here twice, because the rule it
+    carries is that the caller draws **nothing** -- never a fallback circle.
+    """
+    mask = build_mask()
+    cell = 1.0 / MASK_SIZE
+
+    blocked = [
+        (0.1, 0.1, "open"),
+        (0.53, 0.1, "the wall column"),
+        (0.53, 4.5 * cell, "the doorway through it"),
+        (-0.01, 0.5, "off the left edge: floor, not int, or it wraps to column 0"),
+        (0.5, -0.01, "off the top edge, for the same reason"),
+        (1.0, 0.5, "exactly on the right edge, which is outside"),
+        (0.999999, 0.5, "just inside the right edge"),
+    ]
+
+    headings = [
+        (1000.0, -2000.0, 0.0, "facing along world +x"),
+        (1000.0, -2000.0, 90.0, "facing along world +y"),
+        (1000.0, -2000.0, 217.5, "an angle with no round answer"),
+        (0.0, 0.0, 359.5, "just short of a full turn"),
+    ]
+
+    cones = [
+        ((0.25, 4.5 * cell), (1.0, 0.0), 0.9, "east through the doorway"),
+        ((0.25, 0.75), (1.0, 0.0), 0.9, "east into the wall"),
+        ((0.5, 0.5), (-1.0, 0.0), 0.4, "west, a negative u direction"),
+        ((0.5, 0.5), (0.6, 0.8), 0.3, "a diagonal that is already normalised"),
+        ((0.5, 0.5), (0.0, 0.0), 0.5, "no heading at all: draw nothing"),
+        ((0.5, 0.5), (1.0, 0.0), 0.0, "no radius: draw nothing"),
+    ]
+
+    return {
+        "_": HEADER,
+        "caption": sight.CAPTION,
+        "grid": sight.GRID,
+        "alpha_floor": sight.ALPHA_FLOOR,
+        "fov_degrees": sight.FOV_DEGREES,
+        "ray_step_degrees": sight.RAY_STEP_DEGREES,
+        "max_range_uu": sight.MAX_RANGE_UU,
+        "seed_cells": sight.SEED_CELLS,
+        "probe_uu": sight.PROBE_UU,
+        "mask": {
+            "size": mask.size,
+            "cells": base64.b64encode(mask.cells).decode("ascii"),
+            "open_fraction": mask.open_fraction,
+        },
+        "blocked": [
+            {"u": u, "v": v, "why": why, "blocked": mask.blocked(u, v)}
+            for u, v, why in blocked
+        ],
+        "uv_radius": [
+            {"distance_uu": d, "radius": sight.uv_radius(ABYSS, d)}
+            for d in (0.0, 100.0, sight.MAX_RANGE_UU, -2000.0)
+        ],
+        "forward_uv": [
+            {
+                "world_x": x,
+                "world_y": y,
+                "yaw": yaw,
+                "why": why,
+                "forward": list(sight.forward_uv(ABYSS, x, y, yaw)),
+            }
+            for x, y, yaw, why in headings
+        ],
+        # `rays` beside `polygon`, because the two are compared differently at
+        # the far end.  A ray direction comes out of `atan2`, `cos` and `sin`,
+        # and *both* languages specify those as approximate -- CPython takes
+        # the platform's libm and V8 ships its own -- so those are the only
+        # numbers in the whole of `tests/golden/` that cannot be asserted
+        # exactly.  Everything downstream of a direction is plain arithmetic,
+        # so handing the far end these directions lets it march them and match
+        # the polygon to the bit.  See parity.test.ts.
+        "cones": [
+            {
+                "origin": list(origin),
+                "forward": list(forward),
+                "radius": radius,
+                "why": why,
+                # Written whatever the radius is: a direction is a property of
+                # the heading and the field of view, and the radius only
+                # decides how far along it a ray gets to travel.
+                "rays": [list(r) for r in sight.ray_directions(forward)],
+                "polygon": [list(p) for p in sight.cone(mask, origin, forward, radius)],
+            }
+            for origin, forward, radius, why in cones
+        ],
+    }
+
+
+def clock_fixture() -> dict:
+    """
+    One scripted playback session, with the whole state after every step.
+
+    `tick` is handed a delta rather than reading a wall clock, which is what
+    makes this reproducible at all -- and what makes the speed multiplier exact
+    rather than a frame-rate approximation.
+    """
+    script: list[tuple[str, float | None, str]] = [
+        ("state", None, "a fresh clock is paused at zero"),
+        ("tick", 100.0, "ticking while paused moves nothing"),
+        ("play", None, ""),
+        ("tick", 100.0, "one hundred ms of wall time at 1x"),
+        ("tick", 16.7, "a frame at 60 fps"),
+        ("set_speed", 4.0, ""),
+        ("tick", 100.0, "the delta is scaled, never the frame rate"),
+        ("pause", None, ""),
+        ("tick", 1000.0, "no time accumulates across a pause"),
+        ("play", None, ""),
+        ("tick", 33.3, ""),
+        ("seek", 100_000.0, "seeking is exact and does not need a tick"),
+        ("nudge", -500.0, ""),
+        ("nudge", -1_000_000.0, "clamped at zero rather than negative"),
+        ("set_speed", 0.0, "refused: a stopped clock is what pause is for"),
+        ("set_speed", 1.0, ""),
+        ("seek", float(LENGTH_MS) - 50.0, ""),
+        ("tick", 100.0, "reaching the end stops playback"),
+        ("tick", 100.0, "and there is nothing left to move"),
+        ("play", None, "playing from the end starts again at zero"),
+        ("seek", 1e9, "clamped at the length"),
+        ("toggle", None, ""),
+        ("toggle", None, ""),
+    ]
+
+    playback = clock.PlaybackClock(LENGTH_MS)
+    steps = []
+    for op, arg, why in script:
+        moved = None
+        if op == "tick":
+            moved = playback.tick(arg)
+        elif op == "seek":
+            playback.seek(arg)
+        elif op == "nudge":
+            playback.nudge(arg)
+        elif op == "set_speed":
+            playback.set_speed(arg)
+        elif op == "play":
+            playback.play()
+        elif op == "pause":
+            playback.pause()
+        elif op == "toggle":
+            playback.toggle()
+        steps.append(
+            {
+                "op": op,
+                "arg": arg,
+                "why": why,
+                "moved": moved,
+                "t_ms": playback.t_ms,
+                "playing": playback.playing,
+                "speed": playback.speed,
+                "at_end": playback.at_end,
+            },
+        )
+    return {
+        "_": HEADER,
+        "length_ms": LENGTH_MS,
+        "speeds": list(clock.SPEEDS),
+        "steps": steps,
+    }
+
+
+def fixtures() -> dict[str, dict]:
+    """Every file this writes, keyed by name.  The order is the order written."""
+    replay = build_replay()
+    return {
+        "replay.json": {"_": HEADER, **replay_fixture(replay)},
+        "positions.json": {"_": HEADER, **positions_fixture(replay)},
+        "track_at.json": track_at_fixture(replay),
+        "snapshots.json": snapshots_fixture(replay),
+        "transform.json": transform_fixture(),
+        "cone.json": cone_fixture(),
+        "clock.json": clock_fixture(),
+    }
+
+
+def render(document: dict) -> str:
+    """One fixture as the exact bytes that go on disk."""
+    return json.dumps(document, indent=INDENT, ensure_ascii=False) + "\n"
+
+
+# --------------------------------------------------------------------------
+# The command
+# --------------------------------------------------------------------------
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="make-golden",
+        description="Write the fixtures the Python and TypeScript models share.",
+    )
+    parser.add_argument("--out", default=str(OUT), help=f"default {OUT}")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="write nothing; exit non-zero if any file is out of date",
+    )
+    parser.add_argument(
+        "--print",
+        dest="show",
+        action="store_true",
+        help="write nothing; list the files and their sizes",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    out = Path(args.out)
+    wanted = {name: render(doc) for name, doc in fixtures().items()}
+
+    if args.show:
+        for name, text in wanted.items():
+            print(f"{name:16s} {len(text):>8,} bytes")
+        return 0
+
+    if args.check:
+        stale = [
+            name
+            for name, text in wanted.items()
+            if not (out / name).is_file()
+            or (out / name).read_text(encoding="utf-8") != text
+        ]
+        if not stale:
+            print(f"{out} is current ({len(wanted)} files)")
+            return 0
+        print(f"out of date: {', '.join(stale)}; run runners\\make-golden.bat")
+        return 1
+
+    out.mkdir(parents=True, exist_ok=True)
+    for name, text in wanted.items():
+        (out / name).write_text(text, encoding="utf-8")
+    print(f"wrote {len(wanted)} files to {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
