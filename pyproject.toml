@@ -4,16 +4,30 @@ version = "0.1.0"
 description = "Decode and replay Valorant .vrf replay files."
 readme = "README.md"
 requires-python = ">=3.11"
-# The decoding pipeline is stdlib + tkinter and stays that way; the desktop
-# app is not.  customtkinter is the widget set the brief specifies, and Pillow
-# is what draws a circular portrait and scales a minimap tile by a fraction --
-# Tk's own subsample divides by whole numbers only.  python-dotenv is
-# deliberately NOT here: libraries/envfile.py already implements the exact
-# contract vrfconfig needs, so adding it would have meant two readers of one
-# .env in one process.  vrfconfig.py says so at greater length.
+# The decoding pipeline is stdlib and stays that way; the interfaces on top of
+# it are not.  customtkinter is the widget set the original brief specifies and
+# is on its way out with the desktop app; Pillow reads the radar PNG's alpha
+# channel for the sight mask and draws the transport glyphs, so it stays after
+# the widgets go.
+#
+# fastapi and uvicorn are the web interface.  The rule here has always been to
+# add a dependency only when the standard library genuinely lacks the thing,
+# and http.server genuinely lacks it: no routing, no streaming responses, no
+# request validation, and one thread per request.  Honouring the rule means
+# adding these two rather than hand-rolling an ASGI stack.  pydantic and
+# starlette arrive with them, and pydantic is what makes the OpenAPI schema --
+# and therefore the browser's TypeScript types -- a derived artefact instead of
+# a second contract written by hand.
+#
+# python-dotenv is deliberately NOT here: libraries/envfile.py already
+# implements the exact contract vrfconfig needs, so adding it would have meant
+# two readers of one .env in one process.  vrfconfig.py says so at greater
+# length.
 dependencies = [
     "customtkinter>=6.0.0",
+    "fastapi>=0.115.0",
     "Pillow>=11.0.0",
+    "uvicorn>=0.30.0",
 ]
 
 # The two library modules carry a CLI as well; scripts/ holds the pure CLIs,
@@ -23,7 +37,11 @@ vrf-reader = "vrf_reader:main"
 vrf-to-json = "vrf_to_json:main"
 
 [dependency-groups]
+# httpx2 is not the server's dependency, it is the test client's: Starlette's
+# TestClient drives the ASGI app through it in-process, so the API tests need
+# no port, no uvicorn and no network.
 dev = [
+    "httpx2>=0.28.0",
     "pytest>=9.1.1",
     "ruff>=0.16.4",
 ]

@@ -1,0 +1,402 @@
+"""
+Tests for the HTTP layer.
+
+Everything here runs in-process through Starlette's `TestClient`, so there is no
+port, no uvicorn and no network.  Nothing needs a real capture either: the
+scanner never raises -- an unreadable file becomes a card carrying its error --
+so a temp directory of nonsense exercises the same path a library does, and the
+wire builders are checked against `Replay` objects built by hand.
+
+Three properties are worth more than the rest and are pinned individually.
+
+  * **An id is never a path.**  The registry is the only thing that turns a
+    request into a file, so no handler can be talked into reading one.
+  * **A missing `assets/` costs pictures and nothing else.**  Every sentence the
+    interface states is the same with and without art; only the URLs go null.
+  * **The map endpoint is handed no replay.**  That is a structural guarantee in
+    the desktop app -- `mapref.show` cannot receive one -- and it has to survive
+    becoming a URL, or the map reference quietly becomes a second minimap.
+"""
+
+from __future__ import annotations
+
+import ast
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import ClassVar
+
+from fastapi.testclient import TestClient
+
+from vrfhome import scan
+from vrfserve import ids, schema, wire
+from vrfserve.app import Settings, create_app
+from vrfview.art import ArtCache, Callout, MapArt, Transform
+from vrfview.model import Loadout, Player, Replay, Round
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def _replay() -> Replay:
+    replay = Replay(
+        source="capture.vrf",
+        match_id="m-1",
+        map_path="/Game/Maps/Triad/Triad",
+        map_name="Haven",
+        map_name_source="built-in table",
+        length_ms=60_000,
+        build="++Ares-Core+release-12.10",
+        recorded_utc="2026-08-21T19:04:00Z",
+    )
+    replay.rounds = [Round(number=1, index=0, start_ms=0, end_ms=60_000)]
+    replay.players = [
+        Player(actor_id=1, team="A", label="A1", codename="Hunter", agent="Sova"),
+        Player(actor_id=2, team="B", label="B1"),
+    ]
+    replay.loadouts = [Loadout(index=0, subject="s-1", character_id="c-1")]
+    replay.notes = ["teams split by two-colouring the kill graph"]
+    return replay
+
+
+class Ids(unittest.TestCase):
+    def test_the_same_path_always_has_the_same_id(self):
+        assert ids.id_for("a/b.vrf") == ids.id_for("a/b.vrf")
+
+    def test_different_paths_have_different_ids(self):
+        assert ids.id_for("a/b.vrf") != ids.id_for("a/c.vrf")
+
+    def test_an_id_is_opaque_and_short(self):
+        found = ids.id_for("a/b.vrf")
+        assert len(found) == ids.ID_LENGTH
+        assert found.isalnum()
+
+    def test_an_unregistered_id_resolves_to_nothing(self):
+        registry = ids.Registry()
+        registry.add("a/b.vrf")
+        assert registry.path("0" * ids.ID_LENGTH) is None
+
+    def test_a_path_is_never_derived_from_the_string(self):
+        """
+        The property the whole module exists for.
+
+        Anything that looks like traversal is simply not in the registry, so it
+        resolves to None the same way any other unknown string does.  There is
+        no code path that joins a request onto a directory.
+        """
+        registry = ids.Registry()
+        registry.add("a/b.vrf")
+        for hostile in ("../../etc/passwd", "..\\..\\windows", "/", "a/b.vrf"):
+            assert registry.path(hostile) is None
+
+    def test_a_rescan_forgets_captures_that_have_gone(self):
+        registry = ids.Registry()
+        gone = registry.add("a/b.vrf")
+        registry.replace(["a/c.vrf"])
+        assert registry.path(gone) is None
+        assert len(registry) == 1
+
+
+class AssetUrls(unittest.TestCase):
+    def test_a_file_under_the_root_becomes_a_url(self):
+        root = Path("assets")
+        found = wire.asset_url(root / "maps" / "Bind" / "minimap.png", root)
+        assert found == "/assets/maps/Bind/minimap.png"
+
+    def test_a_name_with_a_slash_in_it_survives(self):
+        """
+        KAY/O.  The manifest sanitises it to KAY_O and this only re-roots.
+
+        Nothing here ever builds a filename -- the path came out of the
+        manifest's own `files` dict -- which is why the agent whose display name
+        contains a path separator is not a special case.
+        """
+        root = Path("assets")
+        found = wire.asset_url(root / "agents" / "KAY_O" / "icon.png", root)
+        assert found == "/assets/agents/KAY_O/icon.png"
+
+    def test_nothing_resolves_to_nothing(self):
+        assert wire.asset_url(None, Path("assets")) is None
+
+    def test_a_file_outside_the_root_is_refused(self):
+        """A mistyped --assets should cost pictures, not serve the disk."""
+        assert wire.asset_url(Path("C:/windows/system32/x.png"), Path("assets")) is None
+
+
+class WireBuilders(unittest.TestCase):
+    """Every builder's dict must validate against the model that describes it."""
+
+    def test_a_replay_document_matches_its_model(self):
+        doc = wire.replay_doc(_replay(), "abc123", None)
+        schema.ReplayDoc.model_validate(doc)
+
+    def test_an_empty_replay_still_matches(self):
+        schema.ReplayDoc.model_validate(wire.replay_doc(Replay(), "abc123", None))
+
+    def test_a_map_document_matches_its_model(self):
+        art = MapArt(
+            name="Abyss",
+            codename="Infinity",
+            map_url="/Game/Maps/Infinity/Infinity",
+            transform=Transform(8.1e-05, -8.1e-05, 0.5, 0.5),
+            callouts=(Callout("A Tree", 100.0, 200.0),),
+        )
+        doc = wire.map_art(art, Path("assets"))
+        schema.MapDoc.model_validate(doc)
+        assert doc["callouts"] == [
+            {"name": "A Tree", "world_x": 100.0, "world_y": 200.0},
+        ]
+
+    def test_the_vertical_scale_is_the_average_of_the_two_multipliers(self):
+        """
+        The one derived number in the transform, and where it comes from.
+
+        It is the same average `sight.uv_radius` takes to turn Unreal units into
+        a fraction of the radar.  Publishing it means a 3D scene places a
+        player's z at the map's own horizontal scale, rather than at a factor
+        somebody picked because it looked right.
+        """
+        art = MapArt(transform=Transform(8.1e-05, -8.1e-05, 0.5, 0.5))
+        assert wire.transform_of(art)["vertical_scale"] == 8.1e-05
+
+    def test_the_axis_swap_is_carried_not_corrected(self):
+        art = MapArt(transform=Transform(2.0, 3.0, 0.0, 0.0))
+        doc = wire.transform_of(art)
+        assert doc["x_multiplier"] == 2.0
+        assert doc["y_multiplier"] == 3.0
+
+    def test_a_player_carries_the_read_and_the_looked_up_name_apart(self):
+        doc = wire.player(_replay().players[0], None)
+        assert doc["codename"] == "Hunter"
+        assert doc["agent"] == "Sova"
+
+    def test_an_unnamed_player_has_neither_rather_than_a_guess(self):
+        doc = wire.player(_replay().players[1], None)
+        assert doc["codename"] == ""
+        assert doc["agent"] == ""
+        assert doc["identity"] == doc["display"]
+
+    def test_a_loadout_is_never_joined_to_an_actor(self):
+        """Nothing links a roster slot to an actor net ID, and this must not."""
+        doc = wire.loadout(_replay().loadouts[0], None)
+        assert "actor_id" not in doc
+
+    def test_the_provenance_sections_travel_with_the_replay(self):
+        doc = wire.replay_doc(_replay(), "abc123", None)
+        titles = [s["title"] for s in doc["provenance"]]
+        assert "READ FROM THE FILE" in titles
+        assert "INFERRED (marked * in the interface)" in titles
+        assert "NOT IN THE FILE" in titles
+
+    def test_a_derived_note_and_a_looked_up_one_stay_in_separate_lists(self):
+        replay = _replay()
+        replay.catalog_notes = ["the pawn's agent and the loadout's agree"]
+        doc = wire.replay_doc(replay, "abc123", None)
+        assert doc["notes"] != doc["catalog_notes"]
+        assert "two-colouring" in doc["notes"][0]
+
+
+class Endpoints(unittest.TestCase):
+    """The API over an empty library, which is a real state and not a failure."""
+
+    def setUp(self):
+        self._dir = TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+        self.client = self._client()
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def _client(self) -> TestClient:
+        """
+        A server over the temp directory as it stands right now.
+
+        The scan happens once, at startup, so a test that writes a capture has
+        to build its client afterwards -- which is the same thing the running
+        server does, and the reason `refresh` exists.
+        """
+        return TestClient(
+            create_app(
+                Settings(
+                    demo_path=str(self.tmp),
+                    web_dir=self.tmp / "nowhere",
+                    # A temp library must not write into the repo's out/.
+                    use_cache=False,
+                ),
+            ),
+        )
+
+    def _with_broken_capture(self) -> TestClient:
+        (self.tmp / "broken.vrf").write_bytes(b"not a replay")
+        return self._client()
+
+    def test_config_reports_where_it_looked(self):
+        doc = self.client.get("/api/config").json()
+        schema.ConfigDoc.model_validate(doc)
+        assert str(self.tmp) in doc["demo_root"]["path"]
+        assert doc["demo_root"]["exists"]
+
+    def test_an_empty_directory_is_an_empty_state_not_an_error(self):
+        response = self.client.get("/api/library")
+        assert response.status_code == 200
+        doc = response.json()
+        schema.LibraryDoc.model_validate(doc)
+        assert doc["cards"] == []
+        assert doc["counts"]["total"] == 0
+        # And it says where it looked, rather than just showing nothing.
+        assert str(self.tmp) in doc["described"]
+
+    def test_an_unreadable_capture_becomes_a_card_carrying_its_error(self):
+        """A file that fails to parse is never a silent omission."""
+        client = self._with_broken_capture()
+        doc = client.get("/api/library?playable_only=false").json()
+        assert len(doc["cards"]) == 1
+        card = doc["cards"][0]
+        assert card["file_name"] == "broken.vrf"
+        assert card["error"]
+        assert not card["readable"]
+
+    def test_the_default_filter_holds_captures_back_but_counts_them(self):
+        client = self._with_broken_capture()
+        shown = client.get("/api/library").json()
+        assert shown["cards"] == []
+        assert shown["counts"]["total"] == 1
+        assert shown["counts"]["hidden"] == 1
+
+    def test_every_card_says_the_result_is_not_in_the_file(self):
+        """
+        The WIN/LOSS badge the brief asks for cannot be built.
+
+        There is no local player in a replay and teams are A and B by
+        inference, so the card carries the sentence rather than a verdict.
+        """
+        client = self._with_broken_capture()
+        doc = client.get("/api/library?playable_only=false").json()
+        assert doc["cards"][0]["result"] == scan.RESULT_NOT_IN_FILE
+
+    def test_an_unknown_replay_id_is_a_404(self):
+        assert self.client.get("/api/replays/" + "0" * 16).status_code == 404
+
+    def test_a_traversal_shaped_id_is_a_404_like_any_other_unknown_string(self):
+        for hostile in ("..", "..%2F..%2Fetc", "%2E%2E%5C%2E%2E"):
+            assert self.client.get(f"/api/replays/{hostile}").status_code == 404
+
+    def test_closing_something_that_is_not_open_is_not_an_error(self):
+        response = self.client.delete("/api/replays/" + "0" * 16)
+        assert response.status_code == 200
+        assert response.json() == {"closed": False}
+
+    def test_an_unknown_map_is_a_404(self):
+        assert self.client.get("/api/maps/Nowhere").status_code == 404
+
+    def test_no_art_means_no_maps_and_no_traceback(self):
+        assert self.client.get("/api/maps").json() == []
+
+    def test_an_unbuilt_page_is_a_sentence_naming_the_command(self):
+        """Never a stand-in page: say what is missing."""
+        response = self.client.get("/")
+        assert response.status_code == 200
+        assert "npm run build" in response.text
+
+    def test_the_schema_is_published(self):
+        assert self.client.get("/openapi.json").status_code == 200
+
+
+class MapEndpointTakesNoReplay(unittest.TestCase):
+    """
+    The map reference describes the map, not the match, and must keep doing so.
+
+    In the desktop app that is structural: `mapref.show` is handed no `Replay`
+    and so cannot plot one.  An endpoint could quietly acquire a replay id and
+    become a second minimap, so the shape of the handler is asserted rather
+    than trusted.
+    """
+
+    def test_the_handler_accepts_a_map_key_and_nothing_else(self):
+        app = create_app(Settings(demo_path=".", use_cache=False))
+        routes = [r for r in app.routes if getattr(r, "path", "") == "/api/maps/{key}"]
+        assert len(routes) == 1
+        signature = routes[0].dependant.path_params + routes[0].dependant.query_params
+        assert [p.name for p in signature] == ["key"]
+
+    def test_the_map_document_shares_no_field_with_the_replay_document(self):
+        overlap = set(schema.MapDoc.model_fields) & set(schema.ReplayDoc.model_fields)
+        assert overlap == {"name"} or not overlap - {"name"}
+
+
+class ArtIsAPictureOnly(unittest.TestCase):
+    """Turning art off changes URLs and nothing the interface states."""
+
+    def setUp(self):
+        self._dir = TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def _doc(self, art: ArtCache | None):
+        settings = Settings(
+            demo_path=str(self.tmp),
+            web_dir=self.tmp / "nowhere",
+            use_cache=False,
+        )
+        if art is not None:
+            settings.art = art
+        return wire.replay_doc(_replay(), "abc123", settings.art if art else None)
+
+    def test_every_claim_is_the_same_with_and_without_art(self):
+        with_art = self._doc(ArtCache())
+        without = self._doc(None)
+        for key in ("notes", "catalog_notes", "position_source", "map_name", "rounds"):
+            assert with_art[key] == without[key]
+
+    def test_a_missing_assets_directory_does_not_stop_the_server_starting(self):
+        settings = Settings(demo_path=str(self.tmp), use_cache=False)
+        settings.art = ArtCache(root=self.tmp / "no-such-assets")
+        client = TestClient(create_app(settings))
+        assert client.get("/api/config").status_code == 200
+        assert client.get("/assets/maps/Bind/minimap.png").status_code == 404
+
+
+class Headless(unittest.TestCase):
+    """
+    The server must not reach a toolkit, and `wire` must not reach a framework.
+
+    The first is what makes deleting the CustomTkinter modules safe.  The second
+    is what keeps serialisation testable without a server, and is the reason
+    `wire` builds plain dicts instead of models: a builder that needed a request
+    or a PNG would be inventing a claim at the edge rather than carrying one.
+    """
+
+    BANNED: ClassVar[dict[str, set[str]]] = {
+        "app": {"tkinter", "customtkinter"},
+        "ids": {"tkinter", "customtkinter"},
+        "library": {"tkinter", "customtkinter"},
+        "schema": {"tkinter", "customtkinter"},
+        "wire": {
+            "tkinter",
+            "customtkinter",
+            "fastapi",
+            "starlette",
+            "pydantic",
+            "PIL",
+            "vrfnet",
+        },
+    }
+
+    @staticmethod
+    def _imports(module: str) -> set[str]:
+        source = REPO / "libraries" / "vrfserve" / f"{module}.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names.update(a.name for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names.add(node.module)
+        return names
+
+    def test_nothing_imports_what_it_must_not(self):
+        for module, banned in self.BANNED.items():
+            for name in self._imports(module):
+                root = name.split(".")[0]
+                assert root not in banned, f"vrfserve.{module} imports {name}"
