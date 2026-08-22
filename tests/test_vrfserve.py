@@ -21,6 +21,7 @@ Three properties are worth more than the rest and are pinned individually.
 from __future__ import annotations
 
 import ast
+import base64
 import json
 import threading
 import time
@@ -37,11 +38,30 @@ from vrfhome import scan
 from vrfserve import app as app_mod
 from vrfserve import ids, schema, wire
 from vrfserve.app import Settings, create_app
-from vrfview import positionfile, tracks
+from vrfview import positionfile, sight, tracks
 from vrfview.art import ArtCache, Callout, MapArt, Transform
 from vrfview.model import Loadout, Player, Position, Replay, Round, Track
 
 REPO = Path(__file__).resolve().parents[1]
+
+# A radar small enough to build in a test and shaped enough to threshold: an
+# opaque disc on a transparent field, which is what every published minimap.png
+# is a more complicated version of.
+RADAR_PX = 64
+
+
+def _write_radar(path: Path) -> None:
+    """One synthetic minimap.png, so the sight tests need no fetched art."""
+    from PIL import Image
+
+    image = Image.new("RGBA", (RADAR_PX, RADAR_PX), (0, 0, 0, 0))
+    pixels = image.load()
+    middle = RADAR_PX / 2
+    for row in range(RADAR_PX):
+        for col in range(RADAR_PX):
+            if (col - middle) ** 2 + (row - middle) ** 2 < (middle * 0.7) ** 2:
+                pixels[col, row] = (90, 90, 90, 255)
+    image.save(path)
 
 
 def _supplier():
@@ -199,6 +219,29 @@ class WireBuilders(unittest.TestCase):
         assert "INFERRED (marked * in the interface)" in titles
         assert "NOT IN THE FILE" in titles
 
+    def test_a_replay_carries_whether_a_decode_could_ever_work(self):
+        """
+        `wire` is handed the answer rather than deriving it, and here is why.
+
+        Deriving it means a membership test against `payload_transform
+        .SUPPORTED_BRANCHES`, which lives in `vrfnet` -- and `wire` is the one
+        module in the server that reaches neither a framework nor a decoder.
+        So `vrfserve.app` asks `vrfhome.scan`, which is the same authority the
+        match list uses, and passes the answer through.
+        """
+        supported = wire.replay_doc(
+            _replay(),
+            "abc123",
+            None,
+            available=True,
+            note=scan.POSITIONS_AVAILABLE,
+        )
+        assert supported["positions_available"]
+        assert supported["positions_note"] == scan.POSITIONS_AVAILABLE
+
+        refused = wire.replay_doc(_replay(), "abc123", None)
+        assert not refused["positions_available"]
+
     def test_a_derived_note_and_a_looked_up_one_stay_in_separate_lists(self):
         replay = _replay()
         replay.catalog_notes = ["the pawn's agent and the loadout's agree"]
@@ -231,7 +274,7 @@ class Endpoints(unittest.TestCase):
                 Settings(
                     demo_path=str(self.tmp),
                     web_dir=self.tmp / "nowhere",
-                    # A temp library must not write into the repo's out/.
+                    # A temp library must not write into the repo's .cache/.
                     use_cache=False,
                 ),
             ),
@@ -297,6 +340,21 @@ class Endpoints(unittest.TestCase):
         assert response.status_code == 200
         assert response.json() == {"closed": False}
 
+    def test_a_replay_says_whether_a_decode_could_ever_work(self):
+        """
+        A different question from whether one has happened, and both are sent.
+
+        The DECODE button is gated on this, so a capture whose build has no
+        payload transform gets the sentence rather than a control that would
+        only ever refuse -- and the answer comes from the same
+        `vrfhome.scan.positions_available` the match list asks, so a card and a
+        replay cannot disagree about a capture.
+        """
+        client = self._with_broken_capture()
+        card = client.get("/api/library?playable_only=false").json()["cards"][0]
+        assert not card["positions_available"]
+        assert "no payload transform" in card["positions_note"]
+
     def test_an_unknown_map_is_a_404(self):
         assert self.client.get("/api/maps/Nowhere").status_code == 404
 
@@ -311,6 +369,140 @@ class Endpoints(unittest.TestCase):
 
     def test_the_schema_is_published(self):
         assert self.client.get("/openapi.json").status_code == 200
+
+
+class MapsAreAddressedByName(unittest.TestCase):
+    """
+    The key in `/api/maps/{key}` is the manifest's display name.
+
+    `ArtCache.maps` is keyed by `map_url` because that is the exact join a
+    replay states, and a `map_url` cannot be a URL segment: it is
+    `/Game/Maps/Infinity/Infinity`, and the percent encoding that would hide
+    those slashes is decoded again before the router sees it.  So the wire
+    sends the display name as `map_key` and the route resolves that.
+
+    The pair below is the whole test: whatever `map_key` a replay document
+    carries must be a key `/api/maps` answers to.  Sent by one function and
+    resolved by another, that agreement is exactly the kind that rots quietly.
+    """
+
+    def setUp(self):
+        self.art = ArtCache(
+            root=Path("assets"),
+            source="test",
+            maps={
+                "/Game/Maps/Triad/Triad": MapArt(
+                    name="Haven",
+                    codename="Triad",
+                    map_url="/Game/Maps/Triad/Triad",
+                    transform=Transform(8.1e-05, -8.1e-05, 0.5, 0.5),
+                    callouts=(Callout("A Site", 100.0, 200.0),),
+                ),
+            },
+        )
+        self.client = TestClient(
+            create_app(Settings(demo_path=".", use_cache=False, art=self.art)),
+        )
+
+    def test_the_map_key_a_replay_sends_is_a_key_the_map_route_answers_to(self):
+        key = wire.replay_doc(_replay(), "abc123", self.art)["map_key"]
+        assert key == "Haven"
+        response = self.client.get(f"/api/maps/{key}")
+        assert response.status_code == 200
+        assert response.json()["map_url"] == "/Game/Maps/Triad/Triad"
+
+    def test_every_summary_names_itself_by_that_same_key(self):
+        for summary in self.client.get("/api/maps").json():
+            assert self.client.get(f"/api/maps/{summary['name']}").status_code == 200
+
+    def test_the_internal_map_path_is_not_a_key(self):
+        """
+        It reads like one and cannot be one: it has slashes in it.
+
+        Trying it is a 404 rather than a match on the dictionary this cache is
+        actually keyed by, which is the mistake this test exists to catch.
+        """
+        for shaped in (
+            "/api/maps//Game/Maps/Triad/Triad",
+            "/api/maps/%2FGame%2FMaps%2FTriad%2FTriad",
+        ):
+            assert self.client.get(shaped).status_code == 404
+
+
+class SightMaskTravelsWithItsCaption(unittest.TestCase):
+    """
+    A cone is drawn from a mask, and the mask arrives with the sentence.
+
+    `sight.CAPTION` says what a cone raycast against a radar's alpha channel
+    is and is not -- a silhouette, not collision, and two-dimensional.  It
+    travels in the same document as the cells so that no client can render a
+    wedge without having been handed the words for it.
+    """
+
+    def setUp(self):
+        self._dir = TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+        self.radar = self.tmp / "minimap.png"
+        _write_radar(self.radar)
+        self.art = ArtCache(
+            root=self.tmp,
+            source="test",
+            maps={
+                "/Game/Maps/Triad/Triad": MapArt(
+                    name="Haven",
+                    map_url="/Game/Maps/Triad/Triad",
+                    minimap=self.radar,
+                    transform=Transform(8.1e-05, -8.1e-05, 0.5, 0.5),
+                ),
+                "/Game/Maps/Duality/Duality": MapArt(
+                    name="Bind",
+                    map_url="/Game/Maps/Duality/Duality",
+                    transform=Transform(8.1e-05, -8.1e-05, 0.5, 0.5),
+                ),
+            },
+        )
+        self.client = TestClient(
+            create_app(Settings(demo_path=".", use_cache=False, art=self.art)),
+        )
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def test_the_mask_is_the_one_python_thresholded(self):
+        doc = self.client.get("/api/maps/Haven/sight").json()
+        schema.SightDoc.model_validate(doc)
+        built = sight.SightMap.from_path(self.radar)
+        assert doc["size"] == built.size
+        assert base64.b64decode(doc["cells"]) == built.cells
+        assert doc["open_fraction"] == pytest.approx(built.open_fraction)
+
+    def test_the_caption_is_sight_pys_own_words(self):
+        doc = self.client.get("/api/maps/Haven/sight").json()
+        assert doc["caption"] == sight.CAPTION
+        assert "not collision" in doc["caption"]
+
+    def test_the_constants_come_from_the_module_that_decides_them(self):
+        doc = self.client.get("/api/maps/Haven/sight").json()
+        assert doc["max_range_uu"] == sight.MAX_RANGE_UU
+        assert doc["fov_degrees"] == sight.FOV_DEGREES
+        assert doc["ray_step_degrees"] == sight.RAY_STEP_DEGREES
+        assert doc["seed_cells"] == sight.SEED_CELLS
+        assert doc["probe_uu"] == sight.PROBE_UU
+
+    def test_a_map_with_no_radar_is_unavailable_rather_than_empty(self):
+        """
+        An empty mask is a real answer -- a map that is entirely void.
+
+        Sending one for a PNG that is simply not on disk would make every cone
+        silently collapse instead of the interface saying the layer is not
+        available, so this is a 404 with a sentence.
+        """
+        response = self.client.get("/api/maps/Bind/sight")
+        assert response.status_code == 404
+        assert "no radar image" in response.json()["detail"]
+
+    def test_an_unknown_map_is_a_404_like_any_other(self):
+        assert self.client.get("/api/maps/Nowhere/sight").status_code == 404
 
 
 class MapEndpointTakesNoReplay(unittest.TestCase):
@@ -333,6 +525,57 @@ class MapEndpointTakesNoReplay(unittest.TestCase):
     def test_the_map_document_shares_no_field_with_the_replay_document(self):
         overlap = set(schema.MapDoc.model_fields) & set(schema.ReplayDoc.model_fields)
         assert overlap == {"name"} or not overlap - {"name"}
+
+
+class TheBuiltPageDoesNotAnswerForTheApi(unittest.TestCase):
+    """
+    The page's catch-all sits below every route, including the API's.
+
+    It has to: the browser routes on the client, so `/replay/<id>` is an
+    address no file answers to and the page has to be served for it.  But the
+    same rule would have a withdrawn or mistyped endpoint reply 200 with a
+    document of HTML -- and then the client parses it as JSON and reports
+    something with no relation to what actually went wrong.
+    """
+
+    def setUp(self):
+        self._dir = TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+        built = self.tmp / "dist"
+        (built / app_mod.SPA_ASSETS).mkdir(parents=True)
+        (built / "index.html").write_text("<!doctype html><title>page</title>")
+        self.client = TestClient(
+            create_app(
+                Settings(demo_path=str(self.tmp), web_dir=built, use_cache=False),
+            ),
+        )
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def test_a_client_route_is_served_the_page(self):
+        response = self.client.get("/replay/abc123")
+        assert response.status_code == 200
+        assert "<title>page</title>" in response.text
+
+    def test_an_api_address_that_matches_no_route_is_a_404_not_the_page(self):
+        response = self.client.get("/api/nothing-here")
+        assert response.status_code == 404
+        assert "no such endpoint" in response.json()["detail"]
+
+    def test_a_map_key_shaped_like_an_internal_path_is_a_404_not_the_page(self):
+        """
+        The slashes in `/Game/Maps/...` split it across the router's segments.
+
+        Percent-encoding them does not help -- the path is decoded before the
+        route is matched -- so this falls through to the catch-all, and would
+        have answered 200 with the page.
+        """
+        for shaped in (
+            "/api/maps//Game/Maps/Triad/Triad",
+            "/api/maps/%2FGame%2FMaps%2FTriad%2FTriad",
+        ):
+            assert self.client.get(shaped).status_code == 404
 
 
 class ArtIsAPictureOnly(unittest.TestCase):

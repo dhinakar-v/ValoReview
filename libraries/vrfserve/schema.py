@@ -188,6 +188,32 @@ class MapDoc(BaseModel):
     callouts: list[CalloutDoc]
 
 
+class SightDoc(BaseModel):
+    """
+    One map's playable silhouette, thresholded in Python, plus its caption.
+
+    The caption is not decoration and is not optional: a cone drawn from this
+    is the radar's own silhouette and not a line of sight, and travelling the
+    sentence with the cells is what stops a client drawing one without it.
+
+    `cells` is base64 of one byte per cell, row-major, 1 open and 0 blocked --
+    `sight.SightMap.cells` unchanged, so the browser's `blocked` is a literal
+    port rather than a second implementation.  The constants below are sent
+    for the same reason: `sight.py` is where they are decided.
+    """
+
+    map_key: str
+    size: int
+    cells: str
+    open_fraction: float
+    caption: str
+    max_range_uu: float
+    fov_degrees: float
+    ray_step_degrees: float
+    seed_cells: int
+    probe_uu: float
+
+
 class MapSummary(BaseModel):
     name: str
     codename: str
@@ -256,6 +282,25 @@ class SpikeDoc(BaseModel):
     round_no: int
 
 
+class PlacementDoc(BaseModel):
+    """
+    One actor a cast put in the world, at the coordinate it appeared at.
+
+    Unreal units, in the same frame as a `Position`, so it goes through the
+    map transform exactly as a player does.  There is no `t_ms`: the thing
+    spawned once and never moves, which is why it has a spawn point at all --
+    anything that moves has a track instead.
+    """
+
+    actor_id: int
+    kind: str
+    name: str
+    display: str
+    x: float
+    y: float
+    z: float
+
+
 class AbilityCastDoc(BaseModel):
     """
     One cast, with both names, because only two of the four slots join.
@@ -283,6 +328,12 @@ class AbilityCastDoc(BaseModel):
     # pawn moved: no ability publishes a range anywhere.
     travel_uu: float | None
     travel_note: str | None
+    # Every non-moving actor this cast spawned, at the coordinate its channel
+    # opened at.
+    placements: list[PlacementDoc]
+    # Which of them says where the cast ended up.  Null for a cast whose pawn
+    # has a track, and for one decoded before the spawn transform was read.
+    landed: PlacementDoc | None
 
 
 class ProvenanceEntry(BaseModel):
@@ -322,6 +373,11 @@ class ReplayDoc(BaseModel):
     score: list[int]
     has_positions: bool
     has_abilities: bool
+    # Whether a decode could work at all, which is not the same question as
+    # whether one has happened. The same membership test `scan` makes against
+    # the decoder's own table, so a card and a replay cannot disagree.
+    positions_available: bool
+    positions_note: str
     # Prose from the decoder, shown verbatim: `tracks.attach` never raises for
     # want of positions, it says what happened here.
     position_source: str

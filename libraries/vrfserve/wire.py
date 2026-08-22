@@ -26,9 +26,11 @@ which is the coin flip that method exists to avoid.
 
 from __future__ import annotations
 
+import base64
 from typing import TYPE_CHECKING
 
 from vrfview import provenance as provenance_mod
+from vrfview import sight as sight_mod
 from vrfview.abilities import NO_POSITION, travel
 
 if TYPE_CHECKING:
@@ -100,6 +102,37 @@ def map_art(art: MapArt, root: Path) -> dict:
     }
 
 
+def sight_mask(mask, map_key: str) -> dict:
+    """
+    One map's playable silhouette, and the sentence that says what it is.
+
+    The mask is thresholded here rather than in the browser, and that is not
+    an optimisation.  `sight.GRID` and `sight.ALPHA_FLOOR` decide what "open"
+    means, and a canvas downscale is not Pillow's, so a mask built at the far
+    end would differ in its rim by a few cells on every map -- which is
+    precisely the kind of difference no test could then pin.  One authority,
+    one answer, and `tests/golden/cone.json` checks the arithmetic on top of
+    it in both languages.
+
+    `caption` travels **with** the cells, so nothing can draw a cone without
+    having been handed the sentence saying what it is a cone of.  One byte
+    per cell rather than a bit, because the far end's `blocked` is then a
+    literal port of this one's and not a second thing to get right.
+    """
+    return {
+        "map_key": map_key,
+        "size": mask.size,
+        "cells": base64.b64encode(mask.cells).decode("ascii"),
+        "open_fraction": mask.open_fraction,
+        "caption": sight_mod.CAPTION,
+        "max_range_uu": sight_mod.MAX_RANGE_UU,
+        "fov_degrees": sight_mod.FOV_DEGREES,
+        "ray_step_degrees": sight_mod.RAY_STEP_DEGREES,
+        "seed_cells": sight_mod.SEED_CELLS,
+        "probe_uu": sight_mod.PROBE_UU,
+    }
+
+
 def _agent_urls(cache: ArtCache | None, name: str) -> dict:
     if cache is None or not name:
         return {"icon_url": None, "portrait_url": None, "role_icon_url": None}
@@ -151,6 +184,19 @@ def loadout(entry, cache: ArtCache | None) -> dict:
     }
 
 
+def placement(entry) -> dict:
+    """One actor a cast put in the world, at the coordinate it appeared at."""
+    return {
+        "actor_id": entry.actor_id,
+        "kind": entry.kind,
+        "name": entry.name,
+        "display": entry.display,
+        "x": entry.x,
+        "y": entry.y,
+        "z": entry.z,
+    }
+
+
 def ability_cast(cast, replay: Replay, cache: ArtCache | None) -> dict:
     """
     One cast, with both names and a measured distance or none at all.
@@ -158,6 +204,15 @@ def ability_cast(cast, replay: Replay, cache: ArtCache | None) -> dict:
     `travel_uu` is null rather than zero where no pawn moved: zero is a real
     answer for a turret, and a range this project could publish does not exist
     -- no ability carries one in the replay or in Riot's catalogue.
+
+    `placements` and `landed` are the same pair the model keeps: every
+    non-moving actor this cast spawned, and the one of them that says where
+    the cast ended up.  Both travel, because a client that had only the list
+    would have to re-derive the choice between them, and the reasoning for
+    that choice lives in `abilities.PLACING_KINDS` and should stay there.
+    `landed` is null for a cast with a pawn -- the pawn has a track, and a
+    track outranks a spawn point -- and for one decoded before the spawn
+    transform was read, which is every v1 and v2 sidecar.
     """
     published = None
     icon = None
@@ -190,6 +245,8 @@ def ability_cast(cast, replay: Replay, cache: ArtCache | None) -> dict:
         "has_track": cast.has_track,
         "travel_uu": distance,
         "travel_note": None if distance is not None else NO_POSITION,
+        "placements": [placement(p) for p in cast.placements],
+        "landed": placement(cast.landed) if cast.landed is not None else None,
     }
 
 
@@ -208,7 +265,14 @@ def sections(replay: Replay, cache: ArtCache | None) -> list[dict]:
     ]
 
 
-def replay_doc(replay: Replay, replay_id: str, cache: ArtCache | None) -> dict:
+def replay_doc(
+    replay: Replay,
+    replay_id: str,
+    cache: ArtCache | None,
+    *,
+    available: bool = False,
+    note: str = "",
+) -> dict:
     """
     Everything about one replay except the position samples.
 
@@ -216,6 +280,12 @@ def replay_doc(replay: Replay, replay_id: str, cache: ArtCache | None) -> dict:
     magnitude larger and because a replay is worth showing before they arrive.
     What stays here is `position_source`: whether a decode happened, and what
     it found, is a fact about this replay and not about a download.
+
+    `available` and `note` answer the *other* question -- whether a decode
+    could work at all on this build -- and are handed in rather than derived,
+    because deriving them means importing the decoder's branch table and this
+    module reaches no decoder.  `vrfhome.scan.positions_available` is the one
+    authority; `vrfserve.app` asks it.
     """
     art = cache.map_art(replay.map_path) if cache else None
     return {
@@ -268,6 +338,15 @@ def replay_doc(replay: Replay, replay_id: str, cache: ArtCache | None) -> dict:
         "score": list(replay.score),
         "has_positions": replay.has_positions,
         "has_abilities": replay.has_abilities,
+        # Whether a decode *could* work, which is a different question from
+        # whether one has happened. Handed in rather than worked out here:
+        # the answer is a membership test against the decoder's own branch
+        # table, which lives in `vrfnet`, and this module is the one place in
+        # the server that reaches neither a framework nor a decoder. One
+        # authority -- `vrfhome.scan.positions_available` -- so a card and a
+        # replay can never disagree about a capture.
+        "positions_available": available,
+        "positions_note": note,
         # Prose, and shown verbatim.  `attach` never raises for want of
         # positions; it says what happened here instead.
         "position_source": replay.position_source,

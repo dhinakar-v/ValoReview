@@ -226,6 +226,27 @@ class ArtCache:
                 return entry
         return None
 
+    def map_art_by_name(self, name: str) -> MapArt | None:
+        """
+        Art for a map named rather than identified by its internal path.
+
+        `maps` is keyed by `map_url` because that is what a replay states and
+        the only exact join there is.  A URL cannot carry one, though --
+        `/Game/Maps/Infinity/Infinity` has three slashes in it, and percent
+        encoding them back does not survive the server decoding the path --
+        so the web interface addresses a map by the manifest's own display
+        name, which is unique in it by construction and is a single segment.
+
+        Exact, not case-folded: both sides come from the same manifest, and a
+        near-match would be a different map with a plausible name.
+        """
+        if not name:
+            return None
+        for entry in self.maps.values():
+            if entry.name == name:
+                return entry
+        return None
+
     def agent_art(self, uuid: str) -> AgentArt | None:
         """Art for an agent UUID.  Both sides are lowered, as valcatalog does."""
         return self.agents.get(uuid.lower()) if uuid else None

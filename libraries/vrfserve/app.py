@@ -41,7 +41,7 @@ from vrfhome import prewarm, scan
 from vrfserve import schema, wire
 from vrfserve.library import Library
 from vrfview import art as art_mod
-from vrfview import csharpdecode, names, pipeline, positionfile, tracks
+from vrfview import csharpdecode, names, pipeline, positionfile, sight, tracks
 
 if TYPE_CHECKING:
     from vrfview.art import ArtCache
@@ -53,6 +53,10 @@ WEB_HINT = "the web interface is not built; run: cd web && npm install && npm ru
 
 NO_SUCH_REPLAY = "no replay with that id in the current scan"
 NO_SUCH_MAP = "no art for that map"
+NO_SIGHT_MASK = (
+    "no radar image for that map, so there is no silhouette to raycast "
+    "against; the sight layer is unavailable rather than empty"
+)
 
 # Where Vite is told to emit the bundle. Not its default of `assets`: that
 # is where Riot's art is served from, and a bundle there would be shadowed
@@ -344,6 +348,24 @@ def _decode_now(library: Library, config: Settings, replay_id: str, path) -> obj
     return replay
 
 
+def _replay_doc(replay, replay_id: str, config: Settings) -> dict:
+    """
+    One replay on the wire, with the question `wire` cannot answer answered.
+
+    Whether a decode *could* work is a membership test against the decoder's
+    own branch table, and `wire` reaches no decoder by design -- so the answer
+    is asked here, of `vrfhome.scan`, which is the one place the rule lives and
+    which the match list already asks the same way.
+    """
+    return wire.replay_doc(
+        replay,
+        replay_id,
+        config.art,
+        available=scan.positions_available(replay.build),
+        note=scan.positions_note(replay.build),
+    )
+
+
 def _add_replay_routes(
     app: FastAPI,
     library: Library,
@@ -363,7 +385,7 @@ def _add_replay_routes(
         if entry is None:
             raise HTTPException(status_code=404, detail=NO_SUCH_REPLAY)
         with entry.lock:
-            return wire.replay_doc(entry.replay, replay_id, config.art)
+            return _replay_doc(entry.replay, replay_id, config)
 
     @app.delete(f"{API}/replays/{{replay_id}}")
     def close_replay(replay_id: str) -> dict:
@@ -409,7 +431,7 @@ def _add_replay_routes(
                 replay = _decode_now(library, config, replay_id, path)
         finally:
             preparation.resume()
-        return wire.replay_doc(replay, replay_id, config.art)
+        return _replay_doc(replay, replay_id, config)
 
     @app.get(f"{API}/replays/{{replay_id}}/positions")
     def read_positions(replay_id: str) -> Response:
@@ -437,6 +459,12 @@ def _add_replay_routes(
 
 
 def _add_map_routes(app: FastAPI, config: Settings) -> None:
+    # One silhouette per radar image, built on demand and kept.  A server
+    # shows many maps over its life where a viewer shows one, so the cache
+    # earns more here than it does on the desktop -- and building one costs
+    # opening a 1024x1024 PNG, which is not something to do per request.
+    silhouettes = sight.SightCache()
+
     @app.get(f"{API}/maps", response_model=list[schema.MapSummary])
     def read_maps() -> list[dict]:
         art = config.art
@@ -463,10 +491,31 @@ def _add_map_routes(app: FastAPI, config: Settings) -> None:
         `Replay` by design, because it describes the map and not the match.
         Positions belong on the minimap and are not smuggled in here.
         """
-        entry = config.art.maps.get(key)
+        entry = config.art.map_art_by_name(key)
         if entry is None:
             raise HTTPException(status_code=404, detail=NO_SUCH_MAP)
         return wire.map_art(entry, config.art.root)
+
+    @app.get(f"{API}/maps/{{key}}/sight", response_model=schema.SightDoc)
+    def read_sight(key: str) -> dict:
+        """
+        The playable silhouette a sight cone is raycast against.
+
+        Handed a map key and nothing else, exactly as `read_map` is: a
+        silhouette is a fact about Bind, not about a match on it.
+
+        A map with no radar image on disk is a 404 rather than an empty mask.
+        An empty mask is a real answer -- a map that is entirely void -- and
+        sending one for a missing PNG would have every cone silently collapse
+        to nothing instead of the interface saying the layer is unavailable.
+        """
+        entry = config.art.map_art_by_name(key)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=NO_SUCH_MAP)
+        mask = silhouettes.get(entry.minimap)
+        if mask is None:
+            raise HTTPException(status_code=404, detail=NO_SIGHT_MASK)
+        return wire.sight_mask(mask, key)
 
 
 def _mount_static(app: FastAPI, config: Settings) -> None:
@@ -511,6 +560,13 @@ def _mount_static(app: FastAPI, config: Settings) -> None:
 
     @app.get("/{path:path}", response_class=FileResponse)
     def page(path: str) -> FileResponse:
+        # An API address that matched no route is a 404, never the page.  This
+        # catch-all sits below every route including the API ones, so without
+        # this a mistyped or withdrawn endpoint answers 200 with a document of
+        # HTML -- and the client parses it as JSON and reports something that
+        # has nothing to do with what went wrong.
+        if path == API.lstrip("/") or path.startswith(f"{API.lstrip('/')}/"):
+            raise HTTPException(status_code=404, detail=f"no such endpoint: /{path}")
         candidate = (config.web_dir / path).resolve()
         root = config.web_dir.resolve()
         if path and candidate.is_file() and candidate.is_relative_to(root):
