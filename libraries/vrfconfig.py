@@ -11,7 +11,7 @@ Why this is not python-dotenv
 The brief asks for `python-dotenv`, and `dotenv_values()` would implement
 exactly the contract above -- read the file, mutate nothing, let the real
 environment win.  `libraries/envfile.py` already implements that contract, and
-`oodlefind` and `valapi` already read `.env` through it.  Adopting the package
+`oodlefind` and `csharpdecode` already read `.env` through it.  Adopting the package
 here would have put two readers of one file in one process, differing only in
 which module they live in, so the dependency was declined and this module calls
 `envfile` instead.  The dependencies this project does keep (fastapi, uvicorn,

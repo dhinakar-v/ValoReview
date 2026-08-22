@@ -99,7 +99,7 @@ class PitchPointsAtTheVictim(unittest.TestCase):
     def setUpClass(cls):
         from vrfview import pipeline, tracks
 
-        replay = pipeline.open_replay(DEMO_12_10, None)
+        replay = pipeline.open_replay(DEMO_12_10)
         tracks.attach(replay, DEMO_12_10)
         if not replay.has_positions:
             raise unittest.SkipTest(replay.position_source)

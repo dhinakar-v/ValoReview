@@ -62,10 +62,8 @@ class Library:
     def __init__(
         self,
         result: scan.ScanResult | None = None,
-        catalog=None,
         root: str | None = None,
     ) -> None:
-        self.catalog = catalog
         # Overrides DEMO_PATH the way a command-line flag does; None lets
         # vrfconfig resolve it and report which of the three sources answered.
         self.root = root
@@ -123,7 +121,7 @@ class Library:
         path = self.registry.path(replay_id)
         if path is None:
             return None
-        replay = pipeline.open_replay(path, self.catalog)
+        replay = pipeline.open_replay(path)
         entry = Entry(replay=replay, path=Path(path), replay_id=replay_id)
         with self._guard:
             self._entries[replay_id] = entry

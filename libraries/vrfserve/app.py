@@ -89,11 +89,10 @@ class _Preparation:
         self._statuses: dict[str, dict] = {}
         self.worker = None
 
-    def start(self, cards, catalog, registry) -> None:
+    def start(self, cards, registry) -> None:
         self.worker = prewarm.Prewarmer(
             cards,
             on_change=lambda path, status: self._record(registry, path, status),
-            catalog=catalog,
         )
         # Seed from the worker's own queue, not from every card. `Prewarmer`
         # queues only what is playable, and reporting QUEUED for a capture that
@@ -140,7 +139,6 @@ class Settings:
 
     demo_path: str | None = None
     art: ArtCache = field(default_factory=art_mod.ArtCache)
-    catalog: object | None = None
     web_dir: Path = WEB_DIR
     use_cache: bool = True
     # The compiled decoder. None lets csharpdecode resolve it the way
@@ -193,7 +191,7 @@ def decoder_doc(parser_exe: str | None) -> dict:
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the application over one scan of one replay directory."""
     config = settings if settings is not None else Settings()
-    library = Library(catalog=config.catalog, root=config.demo_path)
+    library = Library(root=config.demo_path)
     library.rescan(cache=config.use_cache)
 
     preparation = _Preparation()
@@ -202,7 +200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         """Fill the position cache while nobody is asking for anything."""
         if config.prewarm:
-            preparation.start(library.result.cards, config.catalog, library.registry)
+            preparation.start(library.result.cards, library.registry)
         yield
         # Asked, not waited for: the worker is a daemon and checks between
         # captures, so it drops out inside a second.
@@ -238,7 +236,7 @@ def _add_config_routes(app: FastAPI, config: Settings) -> None:
         return {
             "demo_root": demo_root_doc(vrfconfig.demo_root(config.demo_path)),
             "decoder": decoder_doc(config.parser_exe),
-            "catalog_source": getattr(config.catalog, "described", "") or "",
+            "catalog_source": names.CATALOG_SOURCE,
             "web_built": config.web_built,
             "web_hint": "" if config.web_built else WEB_HINT,
         }
@@ -298,11 +296,11 @@ def _decode_now(library: Library, config: Settings, replay_id: str, path) -> obj
     arriving mid-decode must see one replay or the other -- never one whose
     positions have landed but whose codenames have not.
     """
-    replay = pipeline.open_replay(path, config.catalog)
+    replay = pipeline.open_replay(path)
     tracks.attach(replay, path, tracks.Options(parser_exe=config.parser_exe))
     # Again, because the codenames only exist once the stream has been read:
     # naming before the decode leaves every agent a `Hunter`.
-    names.resolve(replay, config.catalog)
+    names.resolve(replay)
     library.replace(replay_id, replay)
     return replay
 

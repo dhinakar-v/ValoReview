@@ -134,22 +134,24 @@ narrows the set. The art is Riot Games' intellectual property and the cache is
 gitignored; nothing here redistributes it. `docs/valorant-assets.md` documents the
 folder, the manifest schema and the measured world-to-minimap transform.
 
-## Names, and the Riot API
+## Names
 
-A replay states its map as an internal asset path (`/Game/Maps/Infinity/Infinity`)
-and its agents as UUIDs. Both resolve against Riot's published content catalogue,
-which is what turns them into `Abyss` and `Astra, Killjoy, Waylay, ...` in the
-viewer and in `dump`.
+A replay states its map as an internal asset path (`/Game/Maps/Infinity/Infinity`),
+its agents as UUIDs, and each player's agent as a codename on its pawn's archetype
+(`/Game/Characters/Hunter/Hunter_PC` is Sova). Two of those three are turned into
+names here, from tables compiled into the repository: `loader.MAP_NAMES` for the
+map and `names.AGENT_CODENAMES` for the codename.
 
-The lookup is cache-first and needs no key: `libraries/valcatalog.py` reads
-`assets/content-<locale>.json` if a refresh has written one, else the
-`assets/manifest.json` that `fetch-assets` already produces, else it falls back to
-a built-in codename table -- and it always says which of the three answered.
+The third -- agent UUID to name -- is not, and the interface does not pretend
+otherwise: `Loadout.agent` is empty and the roster is reported in the file's own
+order. Nothing links a loadout to an actor net ID anyway, so a named roster would
+not have told you who was who.
 
-`fetch-assets` is unauthenticated and is what the server actually consumes; the
-`val-content-v1` refresh path in `libraries/valapi.py` is the only thing in the
-project that calls api.riotgames.com, and it needs a personal development key in
-`.env` as `RIOT_API=RGAPI-...`. Everything else works offline and keyless.
+**Nothing in this project opens a socket except `fetch-assets`, which needs no
+key.** There was a client for Riot's authenticated API (`valapi`) and a catalogue
+reader over its response (`valcatalog`); the server never passed a catalogue to
+anything, so both were removed along with the `RIOT_API` key path. What feeds the
+browser is the unauthenticated `assets/manifest.json` that `fetch-assets` writes.
 
 ## Art
 
@@ -193,12 +195,12 @@ no decompression.
     runners\vrf-serve.bat --assets DIR        read the cache from somewhere else
 
 Player names, ranks and per-round economy live in `val-match-v1`, which is
-**403 on a personal development key** --
-every endpoint, including `/matches/{matchId}`, before the match id is even parsed.
-So `dump` reports the match id it read from the container header and does not look
-it up. `libraries/valapi.py` implements the call for the day a production key is
-granted, and diagnoses the 403 rather than blaming the key.
-`docs/valorant-api.md` is the full endpoint and DTO reference.
+**403 on a personal development key** -- every endpoint, including
+`/matches/{matchId}`, before the match id is even parsed. So the match id read
+from the container header is reported and never looked up. A client for that call
+was implemented and has been removed with the rest of the API path;
+`docs/archive/valorant-api.md` keeps the endpoint and DTO reference for the day a
+production key is granted.
 
 ## The browser interface
 

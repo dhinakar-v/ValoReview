@@ -1,8 +1,10 @@
 """
 The art cache, resolved to file paths.  The second reader over the manifest.
 
-valcatalog reduces assets/manifest.json to two name lookups and throws the rest
-away.  This module reads the same file for what valcatalog discards: the PNG
+There used to be a second reader over assets/manifest.json -- `valcatalog`,
+which took two name lookups from it and threw the rest away.  It has been
+removed, so this is the only reader now, and it takes what it always took: the
+PNG
 paths, the world-to-image transform and Riot's callout coordinates.  The split
 is deliberate -- a name is a claim about the replay, a file path is not, and the
 two are cached and reported separately.
@@ -12,14 +14,14 @@ data work, so the whole of this module is tested with no art on disk and no
 image library loaded -- which is what lets a handler resolve a radar's URL and
 transform without opening the PNG behind them.
 
-The joins, which are valcatalog's and not re-derived here
----------------------------------------------------------
+The joins the manifest supports
+-------------------------------
     Replay.map_path              == manifest["maps"][*]["map_url"]
     Loadout.character_id.lower() == manifest["agents"][*]["uuid"].lower()
 
 `asset_path` looks like the map join key and is not: it holds
 `ShooterGame/Content/Maps/Ascent/Ascent_PrimaryAsset` where a replay states
-`/Game/Maps/Ascent/Ascent`.  See valcatalog's module docstring.
+`/Game/Maps/Ascent/Ascent`, which is why a map is addressed by display name.
 
 Never build a path from a display name
 --------------------------------------
@@ -192,7 +194,7 @@ class ArtCache:
     """
     Resolved art for one assets/ directory, plus where it came from.
 
-    Mirrors valcatalog.Catalog: an absent cache is the ordinary state of a clean
+    An absent cache is the ordinary state of a clean
     checkout, so it is represented as an empty value with a readable `described`
     rather than as an exception.
     """
@@ -290,7 +292,7 @@ class ArtCache:
         return None
 
     def agent_art(self, uuid: str) -> AgentArt | None:
-        """Art for an agent UUID.  Both sides are lowered, as valcatalog does."""
+        """Art for an agent UUID.  Both sides are lowered; the manifest varies."""
         return self.agents.get(uuid.lower()) if uuid else None
 
     def agent_art_by_name(self, name: str) -> AgentArt | None:
@@ -447,7 +449,7 @@ def load(root: Path | str | None = None) -> ArtCache:
     """
     Read an assets/ directory, or return an empty cache saying why not.
 
-    Unlike valcatalog.load this never raises, even for an explicitly named
+    This never raises, even for an explicitly named
     directory.  Missing art costs the viewer a band and a button; missing names
     would change what the interface claims.  The path tried is recorded in
     `reason` either way, so a mistyped --assets is visible in the provenance

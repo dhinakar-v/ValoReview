@@ -91,7 +91,6 @@ class Prewarmer:
         self,
         cards,
         on_change: Callable[[Path, Status], None] | None = None,
-        catalog=None,
     ) -> None:
         # Only what is worth decoding, in the order the list shows it.  An
         # unreadable file and an unsupported build are both refusals `scan`
@@ -99,7 +98,6 @@ class Prewarmer:
         # question that has one answer.
         self.queue = [c for c in cards if c.playable]
         self.on_change = on_change
-        self.catalog = catalog
         self._status: dict[Path, Status] = {}
         self._stop = threading.Event()
         self._resume = threading.Event()

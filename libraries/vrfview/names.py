@@ -2,53 +2,66 @@
 The one place external knowledge is joined onto a replay.
 
 vrfview.infer derives facts from the file's own contents.  This module does
-something different and keeps it separate on purpose: it takes UUIDs and asset
-paths the file states, looks them up in Riot's published content catalogue, and
-records which source answered.  Nothing here decides anything; if the catalogue
-has no entry the field keeps whatever the loader put there and a note says so.
+something different and keeps it separate on purpose: it takes the codename a
+player's pawn states and turns it into the name a person would use.  Nothing
+here decides anything; a codename with no entry keeps whatever the loader put
+there and a note says so, and the notes go in `Replay.catalog_notes` rather
+than `Replay.notes`, because a looked-up fact and a derived one are different
+claims.
 
-Three joins, all verified live on 2026-08-21 (docs/valorant-api.md):
+There was a live catalogue behind this, and it has been removed
+---------------------------------------------------------------
+`valcatalog` reduced a `val-content-v1` response to two more joins -- map asset
+path to name, and agent UUID to name -- and `valapi` fetched one.  Nothing ever
+passed a catalogue in: `vrf_serve` constructed its settings without one, so
+every call arrived with `None` and took the fallback path below.  A parameter
+that is always `None` is not a feature, so both modules went, and with them the
+only thing in the project that opened a socket.
 
-    demo_header.maps[0]                 == ContentItemDto.assetPath   (maps)
-    playerLoadouts[].characterId        == ContentItemDto.id          (characters)
+What that costs is honest and small.  Map names come from `loader.MAP_NAMES`,
+which the loader has already applied.  `Loadout.agent` -- the UUID join -- is
+now never filled, so `Replay.roster` is always empty; it was already empty in
+every response the server has ever sent.  The cross-check that compared the
+pawn agents against the loadout roster went with it, for the same reason: with
+one side permanently empty it could never fire.
+
+The join that is left, and its one gap
+--------------------------------------
     Player.codename                     == AgentDto.developerName     (agents)
+
+`developerName` is published by valorant-api.com and has no equivalent in
+val-content-v1.  AGENT_CODENAMES below is the table, sourced from it on
+2026-08-21 -- the exact counterpart of `loader.MAP_NAMES`, and reported as such.
 
 Why the roster is still not attached to players
 -----------------------------------------------
 The loadout list and the actor net IDs in the event stream remain two disjoint
 namespaces: no field anywhere links them, and nothing decoded since has changed
-that.  So the loadouts are still reported as a roster in the file's own order,
-and "loadout slot 3 is actor 646" is still an invention.
+that.  So the loadouts are still reported in the file's own order, and "loadout
+slot 3 is actor 646" is still an invention.
 
-What did change is that a player no longer needs the roster to have an agent.
-Its pawn states its own archetype -- `/Game/Characters/Hunter/Hunter_PC` --
-and vrfview.tracks reads the codename out of it.  That is a fact about the
-actor, from the actor, so naming it here is a lookup and not a guess.  The two
-paths never cross: `Loadout.agent` comes from a UUID and `Player.agent` from a
-codename, and neither is ever filled from the other.
-
-The codename join, and its one gap
-----------------------------------
-`developerName` is published by valorant-api.com and has no equivalent in
-val-content-v1, so only a fetch_assets manifest carries it, and only one
-written since fetch_assets began recording it.  AGENT_CODENAMES below is the
-keyless fallback for every other case -- the exact counterpart of
-loader.MAP_NAMES, sourced the same way, and reported as such.
+What did change, long before this, is that a player no longer needs the roster
+to have an agent.  Its pawn states its own archetype --
+`/Game/Characters/Hunter/Hunter_PC` -- and vrfview.tracks reads the codename
+out of it.  That is a fact about the actor, from the actor, so naming it here
+is a lookup and not a guess.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
 from vrfview.abilities import GRENADE, ULTIMATE
-from vrfview.model import Loadout, Player, Replay
+from vrfview.model import Player, Replay
 
-if TYPE_CHECKING:
-    from valcatalog import Catalog
-
-MAP_NAME_SOURCE_CATALOG = "Riot content catalogue"
 CODENAME_SOURCE_TABLE = "built-in codename table"
+
+# What `Replay.catalog_source` says now that there is no catalogue to consult.
+# A sentence rather than an empty string: the field is on the wire and a reader
+# is owed the reason it is not naming a published source.
+CATALOG_SOURCE = (
+    "built-in tables (map names and agent codenames); no content catalogue is consulted"
+)
 
 # Riot's internal agent names, as valorant-api.com published them on
 # 2026-08-21.  Keyed lowercase because the archetype path capitalises and the
@@ -87,27 +100,22 @@ AGENT_CODENAMES = {
 }
 
 
-def resolve(replay: Replay, catalog: Catalog | None) -> Replay:
-    """Apply a catalogue to a replay's map path, agent UUIDs and codenames."""
-    usable = _describe(replay, catalog)
-    if usable is not None:
-        _resolve_map(replay, usable)
-        _resolve_agents(replay, usable)
-    # Codenames are resolved either way: the built-in table needs no catalogue
-    # and is the only thing a player pawn can fall back on.
-    _resolve_codenames(replay, usable)
-    _resolve_casts(replay, usable)
+def resolve(replay: Replay) -> Replay:
+    """Name each player from the codename its pawn archetype stated."""
+    replay.catalog_source = CATALOG_SOURCE
+    _resolve_codenames(replay)
+    _resolve_casts(replay)
     return replay
 
 
-def _resolve_casts(replay: Replay, catalog: Catalog | None) -> None:
+def _resolve_casts(replay: Replay) -> None:
     """
     Name the agent behind each ability cast, and say what could not be named.
 
     An ability actor's path states its agent's codename, so the caster is a
     lookup of the same kind `_resolve_codenames` makes for a pawn -- and it is
     made here, in the module that owns lookups, rather than in `tracks`, which
-    reads the stream and is not allowed to consult a catalogue.
+    reads the stream and is not allowed to consult a table.
 
     The ability's own name is a different matter and is *not* resolved for two
     of the four slots.  X is always `Ultimate` and C always `Grenade` in Riot's
@@ -126,8 +134,7 @@ def _resolve_casts(replay: Replay, catalog: Catalog | None) -> None:
     # stored and read back correctly, and then dropped here on the way past.
     # A test pins it now, but the shape is what stops it recurring.
     replay.ability_casts = [
-        replace(c, agent=_agent_for(c.codename, catalog)[0])
-        for c in replay.ability_casts
+        replace(c, agent=_agent_for(c.codename)[0]) for c in replay.ability_casts
     ]
 
     slots = {c.slot for c in replay.ability_casts}
@@ -141,100 +148,24 @@ def _resolve_casts(replay: Replay, catalog: Catalog | None) -> None:
     if unjoinable:
         replay.catalog_notes.append(
             f"ability names for slots {', '.join(unjoinable)} are the internal "
-            f"names read from those paths, not catalogue names: Riot publishes "
+            f"names read from those paths, not published names: Riot publishes "
             f"Q and E as Ability1/Ability2 in an order that varies by agent, so "
             f"there is no join"
             + (
-                f"; slots {', '.join(joinable)} are named from the catalogue"
+                f"; slots {', '.join(joinable)} are named from the table"
                 if joinable
                 else ""
             ),
         )
 
 
-def _describe(replay: Replay, catalog: Catalog | None) -> Catalog | None:
-    """Record where names come from; None means fall back to the tables."""
-    if catalog is None:
-        replay.catalog_source = "no catalogue consulted (--no-catalog)"
-        return None
-
-    replay.catalog_source = catalog.described
-    if catalog.empty:
-        if replay.loadouts:
-            replay.catalog_notes.append(
-                f"{len(replay.loadouts)} agent UUIDs are in the file but no content "
-                "catalogue is cached to name them; "
-                "runners\\vrf-view.bat catalog says where one is looked for",
-            )
-        return None
-    return catalog
-
-
-def _resolve_map(replay: Replay, catalog: Catalog) -> None:
-    name = catalog.map_name(replay.map_path)
-    if not name:
-        if replay.map_path:
-            replay.catalog_notes.append(
-                f"map path {replay.map_path!r} is in no catalogue entry; "
-                f"the name shown comes from the {replay.map_name_source}",
-            )
-        return
-
-    was = replay.map_name
-    replay.map_name = name
-    replay.map_name_source = f"{MAP_NAME_SOURCE_CATALOG} ({catalog.source})"
-    changed = "" if was == name else f", where the built-in table said {was!r}"
-    version = f" {catalog.version}" if catalog.version else ""
-    replay.catalog_notes.append(
-        f"map name {name!r} resolved from {replay.map_path!r} by asset path against "
-        f"{catalog.source}{version}{changed}",
-    )
-
-
-def _resolve_agents(replay: Replay, catalog: Catalog) -> None:
-    if not replay.loadouts:
-        return
-
-    replay.loadouts = [
-        Loadout(
-            index=x.index,
-            subject=x.subject,
-            character_id=x.character_id,
-            agent=catalog.agent_name(x.character_id) or "",
-        )
-        for x in replay.loadouts
-    ]
-
-    named = replay.roster
-    total = len(replay.loadouts)
-    replay.catalog_notes.append(
-        f"{len(named)}/{total} agent UUIDs resolved against {catalog.source}: "
-        f"{', '.join(named) or 'none'}",
-    )
-    unresolved = [x.character_id for x in replay.loadouts if not x.agent]
-    if unresolved:
-        replay.catalog_notes.append(
-            f"{len(unresolved)} agent UUIDs are in no catalogue entry "
-            f"({', '.join(unresolved)}); the catalogue may predate the agent",
-        )
-    replay.catalog_notes.append(
-        "the loadout roster is still not attributable to actor net IDs: the file "
-        "links loadouts to no actor, so a player's agent comes from its own pawn "
-        "archetype or not at all",
-    )
-
-
-def _resolve_codenames(replay: Replay, catalog: Catalog | None) -> None:
+def _resolve_codenames(replay: Replay) -> None:
     """Name each player from the codename its pawn archetype stated."""
     if not any(p.codename for p in replay.players):
         return
 
-    sources: set[str] = set()
     named: list[Player] = []
     for p in replay.players:
-        agent, source = _agent_for(p.codename, catalog)
-        if source:
-            sources.add(source)
         named.append(
             Player(
                 actor_id=p.actor_id,
@@ -242,7 +173,7 @@ def _resolve_codenames(replay: Replay, catalog: Catalog | None) -> None:
                 label=p.label,
                 merged_from=p.merged_from,
                 codename=p.codename,
-                agent=agent,
+                agent=_agent_for(p.codename)[0],
             ),
         )
     replay.players = named
@@ -252,57 +183,19 @@ def _resolve_codenames(replay: Replay, catalog: Catalog | None) -> None:
     roster = ", ".join(f"{p.label or p.actor_id} {p.agent}" for p in resolved)
     replay.catalog_notes.append(
         f"{len(resolved)}/{len(coded)} player pawns named from their archetype "
-        f"codename against {', '.join(sorted(sources)) or 'nothing'}: "
-        f"{roster or 'none'}",
+        f"codename against the {CODENAME_SOURCE_TABLE}: {roster or 'none'}",
     )
     unresolved = sorted({p.codename for p in coded if not p.agent})
     if unresolved:
         replay.catalog_notes.append(
-            f"{len(unresolved)} codenames are in no catalogue and no built-in "
-            f"table ({', '.join(unresolved)}); they are shown as they are read",
+            f"{len(unresolved)} codenames are in no built-in table "
+            f"({', '.join(unresolved)}); they are shown as they are read",
         )
-    _cross_check_roster(replay, resolved)
 
 
-def _cross_check_roster(replay: Replay, resolved: list[Player]) -> None:
-    """
-    Compare the pawn agents against the loadout roster.
-
-    The two are arrived at along completely separate routes -- one from an
-    archetype path in the replication stream through `developerName`, the
-    other from a loadout UUID through the content catalogue -- and they have
-    no term in common.  So when they name the same ten agents, each is
-    evidence for the other; when they do not, something is wrong and the note
-    says so rather than picking a winner.
-    """
-    roster = replay.roster
-    if not roster or len(roster) != len(replay.loadouts) or not resolved:
-        return
-    if len(resolved) != len(roster):
-        return
-
-    from_pawns = sorted(p.agent for p in resolved)
-    if from_pawns == sorted(roster):
-        replay.catalog_notes.append(
-            f"the {len(roster)} agents read from the pawns and the {len(roster)} "
-            "read from the loadout roster are the same agents, by two joins "
-            "that share no term",
-        )
-        return
-    replay.catalog_notes.append(
-        f"the agents read from the pawns ({', '.join(from_pawns)}) and from the "
-        f"loadout roster ({', '.join(sorted(roster))}) do not agree; one of the "
-        "two joins is wrong",
-    )
-
-
-def _agent_for(codename: str, catalog: Catalog | None) -> tuple[str, str]:
+def _agent_for(codename: str) -> tuple[str, str]:
     """The public name for a codename, and which source produced it."""
     if not codename:
         return "", ""
-    if catalog is not None:
-        name = catalog.agent_for_codename(codename)
-        if name:
-            return name, f"{MAP_NAME_SOURCE_CATALOG} ({catalog.source})"
     name = AGENT_CODENAMES.get(codename.lower())
     return (name, CODENAME_SOURCE_TABLE) if name else ("", "")

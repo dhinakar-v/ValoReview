@@ -477,7 +477,7 @@ class TestNamingKeepsEveryOtherField(unittest.TestCase):
         )
         replay = Replay(players=[Player(actor_id=7, codename="Wraith")])
         replay.ability_casts = [before]
-        names.resolve(replay, None)
+        names.resolve(replay)
 
         after = replay.ability_casts[0]
         assert after.agent == "Omen"

@@ -29,7 +29,6 @@ from pathlib import Path
 
 import pytest
 
-import valcatalog
 from vrfview import tracks
 from vrfview.infer import annotate
 from vrfview.loader import load
@@ -210,38 +209,22 @@ def named_replay(codenames, character_ids=()):
     return replay
 
 
-CATALOG = valcatalog.Catalog(
-    maps={},
-    agents={},
-    version="release-13.04",
-    source=valcatalog.SOURCE_MANIFEST,
-    codenames={"hunter": "NotSova"},
-)
-
-
 class TestCodenameNames(unittest.TestCase):
     """A codename is looked up, never invented, and the source is always said."""
 
     def test_the_built_in_table_names_a_pawn(self):
-        replay = resolve(named_replay(["Hunter", "Wushu"]), None)
+        replay = resolve(named_replay(["Hunter", "Wushu"]))
         assert [p.agent for p in replay.players] == ["Sova", "Jett"]
         assert any("built-in codename table" in n for n in replay.catalog_notes)
 
-    def test_a_catalogue_outranks_the_built_in_table(self):
-        """A cached manifest is newer than a table compiled into this repo."""
-        replay = resolve(named_replay(["Hunter", "Wushu"]), CATALOG)
-        assert replay.player(1).agent == "NotSova"
-        # Wushu is in no catalogue here, so it falls through to the table.
-        assert replay.player(2).agent == "Jett"
-
     def test_an_unknown_codename_is_reported_not_guessed(self):
-        replay = resolve(named_replay(["Nobody", "Wushu"]), None)
+        replay = resolve(named_replay(["Nobody", "Wushu"]))
         assert replay.player(1).agent == ""
         assert replay.player(1).identity == "Nobody"
-        assert any("in no catalogue" in n for n in replay.catalog_notes)
+        assert any("in no built-in table" in n for n in replay.catalog_notes)
 
     def test_a_replay_with_no_codenames_says_nothing_about_agents(self):
-        replay = resolve(moving_replay(), None)
+        replay = resolve(moving_replay())
         assert not any("archetype codename" in n for n in replay.catalog_notes)
 
 
@@ -385,7 +368,7 @@ class AgainstARealCapture(unittest.TestCase):
         # the tests below were written against that window -- which is why some
         # of them still tolerate a player whose track does not span the file.
         tracks.attach(replay, DEMO_12_10, tracks.Options(cache=False))
-        cls.replay = resolve(annotate(replay), None)
+        cls.replay = resolve(annotate(replay))
 
     def covered(self, actor_id, t_ms):
         """Whether this actor's own track spans `t_ms`."""

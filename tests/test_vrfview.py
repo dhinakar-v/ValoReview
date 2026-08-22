@@ -19,7 +19,6 @@ import unittest
 from pathlib import Path
 from typing import ClassVar
 
-import valcatalog
 from vrfview import art as art_mod
 from vrfview import theme
 from vrfview.clock import PlaybackClock
@@ -358,13 +357,6 @@ class TestTheme(unittest.TestCase):
         assert theme.ramp_at(table, 5.0) == "#000000"
 
 
-CATALOG = valcatalog.Catalog(
-    maps={"/Game/Maps/Infinity/Infinity": "Abyss"},
-    agents={"41fb69c1-4189-7b37-f117-bcaf1e96f1bf": "Astra"},
-    version="release-13.04",
-    source=valcatalog.SOURCE_CONTENT,
-)
-
 ASTRA = "41FB69C1-4189-7B37-F117-BCAF1E96F1BF"
 UNKNOWN_AGENT = "00000000-0000-0000-0000-000000000000"
 
@@ -383,55 +375,39 @@ def with_roster(character_ids, map_path="/Game/Maps/Infinity/Infinity"):
 
 
 class TestNames(unittest.TestCase):
-    """The catalogue join: external knowledge, applied and always attributed."""
+    """
+    What is left of the lookup once the content catalogue is gone.
 
-    def test_map_name_comes_from_the_catalogue_and_says_so(self):
-        replay = resolve(with_roster([]), CATALOG)
-        assert replay.map_name == "Abyss"
-        assert valcatalog.SOURCE_CONTENT in replay.map_name_source
-        assert any("asset path" in n for n in replay.catalog_notes)
+    `valcatalog` resolved a map asset path and an agent UUID against Riot's
+    published catalogue, and `names.resolve` took one as a parameter.  Nothing
+    ever passed one -- the server built its settings without it -- so both went,
+    and these cases came down with them.  The three that survive are the ones
+    that were always true on the fallback path, which is the only path there
+    ever was in production.
+    """
 
-    def test_agent_uuids_resolve_across_a_case_difference(self):
-        replay = resolve(with_roster([ASTRA]), CATALOG)
-        assert replay.roster == ["Astra"]
-        assert any("1/1 agent UUIDs resolved" in n for n in replay.catalog_notes)
-
-    def test_an_unknown_uuid_stays_unresolved_and_is_named(self):
-        replay = resolve(with_roster([ASTRA, UNKNOWN_AGENT]), CATALOG)
-        assert replay.roster == ["Astra"]
-        assert replay.loadouts[1].display.startswith("unresolved")
-        assert any(UNKNOWN_AGENT in n for n in replay.catalog_notes)
-
-    def test_an_unknown_map_path_keeps_the_built_in_name(self):
-        replay = resolve(with_roster([], "/Game/Maps/Newest/Newest"), CATALOG)
+    def test_the_map_name_is_the_one_the_loader_read(self):
+        replay = resolve(with_roster([]))
         assert replay.map_name == "Infinity"
-        assert any("is in no catalogue entry" in n for n in replay.catalog_notes)
+        assert replay.map_name_source == "built-in codename table"
 
-    def test_no_catalogue_leaves_everything_as_read(self):
-        replay = resolve(with_roster([ASTRA]), None)
-        assert replay.map_name == "Infinity"
-        assert replay.roster == []
-        assert "--no-catalog" in replay.catalog_source
+    def test_the_source_says_no_catalogue_is_consulted(self):
+        replay = resolve(with_roster([ASTRA]))
+        assert "built-in tables" in replay.catalog_source
+        assert "no content catalogue" in replay.catalog_source
 
-    def test_an_empty_catalogue_says_where_to_get_one(self):
-        replay = resolve(with_roster([ASTRA]), valcatalog.Catalog())
-        assert replay.roster == []
-        assert any("catalog" in n for n in replay.catalog_notes)
-
-    def test_the_roster_is_never_attached_to_a_player(self):
+    def test_a_loadout_is_never_named_and_never_attached_to_a_player(self):
         """
         No field links a loadout to an actor net id, so none may claim to.
 
-        A player may now carry an agent, but only one its own pawn stated.
-        Here the roster names Astra and no pawn stated anything, so every
-        player must come back with no agent at all.
+        A player may carry an agent, but only one its own pawn stated.  Here
+        no pawn stated anything, so every player must come back with no agent
+        at all -- and the roster is empty besides, because naming a UUID was
+        the catalogue's job and there is no catalogue.
         """
-        replay = resolve(with_roster([ASTRA]), CATALOG)
-        assert replay.roster == ["Astra"]
+        replay = resolve(with_roster([ASTRA]))
+        assert replay.roster == []
         assert [p.agent for p in replay.players] == [""] * len(replay.players)
-        assert any(
-            "not attributable to actor net IDs" in n for n in replay.catalog_notes
-        )
 
     def test_subjects_still_read_through_the_loadouts(self):
         replay = with_roster([ASTRA, UNKNOWN_AGENT])
@@ -524,7 +500,7 @@ class TestArt(unittest.TestCase):
         assert entry.minimap == self.root / "maps/Ascent/minimap.png"
 
     def test_the_asset_path_is_deliberately_not_the_join_key(self):
-        """valcatalog measured this; art.py must not quietly widen it."""
+        """This was measured against the published catalogue; do not widen it."""
         cache = self._write()
         path = "ShooterGame/Content/Maps/Ascent/Ascent_PrimaryAsset"
         assert cache.map_art(path) is None
@@ -695,29 +671,6 @@ class TestReferenceCapture(unittest.TestCase):
         assert len(self.replay.loadouts) == 10
         assert all(x.character_id for x in self.replay.loadouts)
         assert len(self.replay.subjects) == 10
-
-    def test_the_roster_resolves_to_the_verified_multiset(self):
-        """The exact composition val-content-v1 confirmed on 2026-08-21."""
-        expected = [
-            "Astra",
-            "Killjoy",
-            "Waylay",
-            "Sova",
-            "Reyna",
-            "Sova",
-            "Reyna",
-            "Brimstone",
-            "Chamber",
-            "Raze",
-        ]
-        from vrfview.loader import load
-
-        catalog = valcatalog.load()
-        if catalog.empty:
-            raise unittest.SkipTest("no content catalogue cached")
-        # A fresh load: resolve mutates, and the shared replay is read as
-        # unresolved by the .vrf/JSON comparison below.
-        assert resolve(annotate(load(JSON)), catalog).roster == expected
 
     def test_counts_match_the_capture(self):
         assert len(self.replay.rounds) == 15

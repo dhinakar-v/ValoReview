@@ -725,7 +725,7 @@ class Decoding(unittest.TestCase):
         with (
             mock.patch.object(app_mod.pipeline, "open_replay", side_effect=_supplier()),
             mock.patch.object(app_mod.tracks, "attach", side_effect=attach),
-            mock.patch.object(app_mod.names, "resolve", side_effect=lambda r, _c: r),
+            mock.patch.object(app_mod.names, "resolve", side_effect=lambda r: r),
         ):
             return self.client.post(f"/api/replays/{replay_id}/decode")
 
@@ -790,7 +790,7 @@ class Decoding(unittest.TestCase):
         with (
             mock.patch.object(app_mod.pipeline, "open_replay", side_effect=_supplier()),
             mock.patch.object(app_mod.tracks, "attach", side_effect=decode),
-            mock.patch.object(app_mod.names, "resolve", side_effect=lambda r, _c: r),
+            mock.patch.object(app_mod.names, "resolve", side_effect=lambda r: r),
         ):
             library.open(replay_id)
             before = library.entry(replay_id).revision
@@ -815,7 +815,7 @@ class Decoding(unittest.TestCase):
         with (
             mock.patch.object(app_mod.pipeline, "open_replay", side_effect=_supplier()),
             mock.patch.object(app_mod.tracks, "attach", side_effect=decode),
-            mock.patch.object(app_mod.names, "resolve", side_effect=lambda r, _c: r),
+            mock.patch.object(app_mod.names, "resolve", side_effect=lambda r: r),
         ):
             threads = [
                 threading.Thread(
@@ -956,7 +956,7 @@ class BackgroundPreparation(unittest.TestCase):
                 mock.patch.object(
                     app_mod.names,
                     "resolve",
-                    side_effect=lambda r, _c: r,
+                    side_effect=lambda r: r,
                 ),
             ):
                 client.post(f"/api/replays/{replay_id}/decode")

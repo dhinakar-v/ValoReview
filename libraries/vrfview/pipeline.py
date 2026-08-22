@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from vrfview.model import Replay
 
 
-def open_replay(path: str | Path, catalog=None) -> Replay:
+def open_replay(path: str | Path) -> Replay:
     """
     Read, infer, attach anything already decoded, then name.
 
@@ -44,4 +44,4 @@ def open_replay(path: str | Path, catalog=None) -> Replay:
     """
     replay = infer.annotate(loader.load(path))
     tracks.attach_stored(replay, path)
-    return names.resolve(replay, catalog)
+    return names.resolve(replay)
