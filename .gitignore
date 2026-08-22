@@ -237,3 +237,9 @@ csharp/**/obj/
 # the match-list scan, and the decoder's scratch. libraries/vrfcache.py anchors
 # it to the project root, so deleting this directory is a complete reset.
 .cache/
+
+# Playwright's own output: the browser tests render real pages, so these are
+# screenshots, traces and an HTML report rather than anything to keep. The
+# specs are committed; what they produce is not.
+web/e2e/results/
+web/e2e/report/

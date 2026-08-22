@@ -30,5 +30,8 @@ export default defineConfig({
     // One environment for both is simpler than two configs.
     environment: "jsdom",
     globals: false,
+    // `e2e/` is Playwright's, and its specs are named the same way. Run under
+    // jsdom they would fail on the first `test()` call rather than say why.
+    exclude: ["node_modules/**", "dist/**", "e2e/**"],
   },
 });
