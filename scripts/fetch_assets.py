@@ -44,7 +44,7 @@ from pathlib import Path
 from vrfview.loader import MAP_NAMES
 
 API = "https://valorant-api.com/v1"
-USER_AGENT = "val-replay-analyzer/0.1 (local asset cache)"
+USER_AGENT = "ValoReview/0.1 (local asset cache)"
 TIMEOUT_S = 30
 RETRIES = 3
 BACKOFF_S = 1.5

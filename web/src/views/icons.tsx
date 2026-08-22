@@ -199,6 +199,12 @@ export const glyphs = {
  * asserts `container.querySelector("img")` is null on the no-thumbnail state,
  * over the whole rendered tree.  A logo that happened to be an `<img>` would
  * fail an assertion about map thumbnails.
+ *
+ * It draws in `currentColor`, which `app.css` sets to `--brand` -- so the one
+ * red in the app bar comes out of the generated palette like every other
+ * colour here, and there is nothing to keep in step by hand.  **The exception
+ * is `web/public/favicon.svg`**, which is fetched as a file before any CSS
+ * exists and therefore hardcodes the same hex.  Change both.
  */
 export function Wordmark({ size = 22 }: { size?: number }) {
   return (
@@ -214,10 +220,24 @@ export function Wordmark({ size = 22 }: { size?: number }) {
       aria-hidden="true"
       focusable={false}
     >
-      {/* A play head crossing a timeline: the two things this tool is. */}
-      <path d="M3 6.5h7M14 6.5h7M3 17.5h5M12 17.5h9" />
-      <path d="M10.5 12 21 12" />
-      <circle cx="6.5" cy="12" r="3" />
+      {/*
+        A scrub ring with a playhead on it and a play triangle inside: the two
+        verbs in the name.  It replaced four horizontal timeline rules plus a
+        head, which drew nine separate strokes -- at the 16px a browser tab
+        actually renders, those collapsed into a grey smear.  A ring, a dot and
+        a triangle are three shapes and survive the downscale.
+
+        The gap at the top is 40 degrees and is what stops this reading as a
+        loading spinner: a spinner's gap chases its head, and here the head sits
+        still at the end of the track.
+      */}
+      <path d="M12 3.6A8.4 8.4 0 1 1 6.6 5.57" />
+      <path
+        d="M10.4 8.9 15.6 12 10.4 15.1Z"
+        fill="currentColor"
+        strokeWidth="1.4"
+      />
+      <circle cx="12" cy="3.6" r="2.1" fill="currentColor" strokeWidth="0" />
     </svg>
   );
 }

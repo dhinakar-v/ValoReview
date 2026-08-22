@@ -100,6 +100,23 @@ SPIKE_BOOM = "#ff7043"
 PLAYHEAD = "#ffffff"
 ACCENT = "#7c8cff"
 
+# The wordmark, and the one red on the page that is not a claim about a match.
+#
+# It is Valorant's own red rather than a fifth hue because the product is named
+# after the game and reads its files, and a mark in a colour the game does not
+# use would be the one thing on this page pretending to be from somewhere else.
+# That it equals ACCENT_A is the point and not a duplication waiting to be
+# folded: ACCENT_A is a *page* accent and may move with the interface, while
+# this one is fixed by what it refers to, and collapsing them would let a
+# palette tweak repaint the logo.
+#
+# It is deliberately **not** a team colour, even though the value matches
+# TEAM_COLOURS["A"] today.  Nothing in the app bar is drawn on a canvas, so the
+# 36-RGB proximity rule that `minimap.spec.ts` and `scene.spec.ts` enforce does
+# not reach it -- but a reader comparing hexes should know the collision is
+# outside their scope rather than an oversight inside it.
+BRAND = "#ff4655"
+
 RAMP_STEPS = 16
 
 # A fade needs a start and an end; fewer steps than that is just the colour.

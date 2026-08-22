@@ -513,7 +513,12 @@ option {
 
 .brand svg {
   display: block;
-  color: var(--accent);
+  /*
+     --brand, not --accent: the mark is fixed by what the product is named
+     after, where --accent is the interface's own and may move with it.  See
+     theme.py's BRAND.
+  */
+  color: var(--brand);
 }
 
 .brand-name {

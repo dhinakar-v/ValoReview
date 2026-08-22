@@ -467,7 +467,7 @@ wheels = [
 ]
 
 [[package]]
-name = "val-replay-analyzer"
+name = "valoreview"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

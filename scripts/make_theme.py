@@ -73,6 +73,7 @@ COLOURS = (
     ("ACCENT_OK", "--accent-ok"),
     ("ACCENT_WARN", "--accent-warn"),
     ("ACCENT", "--accent"),
+    ("BRAND", "--brand"),
     ("BACKGROUND", "--canvas-bg"),
     ("PANEL", "--panel"),
     ("PANEL_EDGE", "--panel-edge"),

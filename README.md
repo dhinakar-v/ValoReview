@@ -1,4 +1,4 @@
-# val-replay-analyzer
+# ValoReview
 
 Decode and replay Valorant `.vrf` replay files.
 

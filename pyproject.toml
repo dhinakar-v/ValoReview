@@ -1,5 +1,5 @@
 [project]
-name = "val-replay-analyzer"
+name = "valoreview"
 version = "0.1.0"
 description = "Decode and replay Valorant .vrf replay files."
 readme = "README.md"
