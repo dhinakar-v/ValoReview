@@ -23,26 +23,47 @@
  * the readable one; the scene beside it exists to show the one thing a top-down
  * projection cannot, which is who is standing above whom.
  *
- * Every control label in this file is addressed by name from
- * `MapStage.test.tsx` and all three Playwright specs -- 2D, 3D, UTILITY,
- * TRAILS, SIGHT, CALLOUTS, DECODE POSITIONS.  The icons beside them are
+ * The arena
+ * ---------
+ * When everything is present this is not a panel on a page -- it is the page.
+ * The canvas fills the window between a 40px bar and the transport, the two
+ * rosters take a fixed gutter each side, and three things float over the canvas
+ * itself: the round clock, the kill feed and the hover tooltip.  Those are the
+ * only overlapping elements in the interface, and each keeps `--space-4` of
+ * clearance from the canvas edge and from its neighbours.
+ *
+ * `.stage-canvas` holds **exactly one canvas** and `.panel.stage` stays the
+ * outer node: `e2e/scene.spec.ts` locates the renderer through the first and
+ * `e2e/gallery.spec.ts` screenshots the second.
+ *
+ * Every control label here is addressed by name from `MapStage.test.tsx` and
+ * all three Playwright specs -- 2D, 3D, DECODE POSITIONS, and UTILITY, TRAILS,
+ * SIGHT and CALLOUTS inside the layers menu.  The icons beside them are
  * `aria-hidden`, so the accessible names are still exactly those words.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Suspense, lazy, useMemo } from "react";
+import { Suspense, lazy, useEffect, useMemo } from "react";
 
 import { api, ApiError } from "../api/client";
 import type { Decoder, Replay } from "../api/types";
 import { buildModel } from "../model/replay";
+import { activeRound } from "../model/roundclock";
+import { SIMULATED_LABEL, SIMULATED_NOTE, sideInRound } from "../model/synthetic";
+import { useWeapons } from "./catalogue";
+import { ClockPill } from "./ClockPill";
 import { Icon, Spinner, glyphs } from "./icons";
+import { KillToast } from "./KillToast";
+import { LayersMenu } from "./LayersMenu";
+import { useLiveSnapshot } from "./live";
+import { MarkerTip } from "./MarkerTip";
 import { MinimapCanvas } from "./MinimapCanvas";
+import { RosterPanel } from "./RosterPanel";
 import { Failed } from "./Shell";
-import { play } from "./sound";
 import { Transport } from "./Transport";
-import { Button, Chip, EmptyState, Panel, Segmented, Toggle, Toolbar } from "./ui";
+import { Button, Chip, EmptyState, Panel, Segmented } from "./ui";
 import { useImages } from "./images";
-import { usePlayback, usePlaybackDriver } from "./playback";
+import { seek, usePlayback, usePlaybackDriver } from "./playback";
 
 // `three` and its two wrappers are about a megabyte of the bundle, and the 2D
 // view is the default and is not a stepping stone to this one. Loading the
@@ -50,14 +71,6 @@ import { usePlayback, usePlaybackDriver } from "./playback";
 // nothing for a renderer it never uses.
 const Scene3D = lazy(async () => ({ default: (await import("./Scene3D")).Scene3D }));
 
-/**
- * The map stage: two views over one snapshot, and the sight caption under them.
- *
- * That caption is never held here as a constant, precisely so it cannot drift:
- * the sentence saying what a cone is travels in the same document as the cells
- * it is raycast against, so nothing can draw a wedge without having been handed
- * it.
- */
 export function MapStage({
   replay,
   decoder,
@@ -82,7 +95,8 @@ export function MapStage({
     queryFn: () => api.sight(replay.map_key),
     enabled: Boolean(replay.map_key),
     // A map with no radar image on disk is a 404, which is an answer rather
-    // than a failure: the layer is unavailable, and the toggle says so.
+    // than a failure: the layer is unavailable, and the menu says so by not
+    // offering it.
     retry: false,
   });
 
@@ -90,13 +104,10 @@ export function MapStage({
     mutationFn: () => api.decode(replay.id),
     // Replace the whole datum, not just the tracks. A decode also gives every
     // pawn its agent codename and every cast the agent that made it, so the
-    // roster and the cast table are stale afterwards too -- the desktop viewer
-    // has to rebuild its body and its transport bar by hand for this reason.
+    // roster and the cast table are stale afterwards too.
     onSuccess: (fresh) => {
       client.setQueryData(["replay", replay.id], fresh);
-      play("confirm");
     },
-    onError: () => play("deny"),
   });
 
   const model = useMemo(
@@ -107,6 +118,29 @@ export function MapStage({
   const radar = useImages([radarUrl]).get(radarUrl ?? "");
   const clock = usePlaybackDriver(replay.length_ms);
   const mode = usePlayback((state) => state.mode);
+  const roundNo = usePlayback((state) => state.roundNo);
+  const weapons = useWeapons();
+  const snap = useLiveSnapshot(model);
+
+  /*
+    Open on the first round, not on millisecond zero.
+
+    Round one starts a fraction of a second in -- 63ms on the reference capture
+    -- so t=0 is *before* any `roundStarted`, `Snapshot.round` is null, nobody
+    is in `alive`, and all ten roster cards render dead with zeroed vitals.
+    That is a correct reading of an instant nobody wants to look at.  This
+    effect is declared after `usePlaybackDriver` on purpose: the driver's own
+    effect resets the playhead on a new capture, and effects in one component
+    run in declaration order, so this lands after it rather than under it.
+  */
+  useEffect(() => {
+    const first = replay.rounds[0];
+    if (first === undefined) {
+      return;
+    }
+    usePlayback.setState({ roundNo: first.number });
+    seek(clock, first.start_ms);
+  }, [clock, replay.id, replay.rounds]);
 
   if (!replay.has_positions) {
     return (
@@ -123,8 +157,7 @@ export function MapStage({
           decoder's own table that the match list makes -- and a machine with
           no decoder has nothing to press at all. Each gets its own sentence,
           because they are fixed by different things.
-        */}
-        {/*
+
           A decode takes about four seconds and says nothing while it runs
           except by changing this button's own words, so the region is live:
           without it the only report of either outcome is a repaint, and the
@@ -212,28 +245,50 @@ export function MapStage({
   const maskDoc = mask.data ?? null;
   const maskUnavailable =
     mask.isError && mask.error instanceof ApiError ? mask.error.message : null;
+  const round = activeRound(replay, roundNo, snap.t_ms);
+  const [scoreA, scoreB] = snap.score;
 
   return (
-    /*
-      The one bezel in this interface built from two elements rather than
-      from stacked shadow rings, and the reason is a test.
-      `e2e/gallery.spec.ts` locates `.panel.stage` and calls
-      `stage.screenshot()`; Playwright captures an element's *bounding box*,
-      which excludes box-shadow -- so the tray every other panel gets from
-      `--bezel` would be cropped straight out of the committed gallery
-      images.  `.tray` is therefore a real padded element, and `.panel.stage`
-      stays on the outer node so the locator keeps meaning what it meant.
-    */
-    <div className="panel stage tray">
-      <div className="stage-core">
-        <div className="stage-head">
-          <h2>{art.data.name}</h2>
-          <Chip tone="ok" icon={glyphs.ok}>
-            positions decoded
-          </Chip>
-          <div className="spacer" />
-          <Layers hasMask={maskDoc !== null} is3d={mode === "3d"} />
-        </div>
+    <div className="panel stage">
+      <div className="stage-head">
+        {/*
+          No map name here: the bar above already carries it, and two headings
+          saying "Ascent" a centimetre apart is chrome pretending to be
+          information.
+        */}
+        {/*
+          The one chip here that is not a status: it is a disclaimer, and it
+          carries the whole sentence as its title.  Half of what a roster card
+          shows is not in a .vrf, and an interface that shows it without saying
+          so is making a claim the file cannot support.
+        */}
+        <Chip tone="warn" icon={glyphs.simulated} title={SIMULATED_NOTE}>
+          {SIMULATED_LABEL}
+        </Chip>
+        <div className="spacer" />
+        <Segmented
+          label="Which view"
+          options={["2D", "3D"] as const}
+          value={mode === "3d" ? "3D" : "2D"}
+          onChange={(next) => usePlayback.setState({ mode: next === "3D" ? "3d" : "2d" })}
+          format={(option) => ({
+            label: option,
+            icon: option === "2D" ? glyphs.view2d : glyphs.view3d,
+          })}
+        />
+        <LayersMenu hasMask={maskDoc !== null} is3d={mode === "3d"} />
+      </div>
+
+      <div className="arena">
+        <RosterPanel
+          model={model}
+          snap={snap}
+          team="A"
+          side={sideInRound(replay, "A", round)}
+          score={scoreA ?? 0}
+          weapons={weapons}
+          mirrored={false}
+        />
 
         <div className="stage-canvas">
           {mode === "2d" ? (
@@ -249,87 +304,50 @@ export function MapStage({
               <Scene3D model={model} art={art.data} radar={radar} mask={maskDoc} />
             </Suspense>
           )}
+          <ClockPill round={round} snap={snap} />
+          <KillToast model={model} snap={snap} weapons={weapons} />
+          <MarkerTip model={model} snap={snap} weapons={weapons} />
         </div>
 
-        {/*
-          The same two conditions the toolbar above uses to decide whether to
-          draw SIGHT and CALLOUTS at all.  A key is a faster way to press a
-          control, so it exists exactly where the control does.
-        */}
-        <Transport
-          replay={replay}
-          clock={clock}
-          layers={{ sight: maskDoc !== null, callouts: mode === "3d" }}
-        />
-
-        <Captions
-          sightCaption={maskDoc?.caption ?? null}
-          maskUnavailable={maskUnavailable}
+        <RosterPanel
+          model={model}
+          snap={snap}
+          team="B"
+          side={sideInRound(replay, "B", round)}
+          score={scoreB ?? 0}
+          weapons={weapons}
+          mirrored
         />
       </div>
+
+      {/*
+        The same two conditions the layers menu uses to decide whether SIGHT
+        and CALLOUTS exist at all.  A key is a faster way to press a control,
+        so it exists exactly where the control does.
+      */}
+      <Transport
+        replay={replay}
+        clock={clock}
+        weapons={weapons}
+        layers={{ sight: maskDoc !== null, callouts: mode === "3d" }}
+      />
+
+      <Captions
+        sightCaption={maskDoc?.caption ?? null}
+        maskUnavailable={maskUnavailable}
+      />
     </div>
   );
 }
 
-function Layers({ hasMask, is3d }: { hasMask: boolean; is3d: boolean }) {
-  const state = usePlayback();
-  return (
-    <Toolbar>
-      <Segmented
-        label="Which view"
-        options={["2D", "3D"] as const}
-        value={is3d ? "3D" : "2D"}
-        onChange={(next) => usePlayback.setState({ mode: next === "3D" ? "3d" : "2d" })}
-        format={(option) => ({
-          label: option,
-          icon: option === "2D" ? glyphs.view2d : glyphs.view3d,
-        })}
-      />
-      <span className="rule" />
-      <Toggle
-        label="UTILITY"
-        icon={glyphs.utility}
-        pressed={state.showAbilities}
-        onChange={() => usePlayback.setState({ showAbilities: !state.showAbilities })}
-      />
-      <Toggle
-        label="TRAILS"
-        icon={glyphs.trails}
-        pressed={state.showTrails}
-        onChange={() => usePlayback.setState({ showTrails: !state.showTrails })}
-      />
-      {/*
-        The sight toggle exists only where there is a mask to raycast against.
-        A control that cannot do anything is worse than an explanation of its
-        absence, and the caption below says which.
-      */}
-      {hasMask ? (
-        <Toggle
-          label="SIGHT"
-          icon={glyphs.sight}
-          pressed={state.showSight}
-          onChange={() => usePlayback.setState({ showSight: !state.showSight })}
-        />
-      ) : null}
-      {is3d ? (
-        <Toggle
-          label="CALLOUTS"
-          icon={glyphs.callouts}
-          pressed={state.showCallouts}
-          onChange={() => usePlayback.setState({ showCallouts: !state.showCallouts })}
-          title="Riot's own callouts, to check the scene against the minimap"
-        />
-      ) : null}
-    </Toolbar>
-  );
-}
-
 /**
- * Every claim the sight layer is making, in words, under the view making it.
+ * Every claim a layer is making, in words, under the view making it.
  *
- * The caption is never held here as a constant, precisely so it cannot drift:
- * the sentence saying what a cone is travels in the same document as the cells
- * it is raycast against, and is rendered verbatim.
+ * The sight caption is never held here as a constant, precisely so it cannot
+ * drift: the sentence saying what a cone is travels in the same document as the
+ * cells it is raycast against, and is rendered verbatim.  The simulated notice
+ * beside it is the same idea for the generated numbers, and it is always shown,
+ * because those numbers are always on screen.
  *
  * The mark beside each is `aria-hidden`, because one of these sentences is
  * matched exactly by a test and a glyph that joined the text node would change
@@ -342,9 +360,13 @@ function Captions({
   sightCaption: string | null;
   maskUnavailable: string | null;
 }) {
-  const showSight = usePlayback((state) => state.showSight);
+  const showSight = usePlayback((state) => state.layers.sight);
   return (
     <div className="captions">
+      <p>
+        <Icon glyph={glyphs.simulated} size={12} />
+        <span>{SIMULATED_NOTE}</span>
+      </p>
       {showSight && sightCaption ? (
         <p>
           <Icon glyph={glyphs.sight} size={12} />

@@ -30,6 +30,7 @@ import { expect, test } from "@playwright/test";
 import * as THREE from "three";
 
 import { floorZ } from "../src/model/replay";
+import { sideOf } from "../src/model/synthetic";
 import { positionOf, stateAt } from "../src/model/state";
 import { applyTransform, placeSquare, uvToPixels } from "../src/model/transform";
 import {
@@ -42,7 +43,9 @@ import {
   pixelAt,
   readCanvas,
   rgbDistance,
+  momentAt,
   stepToEvent,
+  toggleLayer,
 } from "./harness";
 
 /** `Scene3D`'s own camera, repeated here so a change to it fails this test. */
@@ -114,7 +117,7 @@ test.describe("the 3D scene", () => {
     // canvas outside it, and a bare `canvas` locator picks that one up.
     const scene = page.locator(".stage-canvas canvas");
     await expect(scene).toBeVisible();
-    await page.getByRole("button", { name: "CALLOUTS", exact: true }).click();
+    await toggleLayer(page, "CALLOUTS");
 
     const rect = (await scene.boundingBox())!;
     const camera = sceneCamera(rect.width, rect.height);
@@ -156,7 +159,7 @@ test.describe("the 3D scene", () => {
 
     // Utility off in both views: the point of comparison is Riot's radar, and
     // a diamond drawn in one view and not the other is only noise here.
-    await page.getByRole("button", { name: "UTILITY", exact: true }).click();
+    await toggleLayer(page, "UTILITY");
     const flat = await readCanvas(page, minimap);
     const box = placeSquare(flat.width, flat.height);
 
@@ -241,9 +244,10 @@ test.describe("the 3D scene", () => {
    */
   test("draws a marker for every player the camera can see", async ({ page }) => {
     const { art, model } = await openFirstPlayable(page);
-    await page.getByRole("button", { name: "UTILITY", exact: true }).click();
-    const { presses, tMs } = firstCrowdedEvent(model);
-    await stepToEvent(page, presses);
+    await toggleLayer(page, "UTILITY");
+    const moment = firstCrowdedEvent(model);
+    const tMs = moment.tMs;
+    await stepToEvent(page, moment);
 
     await page.getByRole("button", { name: "3D", exact: true }).click();
     const scene = page.locator(".stage-canvas canvas");
@@ -284,7 +288,12 @@ test.describe("the 3D scene", () => {
           const [r, , b] = pixel;
           const blue = b - r > 40 && b > 90;
           const red = r - b > 40 && r > 90;
-          if (player.team === "A" ? blue : red) {
+          // By side, not by team: `--team-a` is attacker red and `--team-b` is
+          // defender blue, and a capture with a recorded swap changes which
+          // team wears which halfway through. Deriving it here the way
+          // `images.sideColour` does is what keeps this test about the
+          // rendering rather than about the palette.
+          if (sideOf(model.replay, player.team, tMs) === "ATK" ? red : blue) {
             hits += 1;
           }
         }
@@ -313,7 +322,7 @@ test.describe("the 3D scene", () => {
     page,
   }) => {
     const { art, model } = await openFirstPlayable(page);
-    await page.getByRole("button", { name: "UTILITY", exact: true }).click();
+    await toggleLayer(page, "UTILITY");
 
     // Into the scene first: the default camera frames rather less than the
     // whole map, so which players are even visible is a fact about the canvas
@@ -329,8 +338,8 @@ test.describe("the 3D scene", () => {
     // exotic.
     const reference = floorZ(model);
     const times = model.replay.event_times.slice(0, SEARCH_EVENTS);
-    let best: { presses: number; tMs: number; actorId: number; height: number } | null = null;
-    times.forEach((tMs, index) => {
+    let best: { tMs: number; actorId: number; height: number } | null = null;
+    times.forEach((tMs) => {
       const snap = stateAt(model, tMs);
       for (const player of model.replay.players) {
         const position = positionOf(snap, player.actor_id);
@@ -349,13 +358,13 @@ test.describe("the 3D scene", () => {
         if (onFloor === null || raised === null || onFloor[1] - raised[1] <= 12) {
           continue;
         }
-        best = { presses: index + 1, tMs, actorId: player.actor_id, height };
+        best = { tMs, actorId: player.actor_id, height };
       }
     });
     expect(best, "somebody visible is off the floor in the early match").toBeTruthy();
     const found = best!;
 
-    await stepToEvent(page, found.presses);
+    await stepToEvent(page, momentAt(model, found.tMs));
     await page.evaluate(
       () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
     );

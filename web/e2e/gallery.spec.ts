@@ -17,15 +17,16 @@ import { expect, test } from "@playwright/test";
 
 import { positionOf, stateAt } from "../src/model/state";
 import { applyTransform, placeSquare, uvToPixels } from "../src/model/transform";
-import { firstCrowdedEvent, openFirstPlayable, readCanvas, stepToEvent } from "./harness";
+import { firstCrowdedEvent, openFirstPlayable, readCanvas, stepToEvent, toggleLayer } from "./harness";
 
 test("every view, rendered and saved for a person to look at", async ({ page }, testInfo) => {
   const { replay, art, model } = await openFirstPlayable(page);
   // A quarter of the way in, so this is a round in progress with utility on
   // the map rather than two spawn rooms -- which is the thing that actually
   // needs looking at.
-  const { presses, tMs } = firstCrowdedEvent(model, 8, 0.25);
-  await stepToEvent(page, presses);
+  const moment = firstCrowdedEvent(model, 8, 0.25);
+  const tMs = moment.tMs;
+  await stepToEvent(page, moment);
 
   const stage = page.locator(".panel.stage");
   const shots: Array<[string, Buffer]> = [];
@@ -40,9 +41,9 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
   };
 
   await take("2d-minimap.png");
-  await page.getByRole("button", { name: "TRAILS", exact: true }).click();
+  await toggleLayer(page, "TRAILS");
   await take("2d-trails.png");
-  await page.getByRole("button", { name: "TRAILS", exact: true }).click();
+  await toggleLayer(page, "TRAILS");
 
   // A cone needs somebody selected, and selecting them means clicking where
   // the model says they are: clicking empty canvas selects nobody, and the
@@ -58,9 +59,9 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
   const [u, v] = applyTransform(art.transform, chosen.x, chosen.y);
   const [px, py] = uvToPixels(box, u, v);
   await minimap.click({ position: { x: px, y: py } });
-  await page.getByRole("button", { name: "SIGHT", exact: true }).click();
+  await toggleLayer(page, "SIGHT");
   await take("2d-sight.png");
-  await page.getByRole("button", { name: "SIGHT", exact: true }).click();
+  await toggleLayer(page, "SIGHT");
 
   await page.getByRole("button", { name: "3D", exact: true }).click();
   await expect(page.locator(".stage-canvas canvas")).toBeVisible();
@@ -68,7 +69,7 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
     () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
   );
   await take("3d-scene.png");
-  await page.getByRole("button", { name: "CALLOUTS", exact: true }).click();
+  await toggleLayer(page, "CALLOUTS");
   await take("3d-callouts.png");
 
   for (const [name, body] of shots) {

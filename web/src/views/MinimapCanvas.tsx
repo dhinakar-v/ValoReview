@@ -42,8 +42,10 @@ import { positionOf, stateAt } from "../model/state";
 import { segments } from "../model/track";
 import type { Box } from "../model/transform";
 import { applyTransform, placeSquare, uvToPixels } from "../model/transform";
-import { palette, teamColour, useImages } from "./images";
-import { usePlayback, selectedActor } from "./playback";
+import { sideOf } from "../model/synthetic";
+import { markerScale, panBy, viewBox, zoomAt } from "../model/viewport";
+import { palette, sideColour, teamColour, useImages } from "./images";
+import { usePlayback, selectedActor, teamShown } from "./playback";
 
 /** Marker sizes, in CSS pixels, carried over from the desktop viewer. */
 const AVATAR_PX = 26;
@@ -51,7 +53,23 @@ const DOT_RADIUS = 7;
 const DEAD_RADIUS = 6;
 const PAWN_HALF = 5;
 const PLACED_HALF = 6;
-const FACING_LENGTH = 16;
+
+/**
+ * The facing mark: a triangle on the ring, not a line out of it.
+ *
+ * A line reads as a laser -- something the player is doing -- where a triangle
+ * on the edge of the ring reads as the ring having a front, which is what a
+ * heading is.  The reference frames draw the same shape, and at three times the
+ * size on a picked-out marker it is still one mark rather than a longer line.
+ */
+const FACING_LENGTH = 11;
+const FACING_HALF = 6;
+
+/** How much larger a hovered or pinned marker is drawn. */
+const PICKED_SCALE = 3;
+
+/** A kill mark's arm, in CSS pixels before the zoom scale. */
+const KILL_MARK = 6;
 
 /**
  * How far ahead the facing probe is placed, in Unreal units.
@@ -66,6 +84,15 @@ const PAWN_TRAIL_MS = 20000;
 
 /** And how far back a player's, which is a new layer rather than a port. */
 const PLAYER_TRAIL_MS = 8000;
+
+/**
+ * How hard the wheel bites.
+ *
+ * Exponential in the wheel delta rather than linear, so a trackpad's many small
+ * events and a mouse wheel's few large ones cover the same ground -- a linear
+ * step tuned for one makes the other unusable.
+ */
+const WHEEL_SENSITIVITY = 0.0016;
 
 /*
  * The canvas type stack, named once.
@@ -88,6 +115,9 @@ const LABEL_FONT = '"Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif';
 /** A dark keyline under a label, because the radar is bright in places. */
 const LABEL_OUTLINE = 3;
 
+/** The zoom at which there is room to name every marker rather than one. */
+const LABEL_FROM_SCALE = 1.6;
+
 export interface MinimapProps {
   model: ReplayModel;
   art: MapArt;
@@ -98,6 +128,8 @@ export interface MinimapProps {
 interface Hit {
   x: number;
   y: number;
+  /** The drawn radius, so a zoomed marker is as easy to hit as it looks. */
+  radius: number;
   player: Player;
 }
 
@@ -105,6 +137,9 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hitsRef = useRef<Hit[]>([]);
   const boxRef = useRef<Box>({ left: 0, top: 0, side: 0 });
+  /** The un-zoomed square, which is what the camera arithmetic works from. */
+  const fitRef = useRef<Box>({ left: 0, top: 0, side: 0 });
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
 
   const icons = useImages(model.replay.players.map((player) => player.icon_url));
   const iconFor = useMemo(() => {
@@ -153,10 +188,18 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
       context.clearRect(0, 0, width, height);
 
-      const box = placeSquare(width, height);
+      // Two boxes, and the difference matters.  `fit` is what `placeSquare`
+      // gives -- the largest centred square, and what every pixel assertion in
+      // `e2e/minimap.spec.ts` computes from.  `box` is that square after the
+      // viewport, and at rest the two are the same numbers: `FIT` is the
+      // identity, so default zoom is bit-identical to a build with no camera.
+      const fit = placeSquare(width, height);
+      const state = usePlayback.getState();
+      const scale = markerScale(state.viewport);
+      const box = viewBox(fit, state.viewport);
+      fitRef.current = fit;
       boxRef.current = box;
 
-      const state = usePlayback.getState();
       const snap = stateAt(model, state.tMs);
 
       if (radar) {
@@ -178,11 +221,14 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
       // is a wash under everything, then ability paths, then utility, then the
       // players on top -- because a player hidden behind their own utility is
       // the one thing on this canvas nobody can afford to lose.
-      if (state.showSight && silhouette && settings) {
+      if (state.layers.sight && silhouette && settings) {
         drawSight(context, { model, art, snap, box, colours, silhouette, settings });
       }
-      if (state.showTrails) {
+      if (state.layers.trails) {
         drawPlayerTrails(context, { model, snap, world, colours });
+      }
+      if (state.layers.killMarkers) {
+        drawKillMarks(context, { model, snap, world, colours, scale });
       }
       /*
         The players claim their own icons before any utility name is placed.
@@ -193,55 +239,86 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
       */
       const names = labelSpace();
       for (const player of model.replay.players) {
+        if (!teamShown(state, player.team)) {
+          continue;
+        }
         const position = positionOf(snap, player.actor_id);
         if (position !== null) {
           const [px, py] = world(position.x, position.y);
-          reserve(names, px, py, AVATAR_PX / 2);
+          reserve(names, px, py, (AVATAR_PX * scale) / 2);
         }
       }
-      if (state.showAbilities) {
+      if (state.layers.utility) {
         drawAbilities(context, { model, snap, world, colours, space: names });
       }
 
       const hits: Hit[] = [];
+      const chosenId = selectedActor(state);
       for (const player of model.replay.players) {
+        if (!teamShown(state, player.team)) {
+          continue;
+        }
         const position = positionOf(snap, player.actor_id);
         if (position === null) {
           continue;
         }
         const [x, y] = world(position.x, position.y);
-        const colour = teamColour(colours, player.team);
+        // By side, not by team: every surface in the interface derives from the
+        // same two colours, and a card that swaps at halftime while its marker
+        // does not is the one inconsistency a viewer would actually notice.
+        const colour = sideColour(colours, sideOf(model.replay, player.team, snap.t_ms));
         const alive = snap.alive.has(player.actor_id);
-        const chosen = selectedActor(state) === player.actor_id;
+        const chosen = chosenId === player.actor_id;
+        // The picked-out marker is three times the size, which is the
+        // reference's own treatment: about 104px against a 26px base. It is
+        // what makes one player findable inside a five-man stack.
+        const radius = (AVATAR_PX * scale * (chosen ? PICKED_SCALE : 1)) / 2;
 
         if (alive) {
-          drawFacing(context, { x, y, position, world, colour });
+          drawFacing(context, { x, y, position, world, colour, radius });
           drawAlive(context, {
             x,
             y,
+            radius,
             colour,
             ring: chosen ? colours.text! : colour,
             icon: iconFor.get(player.actor_id),
             background: colours.background!,
           });
         } else {
-          drawDead(context, x, y, colour);
+          drawDead(context, x, y, colour, DEAD_RADIUS * scale);
         }
 
-        // Outline then fill.  A white label over Ascent's pale mid is
-        // unreadable without one, and a drop shadow costs a composite per
-        // player per frame where a stroke costs nothing.
-        const label = player.label || player.team;
-        const labelY = y - AVATAR_PX / 2 - 7;
-        context.font = `600 10px ${LABEL_FONT}`;
-        context.textAlign = "center";
-        context.lineJoin = "round";
-        context.lineWidth = LABEL_OUTLINE;
-        context.strokeStyle = colours.canvas!;
-        context.strokeText(label, x, labelY);
-        context.fillStyle = alive ? colours.text! : colours.muted!;
-        context.fillText(label, x, labelY);
-        hits.push({ x, y, player });
+        /*
+          A name, but not ten of them.
+
+          This drew `player.label` under every marker unconditionally -- A1,
+          A2, B4 -- which is two problems in one string.  The labels are the
+          inferred group, and this interface says ATK and DEF; and ten of them
+          at fit zoom, where five players stand in one spawn, is a smear rather
+          than a roster.  So the name is the **agent**, which is what a viewer
+          recognises, and it is drawn for whoever is being pointed at, or once
+          the map has been zoomed in far enough for ten of them to have room.
+          The reference frames draw no names at fit zoom at all.
+
+          Outline then fill: a white label over Ascent's pale mid is unreadable
+          without one, and a drop shadow costs a composite per player per frame
+          where a stroke costs nothing.
+        */
+        if (chosen || state.viewport.scale >= LABEL_FROM_SCALE) {
+          const label = player.agent || player.codename || player.label;
+          const labelY = y - radius - 7;
+          const size = Math.round(10 * Math.min(scale, 1.4));
+          context.font = `600 ${size}px ${LABEL_FONT}`;
+          context.textAlign = "center";
+          context.lineJoin = "round";
+          context.lineWidth = LABEL_OUTLINE;
+          context.strokeStyle = colours.canvas!;
+          context.strokeText(label, x, labelY);
+          context.fillStyle = alive ? colours.text! : colours.muted!;
+          context.fillText(label, x, labelY);
+        }
+        hits.push({ x, y, radius, player });
       }
       hitsRef.current = hits;
     },
@@ -262,28 +339,94 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
     return () => cancelAnimationFrame(frame);
   }, [draw]);
 
-  const at = (event: React.MouseEvent<HTMLCanvasElement>): Player | null => {
+  const at = (event: React.MouseEvent<HTMLCanvasElement>): Hit | null => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    const reach = (AVATAR_PX / 2 + 4) ** 2;
     for (const hit of hitsRef.current) {
+      // The drawn radius plus a few pixels of forgiveness, so a marker is as
+      // easy to hit at 4x as it is at rest rather than four times easier.
+      const reach = (hit.radius + 4) ** 2;
       if ((x - hit.x) ** 2 + (y - hit.y) ** 2 <= reach) {
-        return hit.player;
+        return hit;
       }
     }
     return null;
   };
 
+  /*
+    The wheel listener is attached by hand rather than through `onWheel`,
+    because React attaches its own passively and a passive listener may not
+    call `preventDefault` -- so every zoom would also scroll whatever is behind
+    the canvas.  There is nothing to scroll on this page, which makes it look
+    like it works right up until the window is short.
+  */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (canvas === null) {
+      return;
+    }
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const factor = Math.exp(-event.deltaY * WHEEL_SENSITIVITY);
+      usePlayback.setState((state) => ({
+        viewport: zoomAt(
+          fitRef.current,
+          state.viewport,
+          event.clientX - rect.left,
+          event.clientY - rect.top,
+          factor,
+        ),
+      }));
+    };
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", onWheel);
+  }, []);
+
   return (
     <canvas
       ref={canvasRef}
       className="minimap"
-      onMouseMove={(event) =>
-        usePlayback.setState({ hovered: at(event)?.actor_id ?? null })
+      onMouseMove={(event) => {
+        const drag = dragRef.current;
+        if (drag !== null) {
+          const dx = event.clientX - drag.x;
+          const dy = event.clientY - drag.y;
+          dragRef.current = { x: event.clientX, y: event.clientY };
+          usePlayback.setState((state) => ({
+            viewport: panBy(fitRef.current, state.viewport, dx, dy),
+          }));
+          return;
+        }
+        const hit = at(event);
+        // The hit-test coordinate the canvas already has, published so the
+        // tooltip can anchor to it. Projecting the world position a second
+        // time in DOM space would be a copy of the transform, and two copies
+        // of a transform are two chances to disagree about where a marker is.
+        usePlayback.setState({
+          hovered: hit?.player.actor_id ?? null,
+          hoveredAt: hit === null ? null : { x: hit.x, y: hit.y },
+        });
+      }}
+      onMouseDown={(event) => {
+        // Panning starts only away from a marker, so a click on somebody is
+        // still a click on somebody.
+        if (at(event) === null) {
+          dragRef.current = { x: event.clientX, y: event.clientY };
+        }
+      }}
+      onMouseUp={() => {
+        dragRef.current = null;
+      }}
+      onMouseLeave={() => {
+        dragRef.current = null;
+        usePlayback.setState({ hovered: null, hoveredAt: null });
+      }}
+      onDoubleClick={() => usePlayback.getState().resetViewport()}
+      onClick={(event) =>
+        usePlayback.getState().toggleSelected(at(event)?.player.actor_id ?? null)
       }
-      onMouseLeave={() => usePlayback.setState({ hovered: null })}
-      onClick={(event) => usePlayback.getState().toggleSelected(at(event)?.actor_id ?? null)}
     />
   );
 }
@@ -330,7 +473,10 @@ function drawSight(
     return;
   }
   const player = model.replay.players.find((p) => p.actor_id === actorId);
-  const colour = teamColour(colours, player?.team ?? "?");
+  const colour = sideColour(
+    colours,
+    player ? sideOf(model.replay, player.team, snap.t_ms) : "?",
+  );
   context.save();
   context.beginPath();
   polygon.forEach(([u, v], i) => {
@@ -458,7 +604,7 @@ function drawPlayerTrails(
       snap.t_ms - PLAYER_TRAIL_MS,
       snap.t_ms,
       world,
-      teamColour(colours, player.team),
+      sideColour(colours, sideOf(model.replay, player.team, snap.t_ms)),
       0.35,
     );
   }
@@ -506,6 +652,18 @@ function drawTrail(
   context.restore();
 }
 
+/**
+ * Which way the player is looking, as a triangle sitting on the ring.
+ *
+ * The heading still comes from a world-space probe run through the transform,
+ * which is the one thing about this that must not change: the transform swaps
+ * the axes and either multiplier may be negative, so trigonometry in screen
+ * space puts every marker ninety degrees out -- and it looks entirely plausible
+ * on a map nobody has memorised, which is why it is worth a paragraph.
+ *
+ * What changed is the shape.  A line out of the ring reads as something the
+ * player is doing; a triangle on the ring reads as the ring having a front.
+ */
 function drawFacing(
   context: CanvasRenderingContext2D,
   args: {
@@ -514,10 +672,11 @@ function drawFacing(
     position: { x: number; y: number; yaw: number };
     world: (x: number, y: number) => [number, number];
     colour: string;
+    radius: number;
   },
 ): void {
-  const { x, y, position, world, colour } = args;
-  // The probe, not screen-space trigonometry. See the module docstring.
+  const { x, y, position, world, colour, radius } = args;
+  // The probe, not screen-space trigonometry. See above.
   const radians = (position.yaw * Math.PI) / 180;
   const [tipX, tipY] = world(
     position.x + FACING_PROBE_UU * Math.cos(radians),
@@ -529,13 +688,71 @@ function drawFacing(
   if (length <= 0) {
     return;
   }
-  const scale = (AVATAR_PX / 2 + FACING_LENGTH) / length;
-  context.strokeStyle = colour;
-  context.lineWidth = 2;
+  // A unit heading and its perpendicular, both in screen space now that the
+  // direction itself has been through the transform.
+  const ux = dx / length;
+  const uy = dy / length;
+  const reach = radius * (FACING_LENGTH / (AVATAR_PX / 2));
+  const half = FACING_HALF * (radius / (AVATAR_PX / 2));
+  const baseX = x + ux * radius;
+  const baseY = y + uy * radius;
+
   context.beginPath();
-  context.moveTo(x, y);
-  context.lineTo(x + dx * scale, y + dy * scale);
-  context.stroke();
+  context.moveTo(baseX + ux * reach, baseY + uy * reach);
+  context.lineTo(baseX - uy * half, baseY + ux * half);
+  context.lineTo(baseX + uy * half, baseY - ux * half);
+  context.closePath();
+  context.fillStyle = colour;
+  context.fill();
+}
+
+/**
+ * Where each player died this round.
+ *
+ * `Snapshot.death_positions` is the last place the event stream saw somebody
+ * before their `characterDeath`, so this is read rather than derived -- and it
+ * is scoped to the round, which is why a mark disappears at the next round
+ * start instead of accumulating across a match.
+ *
+ * A cross and not a portrait: the player is not there any more, and a marker
+ * that still looks like a person is a lie about where five people are.
+ */
+function drawKillMarks(
+  context: CanvasRenderingContext2D,
+  args: {
+    model: ReplayModel;
+    snap: Snapshot;
+    world: (x: number, y: number) => [number, number];
+    colours: Record<string, string>;
+    scale: number;
+  },
+): void {
+  const { model, snap, world, colours, scale } = args;
+  const arm = KILL_MARK * scale;
+  context.save();
+  context.globalAlpha = 0.8;
+  context.lineWidth = 2;
+  for (const [actorId, position] of snap.deathPositions) {
+    const player = model.replay.players.find((p) => p.actor_id === actorId);
+    if (player === undefined || !teamShown(usePlayback.getState(), player.team)) {
+      continue;
+    }
+    const [x, y] = world(position.x, position.y);
+    context.strokeStyle = sideColour(
+      colours,
+      sideOf(model.replay, player.team, snap.t_ms),
+    );
+    context.beginPath();
+    context.moveTo(x - arm, y);
+    context.lineTo(x + arm, y);
+    context.moveTo(x, y - arm);
+    context.lineTo(x, y + arm);
+    context.stroke();
+    context.beginPath();
+    context.arc(x, y, arm * 0.55, 0, Math.PI * 2);
+    context.stroke();
+  }
+  context.restore();
 }
 
 function drawAlive(
@@ -543,15 +760,15 @@ function drawAlive(
   args: {
     x: number;
     y: number;
+    radius: number;
     colour: string;
     ring: string;
     icon: HTMLImageElement | undefined;
     background: string;
   },
 ): void {
-  const { x, y, colour, ring, icon, background } = args;
+  const { x, y, radius, colour, ring, icon, background } = args;
   if (icon) {
-    const radius = AVATAR_PX / 2;
     // The ring is drawn first and slightly proud of the portrait, so the team
     // colour survives an agent icon with a pale border.
     context.beginPath();
@@ -566,14 +783,14 @@ function drawAlive(
     context.beginPath();
     context.arc(x, y, radius, 0, Math.PI * 2);
     context.clip();
-    context.drawImage(icon, x - radius, y - radius, AVATAR_PX, AVATAR_PX);
+    context.drawImage(icon, x - radius, y - radius, radius * 2, radius * 2);
     context.restore();
     return;
   }
   // No icon: a filled dot, which is visibly a marker rather than a portrait
   // that failed to load.
   context.beginPath();
-  context.arc(x, y, DOT_RADIUS, 0, Math.PI * 2);
+  context.arc(x, y, Math.max(DOT_RADIUS, radius * 0.55), 0, Math.PI * 2);
   context.fillStyle = colour;
   context.fill();
   context.strokeStyle = ring === colour ? background : ring;
@@ -581,19 +798,25 @@ function drawAlive(
   context.stroke();
 }
 
-function drawDead(context: CanvasRenderingContext2D, x: number, y: number, colour: string): void {
+function drawDead(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  colour: string,
+  radius: number = DEAD_RADIUS,
+): void {
   context.save();
   context.globalAlpha = 0.55;
   context.strokeStyle = colour;
   context.lineWidth = 2;
   context.beginPath();
-  context.arc(x, y, DEAD_RADIUS, 0, Math.PI * 2);
+  context.arc(x, y, radius, 0, Math.PI * 2);
   context.stroke();
   context.beginPath();
-  context.moveTo(x - DEAD_RADIUS, y - DEAD_RADIUS);
-  context.lineTo(x + DEAD_RADIUS, y + DEAD_RADIUS);
-  context.moveTo(x - DEAD_RADIUS, y + DEAD_RADIUS);
-  context.lineTo(x + DEAD_RADIUS, y - DEAD_RADIUS);
+  context.moveTo(x - radius, y - radius);
+  context.lineTo(x + radius, y + radius);
+  context.moveTo(x - radius, y + radius);
+  context.lineTo(x + radius, y - radius);
   context.stroke();
   context.restore();
 }

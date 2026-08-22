@@ -1,21 +1,23 @@
 /**
  * Page two: one replay.
  *
- * Everything the file states, everything inferred from it, everything looked
- * up -- and, where a capture has been decoded, the map it happened on.  The
- * map is `MapStage`, which owns the two views, the layers and the transport;
- * this page owns the tables around it.
+ * It has two shapes, and which one appears is decided by whether there is a map
+ * to look at.
  *
- * The split is deliberate.  A snapshot is recomputed sixty times a second and
- * the roster is not, so the playhead lives in a store the canvas reads inside
- * its own animation frame rather than in state this page would re-render from.
+ * **With positions** it is not a document at all.  The arena fills the window
+ * -- a 40px bar, the map with a roster down each side, the round strip and the
+ * transport -- and nothing scrolls.  That is `MapStage`, which owns the views,
+ * the layers, the rosters and the transport; this page owns the bar above it.
  *
- * The roster is two mirrored columns rather than one table because that is what
- * the teams are: two of them, inferred, with nothing ranking one above the
- * other.  A single table sorted by team implies an order the data has not got.
- * Rounds and casts share one tabbed panel because they are both timelines over
- * the same match, and stacking all three tables made a page nobody scrolled to
- * the bottom of.
+ * **Without them** it goes back to being a page: the stage becomes a sentence
+ * in a short panel, and the roster and the timeline are tables under it.  A
+ * roster flanking a paragraph would be a layout pretending there is something
+ * to look at, and the tables are worth reading on a capture nothing can be
+ * decoded from -- rounds, kills and the inferences are all still there.
+ *
+ * The split is also what keeps the frame rate honest.  A snapshot is recomputed
+ * many times a second and the tables are not, so the tables only exist on the
+ * shape that has no playhead.
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -23,24 +25,13 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
-import type { Decoder, Player, Replay, Round } from "../api/types";
+import type { Player, Replay, Round } from "../api/types";
+import { sideOf } from "../model/synthetic";
 import { glyphs } from "../views/icons";
 import { MapStage } from "../views/MapStage";
 import { Failed, Loading, Page } from "../views/Shell";
 import { Button, Chip, Panel, TabPanel, Tabs, Toolbar } from "../views/ui";
 import type { Tab } from "../views/ui";
-
-function teamClass(team: string): string {
-  if (team === "A") return "team-a";
-  if (team === "B") return "team-b";
-  return "team-unknown";
-}
-
-function teamEdge(team: string): string {
-  if (team === "A") return "player-row is-a";
-  if (team === "B") return "player-row is-b";
-  return "player-row";
-}
 
 function clock(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -48,17 +39,36 @@ function clock(ms: number): string {
   return `${minutes}:${String(total % 60).padStart(2, "0")}`;
 }
 
-function TeamColumn({ team, players }: { team: string; players: Player[] }) {
+/** The colour class for a side, for text that should carry it. */
+function sideClass(replay: Replay, team: string): string {
+  if (team !== "A" && team !== "B") {
+    return "team-unknown";
+  }
+  return sideOf(replay, team, 0) === "ATK" ? "team-a" : "team-b";
+}
+
+/** The same, as a row edge: `.player-row` colours its border, not its text. */
+function sideEdge(replay: Replay, team: string): string {
+  if (team !== "A" && team !== "B") {
+    return "player-row";
+  }
+  return sideOf(replay, team, 0) === "ATK" ? "player-row is-a" : "player-row is-b";
+}
+
+/* -- the document shape --------------------------------------------------- */
+
+function TeamColumn({ replay, team, players }: { replay: Replay; team: string; players: Player[] }) {
+  const side = team === "A" || team === "B" ? sideOf(replay, team, 0) : "—";
   return (
     <div className="team-panel">
       <div className="team-title">
-        <span className={teamClass(team)}>&#9632;</span>
-        Team {team}
+        <span className={sideClass(replay, team)}>&#9632;</span>
+        {side}
         <div className="spacer" />
         <span className="muted">{players.length}</span>
       </div>
       {players.map((player) => (
-        <div className={teamEdge(team)} key={player.actor_id}>
+        <div className={sideEdge(replay, team)} key={player.actor_id}>
           {player.icon_url ? (
             <img
               className="player-portrait"
@@ -91,83 +101,6 @@ function split(replay: Replay): Array<[string, Player[]]> {
   return teams;
 }
 
-/**
- * The footnote both roster layouts carry, written once.
- *
- * It travels with the roster rather than with the page, because what it
- * qualifies is the A/B split itself -- and the split is drawn in two different
- * places depending on how wide the window is.
- */
-function RosterNote() {
-  return (
-    <p className="footnote">
-      Teams are A and B, inferred by two-colouring the kill graph. Which side
-      attacked is not recoverable: spike events carry no actor id. Health, armour
-      and credits are never replicated to a spectator recording, so they are not
-      shown at all rather than shown as zero.
-    </p>
-  );
-}
-
-/**
- * The roster as it appears beside the map: one team per gutter.
- *
- * This is the desktop viewer's own layout -- `vrfview/panels.py` draws two
- * mirrored team columns flanking the centre canvas -- which the first web port
- * kept the *idea* of and lost the *placement* of, stacking both columns under
- * a square map that is bounded by viewport height.  That left roughly a third
- * of a wide window empty on either side of the one object worth looking at,
- * while the names belonging to the markers sat below the fold.
- *
- * A is left and B is right purely by label.  Neither team ranks above the
- * other -- `infer` two-colours a graph, it does not decide who was attacking --
- * so nothing here may sort by score, and the third column, where it exists, is
- * the explicit unknown rather than a spillover.
- */
-function StageWithRoster({
-  replay,
-  decoder,
-}: {
-  replay: Replay;
-  decoder: Decoder | undefined;
-}) {
-  const teams = split(replay);
-  const a = teams.find(([team]) => team === "A");
-  const b = teams.find(([team]) => team === "B");
-  const rest = teams.filter(([team]) => team !== "A" && team !== "B");
-  return (
-    <div className="viewer-grid">
-      {a ? (
-        <aside className="gutter" aria-label="Team A">
-          <TeamColumn team={a[0]} players={a[1]} />
-        </aside>
-      ) : null}
-      <div className="viewer-stage">
-        <MapStage replay={replay} decoder={decoder} />
-      </div>
-      {b ? (
-        <aside className="gutter" aria-label="Team B">
-          <TeamColumn team={b[0]} players={b[1]} />
-        </aside>
-      ) : null}
-      {/*
-        The explicit unknown, which `infer` leaves rather than assigning
-        somebody to a team it could not two-colour.  It spans the whole row
-        instead of taking a gutter, because it is not a third team.
-      */}
-      {rest.map(([team, players]) => (
-        <aside className="gutter span" key={team} aria-label="Players with no inferred team">
-          <TeamColumn team={team} players={players} />
-        </aside>
-      ))}
-      <div className="viewer-note">
-        <RosterNote />
-      </div>
-    </div>
-  );
-}
-
-/** The roster as its own panel, for a window too narrow to flank anything. */
 function Roster({ replay }: { replay: Replay }) {
   return (
     <Panel
@@ -177,10 +110,15 @@ function Roster({ replay }: { replay: Replay }) {
     >
       <div className="team-panels">
         {split(replay).map(([team, players]) => (
-          <TeamColumn key={team} team={team} players={players} />
+          <TeamColumn key={team} replay={replay} team={team} players={players} />
         ))}
       </div>
-      <RosterNote />
+      <p className="footnote">
+        Teams are two groups, inferred by two-colouring the kill graph. Which of
+        them attacked is not recoverable &mdash; spike events carry no actor id
+        &mdash; so ATK and DEF here are an assignment, not a reading. Health,
+        armour and credits are never replicated to a spectator recording.
+      </p>
     </Panel>
   );
 }
@@ -205,8 +143,10 @@ function Rounds({ replay }: { replay: Replay }) {
               <td className="numeric">{round.number}</td>
               <td className="numeric muted">{clock(round.start_ms)}</td>
               <td className="numeric muted">{clock(round.duration_ms)}</td>
-              <td className={round.decided ? teamClass(round.winner) : "muted"}>
-                {round.decided ? round.winner : "undetermined"}
+              <td className={round.decided ? sideClass(replay, round.winner) : "muted"}>
+                {round.decided
+                  ? sideOf(replay, round.winner, round.start_ms)
+                  : "undetermined"}
               </td>
               <td className="muted">{round.reason}</td>
               <td className="numeric muted">
@@ -294,7 +234,7 @@ function Timeline({ replay }: { replay: Replay }) {
       title="Timeline"
       icon={glyphs.rounds}
       actions={
-        <Chip tone="a" title="Rounds won, team A to team B">
+        <Chip tone="a" title="Rounds won">
           {replay.score[0] ?? 0} : {replay.score[1] ?? 0}
         </Chip>
       }
@@ -313,6 +253,8 @@ function Timeline({ replay }: { replay: Replay }) {
     </Panel>
   );
 }
+
+/* -- the page ------------------------------------------------------------- */
 
 export function ViewerPage() {
   const { id = "" } = useParams();
@@ -345,37 +287,45 @@ export function ViewerPage() {
   }
 
   const replay = query.data;
-  const actions = (
-    <Toolbar>
-      <Chip icon={glyphs.rounds}>{clock(replay.length_ms)}</Chip>
-      {back}
-    </Toolbar>
-  );
 
+  if (!replay.has_positions) {
+    return (
+      <Page
+        title={replay.map_name || replay.map_path}
+        actions={
+          <Toolbar>
+            <Chip icon={glyphs.rounds}>{clock(replay.length_ms)}</Chip>
+            {back}
+          </Toolbar>
+        }
+        footer={<span className="mono">{replay.source}</span>}
+      >
+        <MapStage replay={replay} decoder={config.data?.decoder} />
+        <Roster replay={replay} />
+        <Timeline replay={replay} />
+      </Page>
+    );
+  }
+
+  /*
+    The immersive shape.  `<main id="main" tabIndex={-1}>` rather than `Page`'s
+    own: the skip link in `AppFrame` targets that id and needs the element to be
+    focusable, because a link that moves only the scroll leaves the focus in the
+    bar and the next Tab returns to what it was meant to skip.
+  */
   return (
-    <Page
-      title={replay.map_name || replay.map_path}
-      actions={actions}
-      footer={<span className="mono">{replay.source}</span>}
-    >
-      {/*
-        Two roster layouts, and which one appears is decided by whether there
-        is a map to flank.  With positions the teams take the gutters either
-        side of the stage, which is the desktop viewer's arrangement and puts a
-        player's name on the same screen row as their marker.  Without them the
-        stage is a sentence in a short panel, and columns flanking a paragraph
-        would be a layout pretending there is something to look at -- so the
-        roster goes back to being a panel of its own.
-      */}
-      {replay.has_positions ? (
-        <StageWithRoster replay={replay} decoder={config.data?.decoder} />
-      ) : (
-        <>
-          <MapStage replay={replay} decoder={config.data?.decoder} />
-          <Roster replay={replay} />
-        </>
-      )}
-      <Timeline replay={replay} />
-    </Page>
+    <>
+      <header className="viewer-bar">
+        <Link to="/" className="viewer-back">
+          <Button label="BACK" icon={glyphs.back} size="sm" />
+        </Link>
+        <span className="viewer-title">{replay.map_name || replay.map_path}</span>
+        <span className="viewer-sub mono">{replay.recorded_utc || replay.match_id}</span>
+        <div className="spacer" />
+      </header>
+      <main id="main" className="viewer" tabIndex={-1}>
+        <MapStage replay={replay} decoder={config.data?.decoder} />
+      </main>
+    </>
   );
 }

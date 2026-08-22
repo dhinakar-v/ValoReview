@@ -15,7 +15,6 @@ import { useEffect } from "react";
 
 import type { PlaybackClock } from "../model/clock";
 import { SPEEDS } from "../model/clock";
-import { play } from "./sound";
 import { usePlayback } from "./playback";
 
 /** What each key does, in the order the hint panel lists them. */
@@ -27,6 +26,9 @@ export const SHORTCUTS: ReadonlyArray<{ keys: string; does: string }> = [
   { keys: "1 … 6", does: "playback speed" },
   { keys: "V", does: "switch between the 2D map and the 3D scene" },
   { keys: "U T S C", does: "utility, trails, sight, callouts" },
+  { keys: "K", does: "kill markers" },
+  { keys: "[ ]", does: "previous or next round" },
+  { keys: "R", does: "reset the zoom" },
 ];
 
 /** A nudge is a second, which is the smallest step worth a key. */
@@ -84,12 +86,15 @@ export function useTransportKeys({
   step,
   seekTo,
   lengthMs,
+  stepRound,
   layers,
 }: {
   clock: PlaybackClock;
   step: (direction: 1 | -1) => void;
   seekTo: (ms: number) => void;
   lengthMs: number;
+  /** Step a round at a time, which is what `[` and `]` do. */
+  stepRound?: (direction: 1 | -1) => void;
   /**
    * Which layer switches exist on the toolbar right now.
    *
@@ -97,7 +102,7 @@ export function useTransportKeys({
    * CALLOUTS only in 3D, on the argument that a control which cannot do
    * anything is worse than an explanation of its absence.  A key that toggled
    * them anyway would be exactly that control, invisibly: `S` on a map with no
-   * mask set `showSight` with no effect and no caption, and the store is
+   * mask toggled the layer with no effect and no caption, and the store is
    * module-level, so the next replay opened in the same session came up with
    * the layer already on.
    */
@@ -121,7 +126,6 @@ export function useTransportKeys({
         case " ":
           clock.toggle();
           set({ playing: clock.playing, tMs: clock.tMs });
-          play("click");
           break;
         case "ArrowRight":
           step(1);
@@ -144,33 +148,42 @@ export function useTransportKeys({
         case "v":
         case "V":
           set({ mode: state.mode === "2d" ? "3d" : "2d" });
-          play("click");
           break;
         case "u":
         case "U":
-          set({ showAbilities: !state.showAbilities });
-          play(state.showAbilities ? "toggleOff" : "toggleOn");
+          state.toggleLayer("utility");
           break;
         case "t":
         case "T":
-          set({ showTrails: !state.showTrails });
-          play(state.showTrails ? "toggleOff" : "toggleOn");
+          state.toggleLayer("trails");
+          break;
+        case "k":
+        case "K":
+          state.toggleLayer("killMarkers");
+          break;
+        case "r":
+        case "R":
+          state.resetViewport();
+          break;
+        case "[":
+          stepRound?.(-1);
+          break;
+        case "]":
+          stepRound?.(1);
           break;
         case "s":
         case "S":
           if (!layers.sight) {
             return;
           }
-          set({ showSight: !state.showSight });
-          play(state.showSight ? "toggleOff" : "toggleOn");
+          state.toggleLayer("sight");
           break;
         case "c":
         case "C":
           if (!layers.callouts) {
             return;
           }
-          set({ showCallouts: !state.showCallouts });
-          play(state.showCallouts ? "toggleOff" : "toggleOn");
+          state.toggleLayer("callouts");
           break;
         default: {
           // 1..6 pick a speed by position in the model's own list, so adding a
@@ -181,7 +194,6 @@ export function useTransportKeys({
             return;
           }
           set({ speed });
-          play("click");
           break;
         }
       }
@@ -190,5 +202,5 @@ export function useTransportKeys({
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [clock, step, seekTo, lengthMs, layers.sight, layers.callouts]);
+  }, [clock, step, seekTo, lengthMs, stepRound, layers.sight, layers.callouts]);
 }

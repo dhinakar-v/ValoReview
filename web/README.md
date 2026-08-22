@@ -163,32 +163,45 @@ any file that mentions them being edited.
 
 Hence `aria-hidden` and `focusable={false}` are set centrally in `Icon` rather
 than at each call site, the label is always its own text node beside the glyph,
-and the one control with no words -- the sound toggle -- carries an
+and a control with no words -- a close button, a pager arrow -- carries an
 `aria-label`. `views/ui.test.tsx` is the standing check on all of it.
+
+The four layer labels now sit inside a `LAYERS` popover rather than on the
+stage head: there are nine switches and a head cannot carry nine beside a map
+name without the map getting smaller. **The labels themselves did not change.**
+A test opens the menu first -- `harness.toggleLayer`, and the same helper in
+`MapStage.test.tsx` -- and then looks for exactly the word it always looked
+for. They are `ui.CheckRow` checkboxes rather than pressed buttons, because
+nine of them in one group is a set of choices: a reader announces a checkbox's
+state and the size of its group, where nine `aria-pressed` buttons announce
+nine unrelated things. The drawn box carries `pointer-events: none`, because it
+sits over the 1px-clipped input and would otherwise swallow every click aimed
+at it -- which a person never notices, since they click the label.
 
 The wordmark and the favicon are inline `<svg>` and a file, never an `<img>`:
 `MatchList.test.tsx` asserts `container.querySelector("img")` is null over the
 whole page in the no-thumbnail state, so a logo that happened to be an `<img>`
 would fail a test about map art.
 
-## Sound
+## What came out
 
-`views/sound.ts`, six voices, synthesised from oscillators and gain envelopes.
-No audio files and no dependency: a sampled set would be six binaries whose
-provenance and licence would need tracking the way the fonts' does, in exchange
-for warmth this interface has no use for. What it needs is confirmation -- a
-press landed, a decode finished, a request failed -- and a 20ms envelope says
-that as well as a recording does.
+Three things were removed rather than moved, and each for the same reason: they
+took space on every page to say something that mattered on one.
 
-Three things about it are pinned by `views/sound.test.ts`:
+**The sound module.** `views/sound.ts` synthesised six voices from oscillators
+and gain envelopes -- no audio files, no dependency -- and was off by default,
+which was right. Its only switch was the speaker icon in the app bar, and when
+that came off the bar the module became unreachable: a store nothing could set,
+six voices nothing could play. Dead code that still runs in every test is worse
+than no feature, so it went with the icon.
 
-* **off by default**, remembered in `localStorage`, toggled from the app bar.
-  An analytics tool that beeps before it was asked to is a defect report;
-* **no `AudioContext` until one is needed** -- built on the first sound played
-  while enabled, never at import, which is why no page test needs a mock;
-* **`prefers-reduced-motion` wins.** The stylesheet zeroes its transitions on
-  the same query. A sound is the one thing here that can be dropped without
-  changing what anything says.
+**The decoder light.** It reported a property of the *machine* -- whether a
+`.NET` build exists -- on every page, including the many where nothing could be
+decoded. Where the answer actually decides something, the DECODE POSITIONS
+button in `MapStage`'s empty state, the server's own sentence is already shown
+and is more specific than a dot.
+
+**The "positions decoded" chip.** The map being drawn is the report.
 
 ## Reach, and the two roles that were a promise rather than a label
 
@@ -232,10 +245,13 @@ inherit from the page on some platforms.
 **A skip link that moves the focus, not just the scroll.** `AppFrame` renders
 it first in the DOM, hidden until focused. Reaching the map from the keyboard
 was seven presses on every navigation -- brand, breadcrumb, decoder light,
-sound, and three more in the viewer's page head. `Shell.Page`'s `<main>` takes
-`id="main"` and `tabIndex={-1}` so the link lands the focus there; a link that
-only scrolls leaves the focus in the bar, so the next Tab returns to the first
-thing it was meant to skip.
+sound, and three more in the viewer's page head; four of those are gone and the
+viewer's bar is down to two controls, but the link stays, because it is the
+cheap half of the fix. The element it lands on takes `id="main"` and
+`tabIndex={-1}` -- `Shell.Page`'s `<main>` on the match list, and the viewer's
+own `<main className="viewer">` on the immersive shape. A link that only
+scrolls leaves the focus in the bar, so the next Tab returns to the first thing
+it was meant to skip.
 
 **The decode region is `aria-live="polite"`.** A decode takes about four
 seconds and reports itself only by changing a button's own words; without the

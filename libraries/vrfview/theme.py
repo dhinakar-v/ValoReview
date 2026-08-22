@@ -9,10 +9,19 @@ list index per frame rather than a string format.
 
 On the palette
 --------------
-Team colours are blue and coral, deliberately not Valorant's attacker red and
-defender green.  Which team attacked is not recoverable from the file -- spike
-events carry no actor ID -- so using the sides' familiar colours would assert
-something the data does not support.
+Team colours are Valorant's attacker red and defender blue, and the browser
+interface labels them ATK and DEF.  **Neither the colour nor the label is read
+from the file.**  Which team attacked is not recoverable -- spike events carry
+no actor ID -- so `infer` two-colours the kill graph into A and B, and the web
+interface assigns A to the attacking side.  That assignment is part of the
+generated layer `web/src/model/synthetic.ts` owns and is marked on the page as
+such; the model underneath still says A and B and knows nothing about sides.
+
+They were blue and coral for exactly this reason until the interface grew a
+place to say so.  The pair still has to stay far apart in hue: `minimap.spec.ts`
+counts a marker within 36 RGB of a team colour and `scene.spec.ts` identifies
+one by hue after 3D lighting, so moving either toward grey or toward the other
+fails both.  Red against blue is further apart than blue against coral was.
 
 The surfaces are a ramp, not a handful of flat greys.  The brief named five
 (background, panel, hover, border, tooltip) and an interface built from five
@@ -41,16 +50,18 @@ TEXT = "#e8eaed"
 MUTED = "#a2a9b4"
 FAINT = "#4b515c"
 
-TEAM_COLOURS = {"A": "#4ea3ff", "B": "#ff6b5a", "?": "#8a90a2"}
+TEAM_COLOURS = {"A": "#ff4655", "B": "#3e8bff", "?": "#8a90a2"}
 
 # The page's own ramp.  The hues descend from the brief -- its blue and its red
 # are still here -- but the greys are a scale rather than the brief's five flat
 # values, for the reason in the module docstring.
 #
 # The brief names accent-red as the attacking side and accent-blue as the
-# defending one.  Those *semantics* are not adopted -- which team attacked is
-# not recoverable from the file -- so the two colours are team A and team B
-# here, and every label that shows them says A or B.
+# defending one.  `ACCENT_A` and `ACCENT_B` are the page's own two accents and
+# are not the team pair above: `TEAM_COLOURS` is what a marker is drawn in and
+# what the pixel specs measure, and these two are for chips, links and the
+# playhead.  Keeping them separate is what let the team pair move to red and
+# blue without every neutral accent on the page following it.
 APP_BG = "#0a0b0d"
 CARD_BG = "#101216"
 CARD_HOVER = "#171a20"

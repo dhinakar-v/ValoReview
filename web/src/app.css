@@ -226,21 +226,18 @@ button[aria-pressed="true"]:hover:not(:disabled) {
 }
 
 /*
- * The one control on a page that gets a pill and a lit edge.  There are two:
- * DECODE POSITIONS, and PLAY.  Everything else is a rectangle, which is what
- * makes these two findable without reading them.
+ * The one control on a page that is filled rather than outlined.  There are
+ * two: DECODE POSITIONS, and PLAY.  Everything else is a bordered rectangle,
+ * which is what makes these two findable without reading them -- the fill does
+ * that job now that nothing here is rounded or raised.
  */
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--app-bg);
   font-weight: var(--weight-semibold);
-  border-radius: var(--radius-pill);
   padding-left: var(--space-5);
   letter-spacing: var(--track-wide);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 42%, transparent),
-    0 4px 16px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 button.primary:hover:not(:disabled) {
@@ -269,7 +266,6 @@ button.primary .cap {
   height: 26px;
   margin-left: var(--space-2);
   margin-right: calc(-1 * var(--space-2));
-  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--app-bg) 16%, transparent);
   transition:
     transform var(--dur-slow) var(--ease-spring),
@@ -354,11 +350,12 @@ option {
   color: var(--text-primary);
 }
 
+/* The fill and the edge say pressed; the drop shadow this used to carry was
+   the last one left on something that is not floating. */
 .seg button[aria-pressed="true"] {
   background: var(--card-hover);
   border-color: var(--line-strong);
   color: var(--text-primary);
-  box-shadow: var(--shadow-1);
 }
 
 .field {
@@ -401,16 +398,17 @@ option {
 }
 
 /*
- * A floating bar rather than a strip glued to the top edge.
+ * A flush strip, not a floating pill.
  *
- * `backdrop-filter` is affordable here and nowhere else on this page: the bar
- * is a fixed-height element that never scrolls its own content, while the
- * stage runs a canvas at 60fps and the transport strip runs a second
- * `requestAnimationFrame` loop beside it.  A blur over either of those would
- * repaint continuously against live pixels.
+ * It used to be a rounded, blurred, shadowed bar inset from the window edge --
+ * which put a band of page background above it and a gap either side, and on
+ * the viewer that band was three-quarters of an inch of nothing above a map
+ * that wanted the room.  A 1px bottom border does the same separating job.
  *
- * `flex: none` on a taller box than `--bar-h` because the margin is now part
- * of the row: the column below still gets the same space it did.
+ * The `backdrop-filter` went with the rounding.  It was affordable while the
+ * bar sat over a static page; it is not worth its repaint over a canvas
+ * running a `requestAnimationFrame` loop, and there is nothing behind an
+ * opaque bar to blur.
  */
 .app-bar {
   display: flex;
@@ -418,21 +416,10 @@ option {
   gap: var(--space-4);
   height: var(--bar-h);
   flex: 0 0 var(--bar-h);
-  /* Same width and centring as `.page`, so the bar and the content below it
-     share an edge instead of the bar running the full width of a wide screen
-     while everything under it stops at `--page-max`. */
-  width: min(100% - 2 * var(--space-6), var(--page-max));
-  margin: var(--space-4) auto var(--space-2);
+  width: 100%;
   padding: 0 var(--space-5);
-  background: color-mix(in srgb, var(--card-bg) 72%, transparent);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  border: 0;
-  border-radius: var(--radius-pill);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
-    0 0 0 1px color-mix(in srgb, white 6%, transparent),
-    var(--shadow-2);
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
   z-index: var(--z-sticky);
 }
 
@@ -503,7 +490,7 @@ option {
 .dot {
   width: 7px;
   height: 7px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-round);
   background: var(--text-faint);
   flex: none;
 }
@@ -548,16 +535,6 @@ option {
   flex: 1;
   overflow-y: auto;
   padding-bottom: var(--space-6);
-  /*
-   * Room for the bezel rings, which extend `--ring` past the border box of
-   * every panel inside here.  Setting `overflow-y` computes `overflow-x` to
-   * `auto` as well, so without this the trays would be clipped -- or worse,
-   * would put a horizontal scrollbar on a column that has nothing to scroll
-   * sideways.  The negative margin gives the padding back, so no content
-   * moves.
-   */
-  padding-inline: var(--ring);
-  margin-inline: calc(-1 * var(--ring));
   scrollbar-color: var(--line-strong) transparent;
   /* Two regions on this page scroll inside themselves, and reaching the end of
      one of them should stop rather than start scrolling whatever is behind it
@@ -649,19 +626,18 @@ option {
 /* -- panel ------------------------------------------------------------- */
 
 /*
- * A panel is an enclosure, so it gets the bezel rather than a hairline.
+ * A panel is an enclosure, and an enclosure is a border and a surface step.
  *
- * The margin has to clear `--ring`: a box-shadow occupies no layout space, so
- * two panels a bare `--space-5` apart would have their trays overlapping and
- * the ring between them would read as one thick smear instead of two edges.
+ * It used to carry `--bezel` -- four stacked shadow rings that stood it off the
+ * page -- and its margin had to clear that ring, because a box-shadow occupies
+ * no layout space and two panels a bare `--space-5` apart had their trays
+ * overlapping.  Both are gone, so the margin is just a margin.
  */
 .panel {
   background: var(--card-bg);
-  border: 0;
-  border-radius: var(--radius-core);
+  border: 1px solid var(--border);
   padding: var(--space-5);
-  margin-bottom: calc(var(--space-5) + var(--ring));
-  box-shadow: var(--bezel);
+  margin-bottom: var(--space-5);
 }
 
 .panel h2 {
@@ -693,7 +669,6 @@ option {
   align-items: center;
   gap: var(--space-2);
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
   padding: var(--space-1) var(--space-3);
   font-size: var(--text-2xs);
   font-weight: var(--weight-medium);
@@ -768,11 +743,10 @@ option {
 
 /* -- match list -------------------------------------------------------- */
 
-/* Twice `--ring` plus the gap that was there, or adjacent trays touch. */
 .cards {
   display: flex;
   flex-direction: column;
-  gap: calc(var(--space-3) + 2 * var(--ring));
+  gap: var(--space-3);
 }
 
 .card {
@@ -781,14 +755,12 @@ option {
   align-items: center;
   gap: var(--space-5);
   background: var(--card-bg);
-  border: 0;
-  border-radius: var(--radius-core);
+  border: 1px solid var(--border);
   padding: var(--space-3) var(--space-4);
   text-align: left;
   width: 100%;
   position: relative;
   overflow: hidden;
-  box-shadow: var(--bezel);
   /*
    * Transform is in the transition list and `background` is not a layout
    * property, so a hovered row costs a composite and never a reflow -- which
@@ -824,17 +796,7 @@ option {
  */
 a.card:hover {
   background: var(--card-hover);
-  transform: translateY(-2px);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
-    0 0 0 1px color-mix(in srgb, white 6%, transparent),
-    0 0 0 8px color-mix(in srgb, white 3.6%, transparent),
-    0 0 0 var(--ring) color-mix(in srgb, var(--accent) 34%, transparent),
-    var(--shadow-3);
-}
-
-a.card:active {
-  transform: translateY(0);
+  border-color: var(--accent);
 }
 
 .card-thumb {
@@ -889,84 +851,6 @@ a.card:active {
   align-items: flex-end;
   gap: var(--space-2);
 }
-
-/* -- viewer layout ----------------------------------------------------- */
-
-/*
- * The map with a team down each side.
- *
- * The stage is a square bounded by viewport *height*, so on any wide window a
- * centred one leaves two large empty columns beside the only object on the
- * page worth looking at -- while the roster naming those markers sat below the
- * fold.  This is the desktop viewer's arrangement (`vrfview/panels.py`, two
- * mirrored columns flanking the centre canvas), which the first port kept the
- * idea of and lost the placement of.
- *
- * Narrow is the base case and it is a column, with the map first: a roster
- * above the thing it annotates is worse than one below it.  The flanking
- * layout only switches on where there is genuinely room for it -- 1100px is
- * the stage at its 320px floor plus two 240px gutters plus the gaps, rounded
- * up, so the breakpoint is measured rather than picked.
- */
-.viewer-grid {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--space-5) + var(--ring));
-  margin-bottom: calc(var(--space-5) + var(--ring));
-}
-
-.viewer-stage {
-  order: -1;
-  min-width: 0;
-}
-
-/* The stage panel already carries its own margin; inside the grid the gap
-   owns the spacing, or the two are added together. */
-.viewer-stage > .panel {
-  margin-bottom: 0;
-}
-
-.gutter {
-  background: var(--card-bg);
-  border-radius: var(--radius-core);
-  padding: var(--space-4);
-  box-shadow: var(--bezel);
-  min-width: 0;
-}
-
-.viewer-note {
-  min-width: 0;
-}
-
-.viewer-note .footnote {
-  margin-top: 0;
-}
-
-@media (min-width: 1100px) {
-  .viewer-grid {
-    display: grid;
-    grid-template-columns:
-      minmax(240px, 1fr)
-      minmax(0, 2.2fr)
-      minmax(240px, 1fr);
-    align-items: start;
-  }
-
-  /* Explicit placement rather than auto-flow: the DOM order is already
-     A, stage, B, and saying so here means a third `.gutter.span` cannot
-     silently land in a column and squash the map. */
-  .viewer-stage {
-    order: 0;
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .gutter.span,
-  .viewer-note {
-    grid-column: 1 / -1;
-  }
-}
-
 /* -- viewer ------------------------------------------------------------ */
 
 table.rows {
@@ -1070,7 +954,7 @@ table.rows tr:last-child td {
 .player-portrait {
   width: 28px;
   height: 28px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-round);
   background: var(--field-bg);
   display: block;
 }
@@ -1095,97 +979,152 @@ table.rows tr:last-child td {
   line-height: var(--leading-normal);
   margin: var(--space-4) 0 0;
 }
-
-/* -- map stage --------------------------------------------------------- */
+/* -- the viewer, edge to edge ------------------------------------------ */
 
 /*
- * The stage's bezel, and the only one made of two elements.
+ * The viewer is not a document, so it does not get a document's chrome.
  *
- * Everywhere else a tray is `--bezel`'s shadow rings, which cost no DOM.  Here
- * it cannot be: `e2e/gallery.spec.ts` screenshots `.panel.stage`, Playwright
- * captures a bounding box, and a bounding box excludes box-shadow -- so the
- * committed gallery images would show a core with its tray sliced off.
+ * A capture is one object -- a map -- and every pixel of frame around it is a
+ * pixel the map does not get.  So `/replay/:id` puts the frame into an
+ * immersive mode: a 40px bar, then the arena filling everything left, and
+ * nothing scrolls anywhere on the page.  The match list keeps the ordinary
+ * bounded column, because a list of a hundred captures is a document.
  *
- * `.tray` is what tells the two apart.  The five empty-state panels in
- * MapStage are `<Panel className="stage">` and carry no `.tray`, so they keep
- * the ordinary shadow bezel; only the real stage, which is the thing being
- * photographed, is built out of elements.
- *
- * The radii are concentric by hand rather than by CSS: `--radius-tray` minus
- * `--ring` is `--radius-core`, 24 - 9 = 15.  Change one and the corners stop
- * nesting.
+ * `overflow: hidden` here is what makes the rest of this section safe to size
+ * in `1fr`: with a scroll container in the chain, a `1fr` row would resolve
+ * against content height and the canvas would grow without bound.
  */
-.panel.stage.tray {
-  background: color-mix(in srgb, white 2.8%, transparent);
-  border-radius: var(--radius-tray);
-  padding: var(--ring);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, white 7.5%, transparent),
-    var(--shadow-3);
+.app-frame.is-immersive {
+  height: 100%;
+  overflow: hidden;
 }
 
-.stage-core {
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--viewer-bar-h);
+  flex: 0 0 var(--viewer-bar-h);
+  padding: 0 var(--space-4);
   background: var(--card-bg);
-  border-radius: var(--radius-core);
-  padding: var(--space-5);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 5.5%, transparent),
-    0 0 0 1px color-mix(in srgb, white 4.5%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+.viewer-back {
+  display: inline-flex;
+}
+
+.viewer-title {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+}
+
+.viewer-sub {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+main.viewer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  outline: none;
+}
+
+/*
+ * The stage stops being a panel and becomes the page.
+ *
+ * `.panel.stage` keeps its class names because `e2e/gallery.spec.ts` locates
+ * the outer node by them, but inside the viewer every panel property is undone:
+ * no margin, no border, no padding, no surface of its own.  Four rows, and the
+ * only flexible one is the arena.
+ */
+.viewer > .panel.stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--app-bg);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
 
 .stage-head {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  margin-bottom: var(--space-4);
-  flex-wrap: wrap;
+  gap: var(--space-3);
+  height: 38px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--card-bg);
 }
 
 .stage-head h2 {
-  font-size: var(--text-xl);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
   color: var(--text-primary);
-  margin-bottom: 0;
+  margin: 0;
 }
+
+/*
+ * The arena: a roster, the map, a roster.
+ *
+ * Three columns and no gap between them -- the borders do the separating, and
+ * a gap here would be a stripe of page background running down each side of the
+ * map, which is the dead space this layout exists to remove.  The gutters are
+ * fixed rather than fractional so the map takes every pixel a wider window
+ * offers instead of the rosters growing with it.
+ */
+.arena {
+  display: grid;
+  grid-template-columns: var(--roster-w) minmax(0, 1fr) var(--roster-w);
+  min-height: 0;
+}
+
+/* -- the map ------------------------------------------------------------ */
 
 .stage-canvas {
   position: relative;
-  /*
-   * Square, because the radar is.  The canvas fits the largest square inside
-   * whatever it is given and centres it, which is the desktop viewer's rule.
-   *
-   * Bounded by the viewport height rather than only by the column width: a
-   * square as wide as a 1440px layout is a square taller than the screen, and
-   * it put the transport bar below the fold -- so the map was unusable until
-   * you scrolled, on the one page where the map is the point.  The 404px is
-   * everything above and below it: the app bar, the page head, the panel's
-   * own padding, the stage head, the strip, its legend and the transport.
-   *
-   * It was 380px until the app bar started floating, which added its top and
-   * bottom margins (`--space-4` + `--space-2`) to the column above.  This
-   * constant is measured, not guessed: change the chrome, re-measure it, or
-   * the transport quietly drops below the fold again.
-   */
-  width: min(100%, max(320px, calc(100vh - 404px)));
-  margin-inline: auto;
-  aspect-ratio: 1 / 1;
-  background: var(--canvas-bg);
-  border: 0;
-  border-radius: var(--radius-core);
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
-  /*
-   * Sunk, not outlined.  Everything else on this page is an enclosure standing
-   * off the ground; the map is the one thing you look *into*, so it takes the
-   * bezel inverted -- an inner hairline and a soft interior shade instead of a
-   * tray and a drop.  That is also what makes the panel around it read as
-   * holding it rather than as another box beside it.
-   */
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, white 6%, transparent),
-    inset 0 2px 18px color-mix(in srgb, black 85%, transparent);
+  background: var(--canvas-bg);
+}
+
+/*
+ * The glow behind the map.
+ *
+ * 57 to 72 per cent of every radar PNG is fully transparent, so the canvas
+ * background *is* the map's negative space and a flat one reads as a hole.
+ * The reference frames put a soft warm vignette there instead.
+ *
+ * It is deliberately a dark maroon rather than a saturated red: this sits
+ * directly behind a canvas whose pixels `e2e/minimap.spec.ts` counts against
+ * `--team-a` and `--team-b` within 36 RGB, and a glow near either would be
+ * counted as a marker.
+ */
+.stage-canvas::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 62% 62% at 50% 46%,
+    color-mix(in srgb, var(--team-a) 9%, var(--canvas-bg)),
+    var(--canvas-bg) 72%
+  );
+  pointer-events: none;
 }
 
 .minimap,
 .scene3d {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
@@ -1205,101 +1144,1003 @@ table.rows tr:last-child td {
   color: var(--text-muted);
 }
 
-.strip {
-  display: block;
-  width: 100%;
-  cursor: pointer;
+/* -- what floats over the map ------------------------------------------ */
+
+/*
+ * Three overlays and no more, each `--space-4` from the canvas edge and from
+ * its neighbours.  They are the only overlapping elements in the interface;
+ * everything else in the arena is a grid cell, because an overlay that can
+ * cover the thing being read is worth having only where there is nothing under
+ * it worth reading.
+ */
+.clock-pill {
+  position: absolute;
+  top: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: color-mix(in srgb, var(--card-bg) 88%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  z-index: var(--z-stage);
+  pointer-events: none;
 }
 
-.transport {
-  margin-top: var(--space-4);
-  background: var(--app-bg);
+.pill-round {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  color: var(--text-faint);
+}
+
+.pill-time {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--track-wide);
+}
+
+.pill-spike {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  padding: 1px var(--space-2);
+  border: 1px solid currentcolor;
+}
+
+.pill-spike.is-planted {
+  color: var(--spike-armed);
+}
+
+.pill-spike.is-defused {
+  color: var(--spike-safe);
+}
+
+.pill-spike.is-exploded {
+  color: var(--spike-boom);
+}
+
+/* The kill feed, top right, exactly where the reference puts it. */
+.killfeed {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  z-index: var(--z-stage);
+  pointer-events: none;
+}
+
+.kill-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+  font-size: var(--text-sm);
+}
+
+.kill-portrait {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-round);
+  background: var(--field-bg);
+}
+
+.kill-name {
+  font-weight: var(--weight-semibold);
+}
+
+.kill-name.is-victim {
+  color: var(--text-muted);
+  font-weight: var(--weight-normal);
+}
+
+/*
+ * No filter.  Riot's `killStreamIcon` is already white -- measured, mean RGB
+ * 255 over its opaque pixels -- and the `invert(1)` this used to carry turned
+ * every silhouette black on a black page: in the DOM, in the layout, and
+ * visible to nobody.  The same was true of the roster weapon and the ability
+ * icons at 197 and 247.
+ */
+.kill-weapon {
+  height: 14px;
+  max-width: 64px;
+  object-fit: contain;
+}
+
+.kill-glyph {
+  color: var(--text-muted);
+  display: inline-flex;
+}
+
+/* The hover card, anchored to whatever raised it. */
+.marker-tip {
+  position: absolute;
+  z-index: var(--z-tooltip);
+  width: 212px;
+  background: var(--tooltip-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-2);
+  font-size: var(--text-sm);
+  pointer-events: none;
+}
+
+/* Raised by a roster card rather than a marker, so there is no coordinate to
+   anchor to and it parks in a corner instead of guessing one. */
+.marker-tip.is-parked {
+  left: var(--space-4);
+  bottom: var(--space-4);
+}
+
+.tip-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.tip-portrait {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-round);
+  background: var(--field-bg);
+}
+
+.tip-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-semibold);
+}
+
+.tip-side {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  padding: 1px var(--space-2);
+}
+
+.tip-rows {
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tip-rows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.tip-rows dt {
+  color: var(--text-muted);
+}
+
+.tip-rows dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.tip-weapon {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.tip-weapon img {
+  height: 16px;
+  max-width: 76px;
+  object-fit: contain;
+}
+
+.tip-read {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+/* -- the rosters -------------------------------------------------------- */
+
+/*
+ * Two sides, mirrored, exactly as `vrfview/panels.py` draws them.
+ *
+ * The mirror is one `flex-direction: row-reverse` per row rather than a second
+ * set of rules: the right-hand card is the left-hand card read the other way
+ * round, and writing it twice is how the two drift.
+ *
+ * The colours come from the **side**, not the team, and `--side` is set once
+ * here so a header, a card accent and a name in the kill feed cannot disagree.
+ */
+.roster {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--card-bg);
+  border-right: 1px solid var(--border);
+}
+
+.roster.is-mirrored {
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
+.side-atk {
+  --side: var(--team-a);
+}
+
+.side-def {
+  --side: var(--team-b);
+}
+
+.roster-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 38px;
+  flex: none;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.roster.is-mirrored .roster-head {
+  flex-direction: row-reverse;
+}
+
+.roster-side {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-wider);
+  color: var(--side, var(--text-muted));
+  background: color-mix(in srgb, var(--side, var(--border)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--side, var(--border)) 45%, transparent);
+  padding: 2px var(--space-2);
+}
+
+.roster-filter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-faint);
+  background: none;
+  border: 1px solid transparent;
+}
+
+.roster-filter:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+/* Pressed means the side is hidden, so the control has to read as *off*
+   rather than as selected -- a filter that looks active while it is removing
+   five markers is the wrong way round. */
+.roster-filter.is-off {
+  color: var(--accent-warn);
+  border-color: var(--accent-warn);
+}
+
+.roster-score {
+  margin-left: auto;
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--side, var(--text-primary));
+}
+
+.roster.is-mirrored .roster-score {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+/*
+ * The cards fill the column rather than sitting in the middle of it.
+ *
+ * The reference floats its roster over the map, so five cards centred in a tall
+ * panel look right there -- the space around them is map.  Here the roster is a
+ * solid column beside the map, and the same treatment left three hundred
+ * pixels of empty card-coloured panel above and below.  So they stretch, and
+ * the portrait stretches with them: a taller card is a bigger face, which is
+ * the one thing on it worth being bigger.
+ *
+ * `min-height` rather than `height` keeps the whole thing legible on a short
+ * window; below that the narrow layout takes over anyway.
+ */
+.roster-cards {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.player-card {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 0;
+  min-height: var(--card-h);
+  position: relative;
+  overflow: hidden;
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.player-card:last-child {
+  border-bottom: 1px solid var(--border);
+}
+
+.roster.is-mirrored .player-card {
+  flex-direction: row-reverse;
+}
+
+.player-card.is-lit {
+  background: var(--card-hover);
+}
+
+/*
+ * Dead desaturates the whole card rather than blanking its fields.  A greyed
+ * card reads as *this player is out*; an empty one reads as *this player is
+ * missing*, which is a different and wrong claim.
+ */
+.player-card.is-dead {
+  filter: grayscale(1);
+  opacity: 0.42;
+}
+
+.card-portrait {
+  width: 62px;
+  height: 100%;
+  flex: none;
+  object-fit: cover;
+  background: var(--field-bg);
+}
+
+.card-portrait.is-absent {
+  display: block;
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.card-top,
+.card-name,
+.card-bottom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.roster.is-mirrored .card-top,
+.roster.is-mirrored .card-name,
+.roster.is-mirrored .card-bottom {
+  flex-direction: row-reverse;
+}
+
+/*
+ * Tabular figures, and this is the one place they carry their weight: five
+ * cards deep, health and credits have to land in the same column or the panel
+ * reads as five unrelated rows.
+ */
+.card-credits,
+.card-armor,
+.card-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+}
+
+.card-credits {
+  color: var(--text-muted);
+}
+
+.card-armor {
+  color: var(--text-muted);
+  min-width: 22px;
+  justify-content: center;
+  border: 1px solid var(--border);
+  padding: 0 3px;
+}
+
+.card-health {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  min-width: 26px;
+  justify-content: flex-end;
+}
+
+.roster.is-mirrored .card-health {
+  justify-content: flex-start;
+}
+
+.card-label {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wide);
+  color: var(--side, var(--text-faint));
+  font-weight: var(--weight-semibold);
+}
+
+.card-agent {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-abilities {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.roster.is-mirrored .card-abilities {
+  flex-direction: row-reverse;
+}
+
+.ability-icon {
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+  opacity: 0.8;
+}
+
+.card-weapon {
+  height: 18px;
+  max-width: 78px;
+  object-fit: contain;
+}
+
+.card-weapon.is-text {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+/* A team accent, not a health bar: it stays full width at 1 HP. */
+.card-accent {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--side, var(--border));
+}
+
+/* -- the round strip ---------------------------------------------------- */
+
+.round-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4) 0;
+}
+
+.round-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.round-swap {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+  padding: 0 var(--space-2);
+}
+
+/*
+ * A chip is a number over a 2px result bar, so the whole match reads at a
+ * glance.  `is-open` is a round `infer` could not award -- a defuse or a
+ * detonation, where the spike event carries no actor id -- and it keeps the
+ * neutral colour.  Resolving it here would put a claim on screen that the
+ * model deliberately refused to make.
+ */
+.round-chip {
+  min-width: 26px;
+  padding: 2px var(--space-2) 4px;
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: 2px solid var(--team-unknown);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.round-chip.is-a {
+  border-bottom-color: var(--team-a);
+}
+
+.round-chip.is-b {
+  border-bottom-color: var(--team-b);
+}
+
+.round-chip.is-open {
+  border-bottom-color: color-mix(in srgb, var(--team-unknown) 40%, transparent);
+}
+
+.round-chip:hover {
+  color: var(--text-primary);
+  background: var(--card-hover);
+}
+
+.round-chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--app-bg);
+  font-weight: var(--weight-semibold);
+}
+
+/* -- the transport ------------------------------------------------------ */
+
+.transport {
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
+  padding-bottom: var(--space-2);
 }
 
 .transport-bar {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3);
-  border-top: 1px solid var(--border);
-  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+}
+
+.strip {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  cursor: pointer;
 }
 
 .clock-readout {
-  margin-left: var(--space-3);
-  font-size: var(--text-md);
-  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
-}
-
-.rule {
-  width: 1px;
-  align-self: stretch;
-  background: var(--border);
-  margin: 0 var(--space-2);
-}
-
-.legend {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-2) var(--space-3) 0;
-  font-size: var(--text-2xs);
-  letter-spacing: var(--track-wide);
-  text-transform: uppercase;
-  color: var(--text-faint);
-  flex-wrap: wrap;
-}
-
-.legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.legend i {
-  width: 9px;
-  height: 2px;
-  background: currentcolor;
-  display: block;
-}
-
-.captions {
-  margin-top: var(--space-4);
-  font-size: var(--text-xs);
-  line-height: var(--leading-normal);
+  font-size: var(--text-sm);
   color: var(--text-muted);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.captions p {
-  margin: 0;
-  display: flex;
-  gap: var(--space-3);
-}
-
-/* -- map reference ----------------------------------------------------- */
-
-.callout {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  letter-spacing: var(--track-wide);
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--app-bg) 78%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  color: var(--text-primary);
-  pointer-events: none;
   white-space: nowrap;
 }
 
+/*
+ * The caption block, and it is not decoration.
+ *
+ * Every claim a layer makes is written under the view making it: the sight
+ * sentence arrives from the server beside the cells it describes, and the
+ * simulated notice says which of the numbers on screen were generated.  Both
+ * are always in the DOM when they apply.
+ */
+.captions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-4) var(--space-2);
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
+}
+
+.captions p {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-faint);
+}
+
+/* -- menus -------------------------------------------------------------- */
+
+.menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wide);
+}
+
+.menu-button.is-open {
+  background: var(--field-bg);
+  border-color: var(--line-strong);
+  color: var(--text-primary);
+}
+
+.menu-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: var(--z-overlay);
+  min-width: 216px;
+  padding: var(--space-3);
+  background: var(--card-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.menu-panel.at-start {
+  right: auto;
+  left: 0;
+}
+
+.menu-title {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: var(--space-2) var(--space-1) var(--space-1);
+}
+
+.menu-title:first-child {
+  padding-top: 0;
+}
+
+/*
+ * A real checkbox, drawn.
+ *
+ * The input is clipped rather than hidden -- `display: none` and
+ * `visibility: hidden` both take an element out of the accessibility tree --
+ * so what a reader announces is a checkbox with a state and a group size,
+ * which nine `aria-pressed` buttons are not.
+ */
+.check-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-wide);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.check-row:hover {
+  background: var(--card-hover);
+  color: var(--text-primary);
+}
+
+.check-row svg {
+  pointer-events: none;
+}
+
+/*
+ * The input covers the whole row rather than being clipped to a pixel.
+ *
+ * `opacity: 0` and not `clip-path`, `display: none` or `visibility: hidden`:
+ * the first keeps the element in the accessibility tree *and* hittable, and
+ * the other three each lose one of those.  A pixel-clipped input is announced
+ * correctly and is then a one-pixel click target sitting under the box drawn
+ * for it, so every programmatic press lands on the wrong element -- which a
+ * person never notices, because they press the label.
+ */
+.check-row input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.check-box {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  /* Decorative, and `aria-hidden`: the label owns the click and the input owns
+     the state. Without this the drawn box sits over the clipped input and
+     swallows a press aimed at it -- which a person never notices, because they
+     press the label, and which fails every automated click. */
+  pointer-events: none;
+  border: 1px solid var(--line-strong);
+  background: var(--app-bg);
+  position: relative;
+}
+
+.check-row input:checked + .check-box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.check-row input:checked + .check-box::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--app-bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.check-row input:focus-visible + .check-box {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.check-label {
+  flex: 1;
+}
+
+.check-row.is-a {
+  border-color: color-mix(in srgb, var(--team-a) 55%, transparent);
+  color: var(--team-a);
+}
+
+.check-row.is-b {
+  border-color: color-mix(in srgb, var(--team-b) 55%, transparent);
+  color: var(--team-b);
+}
+
+/* -- modal -------------------------------------------------------------- */
+
+/*
+ * The scrim dims *and blurs*, which is the reference's own treatment and is
+ * worth the repaint here where it is not on the bar: a modal is open by choice
+ * and the page under it is deliberately unreadable for as long as it is.
+ */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: color-mix(in srgb, black 62%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.modal {
+  width: min(1040px, 92vw);
+  height: min(860px, 88vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--card-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-3);
+  outline: none;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.modal-head h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.round-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.round-step-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  min-width: 74px;
+  text-align: center;
+}
+
+/* -- the round timeline ------------------------------------------------- */
+
+.timeline-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+}
+
+.event-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--line-strong) transparent;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.event-row button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: var(--app-bg);
+  border: 1px solid var(--border);
+  /* The acting side, as an edge. `--side` is set by the row's own class. */
+  border-left: 3px solid var(--side, var(--team-unknown));
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.event-row button:hover {
+  background: var(--card-hover);
+}
+
+/* First blood is a second row at the same instant rather than a flag on the
+   first, so a first-kill filter can surface the moment on its own. */
+.event-row.is-first button {
+  background: color-mix(in srgb, var(--team-a) 12%, var(--app-bg));
+}
+
+.ev-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 34px;
+}
+
+.ev-glyph {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.ev-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.ev-name {
+  font-weight: var(--weight-semibold);
+  color: var(--side, var(--text-primary));
+}
+
+.ev-name.side-atk {
+  color: var(--team-a);
+}
+
+.ev-name.side-def {
+  color: var(--team-b);
+}
+
+.ev-verb,
+.ev-arrow {
+  color: var(--text-muted);
+}
+
+.ev-weapon {
+  height: 13px;
+  max-width: 58px;
+  object-fit: contain;
+}
+
+.ev-ability {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.ev-tag {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  color: var(--team-a);
+  border: 1px solid var(--team-a);
+  padding: 0 var(--space-2);
+}
+
+.event-empty {
+  padding: var(--space-5);
+}
+
+.event-filters {
+  border-left: 1px solid var(--border);
+  padding: var(--space-3);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* -- narrow ------------------------------------------------------------- */
+
+/*
+ * Below 1000px there is not room for two gutters and a map worth looking at,
+ * so the arena becomes one column with the map first.  A roster above the
+ * thing it annotates is worse than one below it, and the page is allowed to
+ * scroll here because nothing else fits.
+ */
+@media (max-width: 1000px) {
+  .app-frame.is-immersive {
+    overflow: auto;
+  }
+
+  .arena {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stage-canvas {
+    order: -1;
+    aspect-ratio: 1 / 1;
+  }
+
+  .roster,
+  .roster.is-mirrored {
+    border: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .roster.is-mirrored .player-card,
+  .roster.is-mirrored .roster-head,
+  .roster.is-mirrored .card-top,
+  .roster.is-mirrored .card-name,
+  .roster.is-mirrored .card-bottom,
+  .roster.is-mirrored .card-abilities {
+    flex-direction: row;
+  }
+
+  .roster.is-mirrored .roster-score {
+    margin-left: auto;
+    margin-right: 0;
+  }
+
+  .timeline-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .event-filters {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
 /* -- keyboard hints ---------------------------------------------------- */
 
 .kbd {

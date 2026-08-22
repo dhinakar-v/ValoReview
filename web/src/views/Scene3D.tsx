@@ -69,8 +69,9 @@ import { cone, decodeMask, forwardUv, uvRadius } from "../model/sight";
 import { positionOf, stateAt } from "../model/state";
 import { segments } from "../model/track";
 import { applyTransform } from "../model/transform";
-import { palette, teamColour, useImages } from "./images";
-import { selectedActor, usePlayback } from "./playback";
+import { sideOf } from "../model/synthetic";
+import { palette, sideColour, useImages } from "./images";
+import { selectedActor, teamShown, usePlayback } from "./playback";
 
 /** Marker sizes, in scene units — which are fractions of the radar's side. */
 const BODY_RADIUS = 0.006;
@@ -225,7 +226,10 @@ function Actors({
       { group: THREE.Group; stem: THREE.Line; facing: THREE.Line; body: THREE.Mesh; sprite: THREE.Sprite }
     >();
     for (const player of model.replay.players) {
-      const colour = new THREE.Color(teamColour(colours, player.team));
+      // Built with the opening side and re-set per frame below: a capture with
+      // a recorded swap changes every marker's colour halfway through, and a
+      // material built once would show the first half's colours all match.
+      const colour = new THREE.Color(sideColour(colours, sideOf(model.replay, player.team, 0)));
       const group = new THREE.Group();
 
       const body = new THREE.Mesh(
@@ -294,9 +298,20 @@ function Actors({
       if (!found) {
         continue;
       }
+      // The side, and with it the colour, changes at the recorded swap. Three
+      // materials share one colour per player, so this is three writes rather
+      // than a rebuild -- and `THREE.Color.set` is a no-op on an equal value.
+      const side = sideOf(model.replay, player.team, snap.t_ms);
+      const colour = sideColour(colours, side);
+      (found.body.material as THREE.MeshStandardMaterial).color.set(colour);
+      (found.stem.material as THREE.LineBasicMaterial).color.set(colour);
+      (found.facing.material as THREE.LineBasicMaterial).color.set(colour);
+
       const position = positionOf(snap, player.actor_id);
       // Where the track refused, nothing is drawn -- not a last-known place.
-      if (position === null) {
+      // A side hidden by its roster funnel is the same answer for a different
+      // reason, and both have to reach the scene, not just the minimap.
+      if (position === null || !teamShown(state, player.team)) {
         found.group.visible = false;
         continue;
       }
@@ -380,7 +395,10 @@ function Trails({
       if (track === undefined) {
         continue;
       }
-      const colour = new THREE.Color(teamColour(colours, player.team));
+      // Built with the opening side and re-set per frame below: a capture with
+      // a recorded swap changes every marker's colour halfway through, and a
+      // material built once would show the first half's colours all match.
+      const colour = new THREE.Color(sideColour(colours, sideOf(model.replay, player.team, 0)));
       for (const run of segments(track, 0, Number.MAX_SAFE_INTEGER)) {
         const points = new Float32Array(run.length * 3);
         run.forEach((sample, i) => {
@@ -407,7 +425,7 @@ function Trails({
     const state = usePlayback.getState();
     const from = state.tMs - TRAIL_MS;
     for (const piece of built.pieces) {
-      if (!state.showTrails) {
+      if (!state.layers.trails) {
         piece.line.visible = false;
         continue;
       }
@@ -485,7 +503,7 @@ function SightWedge({
   useFrame(() => {
     const state = usePlayback.getState();
     const actorId = selectedActor(state);
-    if (!state.showSight || actorId === null || silhouette === null || settings === null) {
+    if (!state.layers.sight || actorId === null || silhouette === null || settings === null) {
       built.visible = false;
       return;
     }
@@ -522,7 +540,7 @@ function SightWedge({
     built.geometry.computeBoundingSphere();
     const player = model.replay.players.find((p) => p.actor_id === actorId);
     (built.material as THREE.MeshBasicMaterial).color.set(
-      teamColour(colours, player?.team ?? "?"),
+      sideColour(colours, player ? sideOf(model.replay, player.team, snap.t_ms) : "?"),
     );
     built.visible = true;
   });
@@ -543,7 +561,7 @@ function SightWedge({
  * and has no way to reach a player.
  */
 function Callouts({ art }: { art: MapArt }) {
-  const show = usePlayback((state) => state.showCallouts);
+  const show = usePlayback((state) => state.layers.callouts);
   if (!show) {
     return null;
   }

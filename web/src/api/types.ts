@@ -77,6 +77,21 @@ export interface Library {
   cards: Card[];
 }
 
+/**
+ * One published ability slot on a player's card.
+ *
+ * `slot` is Riot's own name -- `Ability1`, `Ability2`, `Grenade`, `Ultimate` --
+ * and deliberately not a keybind.  `Grenade` is C and `Ultimate` is X on every
+ * agent; `Ability1` and `Ability2` are Q and E in an order that varies by
+ * agent, so nothing here may print a key.  The card draws the icons in the
+ * order the server sent them and names only what it can.
+ */
+export interface AbilityIcon {
+  slot: string;
+  name: string;
+  icon_url: string | null;
+}
+
 export interface Player {
   actor_id: number;
   team: string;
@@ -93,6 +108,28 @@ export interface Player {
   portrait_url: string | null;
   role_icon_url: string | null;
   role: string;
+  abilities: AbilityIcon[];
+}
+
+/**
+ * One weapon's art, by display name.
+ *
+ * A catalogue and not a claim: nothing decoded from a `.vrf` says who is
+ * holding what, so whoever names a weapon owns saying where the name came
+ * from.  Today that is `model/synthetic.ts`, and the page says so.
+ */
+export interface Weapon {
+  name: string;
+  category: string;
+  cost: number | null;
+  icon_url: string | null;
+  /** The flat silhouette Riot draws between a killer and a victim. */
+  killfeed_url: string | null;
+}
+
+export interface Weapons {
+  source: string;
+  weapons: Weapon[];
 }
 
 export interface Loadout {

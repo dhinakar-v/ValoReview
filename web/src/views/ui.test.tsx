@@ -116,7 +116,7 @@ describe("a control with no words gets a name anyway", () => {
   });
 
   it("reports its pressed state where it has one", () => {
-    render(<IconButton label="Sound on" icon={glyphs.soundOn} pressed />);
+    render(<IconButton label="Loop this round" icon={glyphs.loop} pressed />);
     expect(screen.getByRole("button", { pressed: true })).toBeTruthy();
   });
 });

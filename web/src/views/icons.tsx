@@ -25,7 +25,9 @@
 
 import {
   ArrowLeft,
+  ArrowLeftRight,
   ArrowUpRight,
+  Bomb,
   Box,
   ChevronLeft,
   ChevronRight,
@@ -33,12 +35,17 @@ import {
   ChevronsRight,
   CircleAlert,
   CircleCheck,
+  Coins,
   Cpu,
+  Crosshair,
+  Droplet,
   Eye,
   FileQuestion,
   Grid2x2,
   ImageOff,
   Keyboard,
+  Layers as LayersGlyph,
+  List,
   ListFilter,
   LoaderCircle,
   Map as MapGlyph,
@@ -46,16 +53,21 @@ import {
   Pause,
   Play,
   RefreshCw,
+  Repeat,
   Route,
+  Shield,
   SkipBack,
   SkipForward,
+  Skull,
   Sparkles,
   Swords,
   Tag,
+  Timer,
+  TriangleAlert,
   Users,
-  Volume2,
-  VolumeX,
+  X,
   Zap,
+  ZoomIn,
 } from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 
@@ -70,8 +82,9 @@ type Glyph = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
  * Draw one glyph, decoratively.
  *
  * `aria-hidden` is not optional and is deliberately not a prop.  Where an icon
- * really is the only content -- the sound toggle -- the button carries an
- * `aria-label`, which is the accessible name the icon must not compete with.
+ * really is the only content -- a close button, a pager arrow -- the button
+ * carries an `aria-label`, which is the accessible name the icon must not
+ * compete with.
  */
 export function Icon({
   glyph: Glyph,
@@ -107,6 +120,9 @@ export const glyphs = {
   nextEvent: ChevronsRight,
   toEnd: SkipForward,
   keys: Keyboard,
+  loop: Repeat,
+  timeline: List,
+  clock: Timer,
 
   // layers
   view2d: Grid2x2,
@@ -115,6 +131,13 @@ export const glyphs = {
   trails: Route,
   sight: Eye,
   callouts: Tag,
+  layers: LayersGlyph,
+  killMarkers: Crosshair,
+  kills: Skull,
+  ultimates: Sparkles,
+  spike: Bomb,
+  firstBlood: Droplet,
+  zoom: ZoomIn,
 
   // The mark inside a primary button's trailing cap.  A direction rather
   // than a repeat of the button's own icon: the cap says the press leads
@@ -139,10 +162,15 @@ export const glyphs = {
   // status and absence
   ok: CircleCheck,
   bad: CircleAlert,
+  simulated: TriangleAlert,
   noArt: ImageOff,
   noFile: FileQuestion,
-  soundOn: Volume2,
-  soundOff: VolumeX,
+
+  // roster and events
+  side: Shield,
+  credits: Coins,
+  swap: ArrowLeftRight,
+  close: X,
 } satisfies Record<string, Glyph>;
 
 /**

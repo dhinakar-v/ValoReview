@@ -19,6 +19,7 @@ import type {
   MapArt,
   Replay,
   SightMaskDoc,
+  Weapons,
 } from "./types";
 
 export class ApiError extends Error {
@@ -72,6 +73,10 @@ export const api = {
   positions: (id: string) =>
     get<PositionsDoc>(`/api/replays/${encodeURIComponent(id)}/positions`),
   map: (key: string) => get<MapArt>(`/api/maps/${encodeURIComponent(key)}`),
+  // The whole weapon catalogue in one request rather than one per name: there
+  // are twenty of them, and a kill feed that fetched per row would make a
+  // request per kill. An assets/ with no weapons/ answers with an empty list.
+  weapons: () => get<Weapons>("/api/weapons"),
   // The playable silhouette a sight cone is raycast against, thresholded in
   // Python, with the sentence that says what it is travelling beside it. A map
   // with no radar image on disk 404s: the layer is unavailable, not empty.

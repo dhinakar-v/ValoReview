@@ -1,53 +1,43 @@
 /**
- * The chrome every page sits inside.
+ * The chrome every page sits inside, in two forms.
  *
- * Each of the three pages used to render its own `Page` and nothing else, so
- * there was no persistent anything -- no mark, no indication of where you were,
- * and no home for a control that belongs to the application rather than to a
- * replay.  This is that bar.
+ * The match list is a document: it wants a bar with a mark, a breadcrumb and a
+ * bounded column, and it gets one.  The viewer is not a document -- it is one
+ * object, a map, and every pixel of chrome around it is a pixel the map does
+ * not get.  So on `/replay/:id` the frame goes **immersive**: a 40px bar with
+ * a back link and the capture's name, nothing else, and the page below it fills
+ * the window with no scroll and no maximum width.
  *
- * Two things live in it, and both are application-wide facts rather than
- * replay-wide ones:
+ * Three things that used to live in the bar are gone rather than moved:
  *
- *   * **the decoder light**, from `api.config`.  Whether a decode is even
- *     possible is a property of the machine, and discovering it one click into
- *     a capture is the confusing state the match list footer already tries to
- *     head off.  The light says it everywhere, and its `title` carries the
- *     server's own sentence rather than a paraphrase.
- *   * **the sound toggle**, which is off until somebody asks.
+ *   * **the decoder light.**  It reported a property of the machine on every
+ *     page, including the twenty-odd where nothing could be decoded.  Where it
+ *     actually decides something -- the DECODE POSITIONS button in `MapStage`'s
+ *     empty state -- the server's own sentence is already shown.
+ *   * **the sound toggle**, and the whole `sound` module with it.  It was off
+ *     by default, so removing the only control that could turn it on would have
+ *     left a module nothing could reach.
+ *   * **the wordmark and breadcrumb, on the viewer only.**  Two steps of
+ *     breadcrumb over a back arrow is the same navigation twice.
  *
- * `Page` in `Shell.tsx` is unchanged and still owns the per-page title, actions
- * and footer.  That matters: the page tests render `MatchListPage` and
- * `MapStage` directly, outside the router, so anything this frame adds must be
- * something those pages do not depend on.
+ * `Page` in `Shell.tsx` still owns the per-page title, actions and footer, and
+ * the skip link still targets `<main id="main" tabIndex={-1}>` -- a link that
+ * moved only the scroll would leave the focus in the bar, and the next Tab
+ * would return to what it was meant to skip.
  */
 
-import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useLocation } from "react-router-dom";
 
-import { api } from "../api/client";
-import { Wordmark, glyphs } from "./icons";
-import { play, useSound } from "./sound";
-import { IconButton } from "./ui";
+import { Wordmark } from "./icons";
 
 /**
  * Where you are, in two steps at most.
  *
  * Deliberately derived from the path rather than from the loaded data: a
- * breadcrumb that waits for a fetch flickers, and a breadcrumb that names the
- * map before the map has been read is asserting something it has not got.
+ * breadcrumb that waits for a fetch flickers, and one that names the map before
+ * the map has been read is asserting something it has not got.
  */
 function Crumbs() {
-  const { pathname } = useLocation();
-  if (pathname.startsWith("/replay/")) {
-    return (
-      <nav className="crumbs" aria-label="Breadcrumb">
-        <Link to="/">Replays</Link>
-        <span className="sep">/</span>
-        <span className="here">Viewer</span>
-      </nav>
-    );
-  }
   return (
     <nav className="crumbs" aria-label="Breadcrumb">
       <span className="here">Library</span>
@@ -55,74 +45,34 @@ function Crumbs() {
   );
 }
 
-/**
- * The decoder light.
- *
- * Three states and not two: not yet asked is grey, which is a different thing
- * from a decoder that is missing, and colouring it green or red before the
- * answer arrives would be a guess.
- */
-function DecoderLight() {
-  const config = useQuery({ queryKey: ["config"], queryFn: api.config });
-  const decoder = config.data?.decoder;
-  const tone = decoder === undefined ? "" : decoder.found ? "ok" : "bad";
-  const said = decoder?.described ?? decoder?.hint ?? "checking for a decoder…";
-  return (
-    <span className="status" title={said}>
-      <i className={tone ? `dot ${tone}` : "dot"} />
-      Decoder
-    </span>
-  );
-}
-
-function SoundToggle() {
-  const enabled = useSound((state) => state.enabled);
-  const toggle = useSound((state) => state.toggle);
-  return (
-    <IconButton
-      label={enabled ? "Sound on" : "Sound off"}
-      icon={enabled ? glyphs.soundOn : glyphs.soundOff}
-      pressed={enabled}
-      silent
-      onClick={() => {
-        toggle();
-        // After, not before. Turning sound *on* has to be audible or the
-        // control gives no evidence it did anything, and `play` is a no-op
-        // while the store still says off.
-        play(useSound.getState().enabled ? "toggleOn" : "toggleOff");
-      }}
-    />
-  );
-}
-
 export function AppFrame() {
+  const { pathname } = useLocation();
+  const immersive = pathname.startsWith("/replay/");
+
   return (
-    <div className="app-frame">
+    <div className={immersive ? "app-frame is-immersive" : "app-frame"}>
       {/*
-        First in the DOM and visible only when focused.  The bar carries a
-        brand link, a breadcrumb, the decoder light and the sound toggle, and
-        on the viewer the page head adds three more -- so reaching the map from
-        the keyboard was seven presses on every navigation.
+        First in the DOM and visible only when focused.  On the viewer the bar
+        carries two controls and the map is the whole page, so reaching it from
+        the keyboard should not cost a tour of the chrome.
       */}
       <a className="skip-link" href="#main">
         Skip to content
       </a>
-      <header className="app-bar">
-        <Link to="/" className="brand">
-          <Wordmark />
-          <span>
-            <span className="brand-name">Replay Analyzer</span>
-            <br />
-            <span className="brand-sub">Valorant &middot; local captures</span>
-          </span>
-        </Link>
-        <Crumbs />
-        <div className="spacer" />
-        <div className="bar-right">
-          <DecoderLight />
-          <SoundToggle />
-        </div>
-      </header>
+      {immersive ? null : (
+        <header className="app-bar">
+          <Link to="/" className="brand">
+            <Wordmark />
+            <span>
+              <span className="brand-name">Replay Analyzer</span>
+              <br />
+              <span className="brand-sub">Valorant &middot; local captures</span>
+            </span>
+          </Link>
+          <Crumbs />
+          <div className="spacer" />
+        </header>
+      )}
       <Outlet />
     </div>
   );

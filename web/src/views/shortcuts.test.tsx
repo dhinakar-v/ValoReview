@@ -16,7 +16,7 @@ import { fireEvent, render, screen, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PlaybackClock } from "../model/clock";
-import { usePlayback } from "./playback";
+import { DEFAULT_LAYERS, usePlayback } from "./playback";
 import { useTransportKeys } from "./shortcuts";
 
 afterEach(cleanup);
@@ -82,7 +82,7 @@ describe("a key belongs to whatever has the focus first", () => {
 
 describe("a key exists exactly where the control it presses does", () => {
   it("does not toggle a layer the stage is not offering", () => {
-    usePlayback.setState({ showSight: false, showCallouts: false });
+    usePlayback.setState({ layers: { ...DEFAULT_LAYERS, sight: false, callouts: false } });
     render(
       <Bound
         clock={new PlaybackClock(LENGTH_MS)}
@@ -93,15 +93,15 @@ describe("a key exists exactly where the control it presses does", () => {
     const target = screen.getByText("somewhere that is not a control");
     fireEvent.keyDown(target, { key: "s" });
     fireEvent.keyDown(target, { key: "c" });
-    expect(usePlayback.getState().showSight).toBe(false);
-    expect(usePlayback.getState().showCallouts).toBe(false);
+    expect(usePlayback.getState().layers.sight).toBe(false);
+    expect(usePlayback.getState().layers.callouts).toBe(false);
   });
 
   it("toggles it where the stage does draw the switch", () => {
-    usePlayback.setState({ showSight: false });
+    usePlayback.setState({ layers: { ...DEFAULT_LAYERS, sight: false } });
     render(<Bound clock={new PlaybackClock(LENGTH_MS)} step={() => undefined} />);
     fireEvent.keyDown(screen.getByText("somewhere that is not a control"), { key: "s" });
-    expect(usePlayback.getState().showSight).toBe(true);
-    usePlayback.setState({ showSight: false });
+    expect(usePlayback.getState().layers.sight).toBe(true);
+    usePlayback.setState({ layers: { ...DEFAULT_LAYERS } });
   });
 });

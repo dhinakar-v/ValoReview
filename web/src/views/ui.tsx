@@ -14,18 +14,13 @@
  * own text node and `icon` is drawn beside it with `aria-hidden` already set
  * by `Icon`.  A control whose only content is a glyph must be given an
  * `aria-label`, and `IconButton` is the only one that takes one.
- *
- * Sound is wired in here rather than at each call site for the same reason the
- * `aria-hidden` is: a press that sounds in one place and not another is a bug
- * nobody will file, they will just decide the sounds are unreliable.
  */
 
 import type { ComponentType, KeyboardEvent, ReactNode, SVGProps } from "react";
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Icon, ICON_ALONE, Spinner, glyphs } from "./icons";
 import { Sentence } from "./Shell";
-import { play, playToggle } from "./sound";
 
 type Glyph = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
 
@@ -70,7 +65,6 @@ export function Button({
       disabled={disabled || busy}
       className={classes || undefined}
       onClick={() => {
-        play("click");
         onClick?.();
       }}
     >
@@ -130,9 +124,7 @@ export function IconButton({
       onClick={() => {
         if (!silent) {
           if (pressed === undefined) {
-            play("click");
           } else {
-            playToggle(!pressed);
           }
         }
         onClick?.();
@@ -165,7 +157,6 @@ export function Toggle({
       aria-pressed={pressed}
       title={title}
       onClick={() => {
-        playToggle(!pressed);
         onChange();
       }}
     >
@@ -207,7 +198,6 @@ export function Segmented<T extends string | number>({
             aria-pressed={selected}
             onClick={() => {
               if (!selected) {
-                play("click");
                 onChange(option);
               }
             }}
@@ -360,7 +350,6 @@ export function Tabs({
     // keyed, so this one survives the state change and is the same node after.
     strip.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[index]?.focus();
     if (tab.id !== active) {
-      play("click");
       onChange(tab.id);
     }
   };
@@ -399,7 +388,6 @@ export function Tabs({
             tabIndex={selected ? 0 : -1}
             onClick={() => {
               if (!selected) {
-                play("click");
                 onChange(tab.id);
               }
             }}
@@ -451,6 +439,207 @@ export function EmptyState({ icon, children }: { icon?: Glyph; children: ReactNo
           these are matched verbatim by tests, and the element they are matched
           in should have one definition. */}
       <Sentence>{children}</Sentence>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------
+ * Floating things.
+ *
+ * Three of them, and each is here rather than in the component that opens it
+ * because each has one behaviour that is easy to get subtly wrong and easy to
+ * regress: a popover must close on Escape and on a click outside it, a modal
+ * must trap focus and give it back, and a checkbox must be a real checkbox.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * A checkbox with a label and an optional glyph.
+ *
+ * A real `<input type="checkbox">` rather than a `button[aria-pressed]`, which
+ * is what the layer toggles were.  Inside a menu of nine that difference is
+ * audible: a screen reader announces "checked / not checked" and the count of
+ * the group, where nine pressed buttons announce nine unrelated states.  The
+ * visible box is drawn from the input's own `:checked`, so nothing has to keep
+ * a second copy of the state in sync.
+ *
+ * `label` stays a string, for the reason at the top of this file.
+ */
+export function CheckRow({
+  label,
+  icon,
+  checked,
+  onChange,
+  tone,
+  title,
+}: {
+  label: string;
+  icon?: Glyph;
+  checked: boolean;
+  onChange: () => void;
+  /** `a` or `b` outlines the row in a team colour, as the reference does. */
+  tone?: "a" | "b";
+  title?: string;
+}) {
+  return (
+    <label className={tone ? `check-row is-${tone}` : "check-row"} title={title}>
+      <input type="checkbox" checked={checked} onChange={onChange} />
+      <span className="check-box" aria-hidden="true" />
+      {icon ? <Icon glyph={icon} /> : null}
+      <span className="check-label">{label}</span>
+    </label>
+  );
+}
+
+/**
+ * A button that opens a panel beneath it.
+ *
+ * Closes on Escape, on a click anywhere outside, and on losing focus to
+ * something outside -- three separate exits because each covers a different
+ * way of leaving: the keyboard, the mouse and the tab key.  The panel is a
+ * sibling of the button inside one positioned wrapper rather than a portal,
+ * because it is anchored to the button and nothing here needs to escape an
+ * overflow.
+ */
+export function Menu({
+  label,
+  icon,
+  children,
+  align = "end",
+  title,
+}: {
+  label: string;
+  icon?: Glyph;
+  children: ReactNode;
+  align?: "start" | "end";
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onDown = (event: MouseEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        // Back to the button, not to the body: a menu that dumps the focus at
+        // the top of the document makes Escape more expensive than the mouse.
+        wrap.current?.querySelector("button")?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="menu" ref={wrap}>
+      <button
+        type="button"
+        className={open ? "menu-button is-open" : "menu-button"}
+        aria-expanded={open}
+        aria-haspopup="true"
+        title={title}
+        onClick={() => setOpen((was) => !was)}
+      >
+        {icon ? <Icon glyph={icon} /> : null}
+        <span>{label}</span>
+      </button>
+      {open ? (
+        <div className={align === "start" ? "menu-panel at-start" : "menu-panel"}>
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A modal dialog over a dimmed, blurred page.
+ *
+ * Focus is moved in on open and given back on close, and Tab is cycled inside:
+ * a dialog you can Tab out of is a dialog that puts the focus behind its own
+ * backdrop, where the user cannot see what has it.  The backdrop closes on a
+ * click, which is what every other dialog on the web does and what a user will
+ * try first.
+ */
+export function Modal({
+  title,
+  onClose,
+  children,
+  actions,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  /** Anything that belongs beside the title -- a stepper, a legend. */
+  actions?: ReactNode;
+}) {
+  const box = useRef<HTMLDivElement | null>(null);
+  const returnTo = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    returnTo.current = document.activeElement as HTMLElement | null;
+    box.current?.focus();
+    return () => returnTo.current?.focus();
+  }, []);
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") {
+      return;
+    }
+    const focusable = box.current?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable === undefined || focusable.length === 0) {
+      return;
+    }
+    const first = focusable[0]!;
+    const last = focusable[focusable.length - 1]!;
+    if (event.shiftKey && document.activeElement === first) {
+      last.focus();
+      event.preventDefault();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      first.focus();
+      event.preventDefault();
+    }
+  };
+
+  return (
+    <div className="scrim" onMouseDown={onClose}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
+        ref={box}
+        onKeyDown={onKeyDown}
+        // The backdrop closes; the dialog itself must not, or every click
+        // inside it would travel to the handler above and shut it.
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="modal-head">
+          <h2>{title}</h2>
+          {actions}
+          <div className="spacer" />
+          <IconButton label="Close" icon={glyphs.close} onClick={onClose} />
+        </div>
+        {children}
+      </div>
     </div>
   );
 }

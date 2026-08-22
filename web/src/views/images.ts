@@ -73,8 +73,8 @@ export function palette(element: HTMLElement): Record<string, string> {
   const read = (name: string, fallback: string) =>
     style.getPropertyValue(name).trim() || fallback;
   return {
-    a: read("--team-a", "#4ea3ff"),
-    b: read("--team-b", "#ff6b5a"),
+    a: read("--team-a", "#ff4655"),
+    b: read("--team-b", "#3e8bff"),
     unknown: read("--team-unknown", "#8a90a2"),
     text: read("--text-primary", "#e8eaed"),
     muted: read("--text-muted", "#a2a9b4"),
@@ -92,5 +92,25 @@ export function palette(element: HTMLElement): Record<string, string> {
 export function teamColour(colours: Record<string, string>, team: string): string {
   if (team === "A") return colours.a!;
   if (team === "B") return colours.b!;
+  return colours.unknown!;
+}
+
+/**
+ * A marker's colour, which follows the **side** rather than the team.
+ *
+ * `--team-a` is Valorant's attacker red and `--team-b` its defender blue, and
+ * every surface in the interface derives from the same two: a roster header, a
+ * card accent, a kill-feed name, a timeline row and a map marker.  Deriving
+ * them from the *team* instead would be equally consistent right up to the
+ * halftime swap, at which point the cards would change side and the markers
+ * would not.
+ *
+ * Which side a team was on is the generated part -- `infer` two-colours the
+ * kill graph and stops -- but the instant it changes is real, so a marker
+ * changes colour at exactly the millisecond `switchTeams` fired.
+ */
+export function sideColour(colours: Record<string, string>, side: string): string {
+  if (side === "ATK") return colours.a!;
+  if (side === "DEF") return colours.b!;
   return colours.unknown!;
 }

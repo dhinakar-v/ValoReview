@@ -17,6 +17,15 @@
  * with a one-off pixel value, which is exactly the state this replaces -- the
  * old stylesheet had paddings at 2, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20,
  * 24 and 28.
+ *
+ * Flat and square
+ * ---------------
+ * There was a `--bezel` here: four stacked shadow rings and an inset highlight
+ * that stood every enclosure off the page, plus a `--ring` token for the gaps
+ * that had to clear it, because a box-shadow occupies no layout space.  Both
+ * are gone, and so are the corner radii.  Separation is now a 1px border and a
+ * step on the surface ramp -- which is what the ramp was built for -- and the
+ * three gaps that existed only to clear a shadow are ordinary spacing again.
  */
 
 :root {
@@ -31,26 +40,22 @@
   --space-8: 48px;
 
   /* -- radius ---------------------------------------------------------- */
-  /* The first four are controls -- a button, a field, a chip.  The last two
-     are enclosures, and they are larger than a control's on purpose: a panel
-     that shares its radius with the buttons inside it reads as one more
-     button.  `--radius-core` is the inner face of a bezel and `--radius-tray`
-     is its outer, and the two are concentric by construction -- see the ring
-     block in app.css, where the tray is a shadow spread rather than a second
-     element and CSS adds the spread to the radius for us. */
-  --radius-sm: 3px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-  --radius-core: 15px;
-  --radius-tray: 24px;
-  --radius-pill: 999px;
+  /* Square, on purpose and everywhere.
 
-  /* -- bezel ------------------------------------------------------------ */
-  /* How far a tray ring extends past the border box.  A box-shadow occupies
-     no layout space, so any gap between two bezelled elements has to clear
-     twice this or the rings overlap.  It is a token because three different
-     gaps depend on it and a fourth will. */
-  --ring: 9px;
+     These were 3 / 6 / 10 / 15 / 24.  The scale survives as tokens rather than
+     being deleted so a call site keeps naming what it is -- a control edge, an
+     enclosure edge -- and so that turning the corners back on is one file.
+     Every one of them resolves flat.
+
+     `--radius-round` is the single exception and is not a corner: a player
+     marker is a circular agent portrait, and a square one stops reading as a
+     person. */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-core: 0;
+  --radius-tray: 0;
+  --radius-round: 999px;
 
   /* -- type ------------------------------------------------------------ */
   /* The fallback tails are the old stacks, so a checkout with the woff2
@@ -87,42 +92,17 @@
 
   /* -- elevation ------------------------------------------------------- */
   /* Not a hex: `black` is a keyword, and what these express is depth rather
-     than a colour the palette gets to decide. */
-  --shadow-1: 0 1px 2px color-mix(in srgb, black 40%, transparent);
-  --shadow-2: 0 4px 12px color-mix(in srgb, black 45%, transparent);
-  --shadow-3: 0 12px 32px color-mix(in srgb, black 55%, transparent);
+     than a colour the palette gets to decide.
 
-  /*
-   * The bezel: an enclosure that looks machined rather than outlined.
-   *
-   * Every panel, card and canvas in this interface used to be one
-   * `1px solid var(--border)` on a flat fill -- seventeen of them, all
-   * identical -- so nothing was ever *above* anything and the page read flat
-   * however carefully the surface ramp was tuned.  This is the fix, and it is
-   * four rings and a highlight rather than a second element:
-   *
-   *   inset      a light top edge, the way a raised face catches a room
-   *   1px        the core's own hairline
-   *   8px        the tray -- a lighter band standing the core off the page
-   *   --ring     the tray's outer hairline
-   *   shadow-3   the drop, which is what makes the whole thing sit *on* rather
-   *              than *in* the page
-   *
-   * A wrapper element would be the textbook construction and is not needed:
-   * an outer shadow's corner radius is `border-radius + spread`, so stacked
-   * rings are concentric for free.  That is what keeps this a stylesheet
-   * change -- no component in this repository grew a div for it.
-   *
-   * `white` here is the same argument as `black` above: these express depth,
-   * not a colour the palette gets to decide, and this interface is committed
-   * dark (`color-scheme: dark`, and theme.py has no light variant).
-   */
-  --bezel:
-    inset 0 1px 0 color-mix(in srgb, white 5.5%, transparent),
-    0 0 0 1px color-mix(in srgb, white 4.5%, transparent),
-    0 0 0 8px color-mix(in srgb, white 2.8%, transparent),
-    0 0 0 var(--ring) color-mix(in srgb, white 7.5%, transparent),
-    var(--shadow-3);
+     Each has exactly one job now.  Everything that sits *in* the page --
+     panels, cards, the roster, the transport -- is separated by a 1px border
+     and a step on the surface ramp, because a shadow under something that is
+     not floating is decoration.  `--shadow-1` is the kill toast and the hover
+     tooltip, `--shadow-2` the layers popover, `--shadow-3` the round-timeline
+     modal: the three things that genuinely hover over the map. */
+  --shadow-1: 0 2px 10px color-mix(in srgb, black 50%, transparent);
+  --shadow-2: 0 6px 20px color-mix(in srgb, black 55%, transparent);
+  --shadow-3: 0 18px 48px color-mix(in srgb, black 65%, transparent);
 
   /* -- motion ---------------------------------------------------------- */
   /* Two curves, and the difference between them is what is moving.  `--ease`
@@ -139,12 +119,26 @@
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
 
   /* -- layout ---------------------------------------------------------- */
+  /* `--page-max` still centres the match list, which is a document and reads
+     badly at 2000px.  The viewer does not use it: the map is the page there,
+     and a 1440px column inside a 2560px window is the dead space this layout
+     was rebuilt to remove. */
   --page-max: 1440px;
-  --bar-h: 52px;
+  --bar-h: 40px;
+
+  /* The viewer's three bands and its two gutters, named because the grid, the
+     canvas sizing and four floating layers each depend on one of them. */
+  --viewer-bar-h: 40px;
+  --viewer-foot-h: 86px;
+  --roster-w: clamp(228px, 17.5vw, 316px);
+  /* A roster card floor, not its height: the cards stretch to fill the
+     column, and this is the point below which one stops being legible. */
+  --card-h: 74px;
 
   /* -- stacking -------------------------------------------------------- */
   --z-base: 0;
   --z-sticky: 10;
+  --z-stage: 20;
   --z-overlay: 100;
   --z-tooltip: 200;
 }
@@ -152,8 +146,7 @@
 /*
  * Someone who has asked for less motion has asked for less motion, and a
  * transition is the one thing here that can be turned off without changing
- * what anything says.  Zeroing the tokens does it in one place; the sound
- * module reads the same query and stays silent for the same reason.
+ * what anything says.  Zeroing the tokens does it in one place.
  */
 @media (prefers-reduced-motion: reduce) {
   :root {

@@ -44,6 +44,6 @@
 
   /* Team A and team B, inferred; never attacker and defender. */
   --team-unknown: #8a90a2;
-  --team-a: #4ea3ff;
-  --team-b: #ff6b5a;
+  --team-a: #ff4655;
+  --team-b: #3e8bff;
 }
