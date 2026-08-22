@@ -170,7 +170,7 @@ Also recovered: exactly 10 `BombPlayerState_C` channels, 10 `Equippable_Unarmed`
 > do it for this capture:** the transforms rotate every patch and are derived per build with
 > Ghidra against the shipped binary, and 11.11 is long gone from the live client. So the row in
 > the table above stays "not decoded" for `039f3991…` — but for a reason about this *build*, not
-> about this title. See `docs/payload-decryption-20260821-2338-handoff.md`.
+> about this title. See `docs/archive/payload-decryption-20260821-2338-handoff.md`.
 >
 > Both hypotheses at the end of this section are dead. The encoding was never the problem, so
 > neither `ReceiveProperties_r` nor a variable preamble was ever going to explain it. The one

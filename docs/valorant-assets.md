@@ -313,8 +313,8 @@ Other flags: `--out DIR` (default `assets`), `--jobs N` (default 4 concurrent do
 - `libraries/vrfview/art.py` — the consumer: manifest → file paths, and the transform.
 - `libraries/vrfview/roster.py`, `mapref.py` — the two places the art is drawn.
 - `libraries/vrfview/loader.py:45` — `MAP_NAMES`, the codename table this inverts.
-- `docs/valorant-api.md` — the *official* Riot developer API (needs `RIOT_API` in `.env`);
+- `docs/archive/valorant-api.md` — the *official* Riot developer API, no longer called;
   unrelated to the asset API used here, but the route to per-match player positions.
 - `docs/vrf-decoding-findings.md` — why no positions exist offline yet.
-- `docs/replay-viewer-20260821-2004-handoff.md:45` — the decision to keep the viewer
+- `docs/archive/replay-viewer-20260821-2004-handoff.md:45` — the decision to keep the viewer
   schematic rather than a minimap.

@@ -9,10 +9,10 @@ Decode and replay Valorant `.vrf` replay files.
     csharp/         the position decoder (VrfPositions); see The decoder below
     web/            the browser interface (React over vrfserve; web/dist gitignored)
     runners/        .bat launchers; each one works from any directory
-    tests/          test suite
-    docs/           decoding research, findings, API reference and session handoffs
+    tests/          test suite, and tests/golden/ -- the two-language contract
+    docs/           decoding research and findings; docs/archive/ for the rest
+    images/         the reference frames the browser viewer was built against
     Demos/          .vrf captures (gitignored)
-    out/            vrf_to_json output (gitignored)
     .cache/         decodes, scans and scratch; delete to reset (gitignored)
     assets/         downloaded Valorant art (gitignored)
     vendor/         Oodle and decoder drop-ins (gitignored except its README)
