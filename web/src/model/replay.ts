@@ -85,16 +85,6 @@ export function buildModel(replay: Replay, positions: PositionsDoc | null): Repl
   };
 }
 
-/** Whether anything in this replay can be drawn at a map coordinate. */
-export function hasPositions(model: ReplayModel): boolean {
-  for (const track of model.positions.values()) {
-    if (track.samples.length > 0) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
  * How far below the match's own median z a sample stops being a place.
  *

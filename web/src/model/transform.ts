@@ -52,14 +52,3 @@ export function placeSquare(width: number, height: number, margin = MARGIN): Box
 export function uvToPixels(box: Box, u: number, v: number): [x: number, y: number] {
   return [box.left + u * box.side, box.top + v * box.side];
 }
-
-/** One world coordinate straight to a point inside a placed square. */
-export function worldToPixels(
-  box: Box,
-  transform: Transform,
-  worldX: number,
-  worldY: number,
-): [x: number, y: number] {
-  const [u, v] = applyTransform(transform, worldX, worldY);
-  return uvToPixels(box, u, v);
-}

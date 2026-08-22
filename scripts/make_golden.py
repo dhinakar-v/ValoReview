@@ -74,7 +74,7 @@ and four tracks between them covering an exact sample hit, a gap short enough
 to interpolate, a gap too long, a lone sample inside the hold window and one
 past it, a yaw crossing 0 to 360 and back, and a negative yaw.  No `.vrf` is
 involved and none is needed, which is why `tests/golden/` is committed where
-`Demos/`, `out/` and `assets/` are not.
+`Demos/`, `assets/` and `.cache/` are not.
 """
 
 from __future__ import annotations

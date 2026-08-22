@@ -15,10 +15,13 @@ requires-python = ">=3.11"
 # add a dependency only when the standard library genuinely lacks the thing,
 # and http.server genuinely lacks it: no routing, no streaming responses, no
 # request validation, and one thread per request.  Honouring the rule means
-# adding these two rather than hand-rolling an ASGI stack.  pydantic and
-# starlette arrive with them, and pydantic is what makes the OpenAPI schema --
-# and therefore the browser's TypeScript types -- a derived artefact instead of
-# a second contract written by hand.
+# adding these two rather than hand-rolling an ASGI stack.  pydantic is listed
+# beside them because libraries/vrfserve/schema.py imports it directly: it
+# arrives with fastapi today, but a first-party import should be a declared
+# dependency, or the day fastapi swaps its validation backend the OpenAPI
+# document stops being generated and nothing says why.  starlette is not
+# listed, because nothing here imports it -- it is only ever named as a string
+# in an import ban.
 #
 # python-dotenv is deliberately NOT here: libraries/envfile.py already
 # implements the exact contract vrfconfig needs, so adding it would have meant
@@ -27,6 +30,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
     "Pillow>=11.0.0",
+    "pydantic>=2.9.0",
     "uvicorn>=0.30.0",
 ]
 
