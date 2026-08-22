@@ -1,8 +1,23 @@
 # vendor/
 
-Drop an Oodle runtime here and every CLI finds it:
+Two drop-ins live here, and neither is committed.
+
+An Oodle runtime, which every CLI that touches a compressed chunk finds:
 
     vendor/oo2core_9_win64.dll
+
+And a published position decoder, if you would rather not keep a build tree:
+
+    vendor/parser/vrf-positions.exe
+
+The decoder is normally built instead, by `runners/build-decoder.bat`; see
+README, "The decoder". Publish a self-contained one with:
+
+    dotnet publish csharp/VrfPositions -c Release -r win-x64 --self-contained
+
+Before handing that binary to anyone else, read the OozSharp section of
+`THIRD_PARTY.md`: it links GPLv3-headed code shipped under an MIT package file,
+which is fine to build and run locally and not obviously fine to redistribute.
 
 `.gitignore` keeps everything in this directory out of the repository except
 this file. The DLL is Epic's intellectual property, licensed for redistribution

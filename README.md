@@ -6,13 +6,14 @@ Decode and replay Valorant `.vrf` replay files.
 
     libraries/      importable code -- vrf_reader.py, vrf_to_json.py, vrfnet/, vrfview/
     scripts/        standalone CLIs -- vrf_net.py, vrf_view.py, fetch_assets.py
+    csharp/         the position decoder (VrfPositions); see The decoder below
     runners/        .bat launchers; each one works from any directory
     tests/          test suite
     docs/           decoding research, findings, API reference and session handoffs
     Demos/          .vrf captures (gitignored)
     out/            vrf_to_json output (gitignored)
     assets/         downloaded Valorant art (gitignored)
-    vendor/         Oodle runtime drop-in (gitignored except its README)
+    vendor/         Oodle and decoder drop-ins (gitignored except its README)
 
 `libraries/` is the source root, not a package: `uv sync` installs its contents so
 `import vrf_reader` and `import vrfnet` resolve from anywhere.
@@ -29,6 +30,7 @@ Every runner forwards its arguments and returns the underlying exit code.
     runners\vrf-app.bat                             browse the replay library
     runners\vrf-app.bat --list                      the same scan, as text
     runners\make-icons.bat                          draw the transport glyphs
+    runners\build-decoder.bat                       build the position decoder
     runners\vrf-view.bat <replay.vrf>               open one replay directly
     runners\vrf-view.bat dump <replay.json>         headless text dump
     runners\vrf-view.bat catalog                    what names and art are cached
@@ -41,22 +43,52 @@ Pass `--help` to any of them for the full argument list.
 `Demos/`. `libraries/vrfconfig.py` resolves it and reports which of the three
 sources answered, so an empty list can always say where it looked.
 
-## Positions on a machine with no Oodle
+## Positions on a machine with no decoder
 
 `vrf-view.bat ... --positions` decodes player positions out of the replication
-stream, which needs the DLL and about four minutes on a full match, and works
-only on the builds `vrfnet/payload_transform.py` supports. `vrf-to-json.bat
-... --positions` does that decode once and writes `<out>.positions.json` beside
-the dump; from then on `vrf-view.bat dump out.json --positions` reads the
-sidecar and needs no DLL at all. A sidecar belonging to another match is
-refused rather than drawn.
+stream, which needs the built decoder and about four seconds on a full match,
+and works only on the builds `vrfnet/payload_transform.py` supports.
+`vrf-to-json.bat ... --positions` does that decode once and writes
+`<out>.positions.json` beside the dump; from then on `vrf-view.bat dump
+out.json --positions` reads the sidecar and needs no decoder at all. A sidecar
+belonging to another match is refused rather than drawn.
+
+## The decoder
+
+Positions come from `csharp/VrfPositions`, a small C# program that references
+[`michel-giehl/ValorantReplayParser`](https://github.com/michel-giehl/ValorantReplayParser)
+and writes the thinned movement samples and actor spawns this project consumes.
+It exists because the same decode is about four seconds there and about four
+minutes in Python -- the cost was never the decompression, it was three million
+movement records through a bit reader backed by a Python int.
+
+Build it once:
+
+    git clone https://github.com/michel-giehl/ValorantReplayParser.git ..\ValorantReplayParser
+    runners\build-decoder.bat
+
+That needs the .NET 10 SDK. `runners\build-decoder.bat -p:VrpRoot=<path>` if
+the clone lives somewhere other than beside this repository.
+`libraries/vrfview/csharpdecode.py` then looks in this order:
+
+    --parser-exe PATH     an argument beats everything
+    VRF_PARSER_EXE        real environment, then the nearest .env
+    vendor/parser/        a published, self-contained drop-in
+    csharp/VrfPositions/  whatever this working tree last built
+
+`libraries/vrfnet/` still decodes the same stream in pure Python and is kept
+for exactly one reason: it is the independent check on the decoder above. The
+two agree on all 10,544 samples of the reference 12.10 decode, exactly, in
+x, y, z, yaw and pitch. See `docs/valorant-replay-parser-features.md`.
 
 ## Oodle
 
-The viewer and the event timeline need no setup: everything they read lives in
-plain chunks. Only `--decode`, `vrf-to-json` without `--no-decompress`, and
-`vrf-net` on a `.vrf` touch the compressed REPLAYDATA and CHECKPOINT payloads,
-and those are Oodle (Mermaid), which needs an `oo2core_*_win64.dll` at runtime.
+Positions no longer need Oodle -- the decoder does its own decompression. What
+still does: `--decode`, `vrf-to-json` without `--no-decompress`, and `vrf-net`
+on a `.vrf`, all of which touch the compressed REPLAYDATA and CHECKPOINT
+payloads directly. The viewer and the event timeline need no setup at all:
+everything they read lives in plain chunks. Those payloads are Oodle (Mermaid),
+which needs an `oo2core_*_win64.dll` at runtime.
 
 Valorant cannot supply it. Its shipping exe links Oodle statically and exports
 no Oodle symbols, so there is nothing to load from the game directory. The DLL
@@ -135,10 +167,11 @@ movement RPC underneath, which carries a position, a heading and a velocity per
 player about a hundred times a second.
 
     runners\vrf-view.bat dump x.vrf --positions          decode and report them
-    runners\vrf-view.bat dump x.vrf --positions --blocks 2   stop after 2 blocks
 
-It is opt-in because it is the one slow thing here: it needs the Oodle DLL and
-takes around four minutes on a full match, against 0.04s for everything else.
+It is opt-in because it is still the slowest thing here: it needs the decoder
+built by `runners\build-decoder.bat` and takes about four seconds on a full
+match, against 0.04s for everything else. It took four minutes until the same
+decode moved out of Python; see **The decoder** below.
 Decoding also names each player -- an agent's pawn states its own archetype, so
 `dump` reports a per-player agent alongside the unattributable loadout roster,
 and the two agree by two joins that share no term.

@@ -2,26 +2,27 @@
 Positions, and the one bridge from the replication stream into the model.
 
 Everything else the viewer shows comes out of a plain chunk.  This does not:
-it decompresses every REPLAYDATA block, runs the whole vrfnet stack over it,
-de-obfuscates each property payload and decodes the movement RPC inside.  That
-costs an Oodle DLL and about four minutes on a full match, which is why it is
-never done implicitly -- `loader.load` still returns a positionless Replay and
-a caller has to ask for this.
+it decompresses every REPLAYDATA block, de-obfuscates each property payload and
+decodes the movement RPC inside.  That work now happens in `csharp/VrfPositions`
+rather than in `vrfnet`, because the same decode is about four seconds there and
+about four minutes here -- see `vrfview.csharpdecode` for why, and for what did
+*not* change.  It still needs a built decoder, so it is still never done
+implicitly: `loader.load` returns a positionless Replay and a caller asks.
 
 Why a separate module
 ---------------------
 `loader` reads the container, `infer` derives, `names` looks up.  This is a
 fourth kind of act: it decodes a second, deeper stream out of the same file.
-Keeping it apart means `model`, `infer` and `state` still import nothing from
-vrfnet, and a replay whose build has no transform loses positions and nothing
-else -- `attach` records the refusal in `Replay.position_source` and returns
-the replay untouched, for the viewer to say so on screen.
+Keeping it apart means `model`, `infer` and `state` import neither the decoder
+nor vrfnet, and a replay whose build has no transform loses positions and
+nothing else -- `attach` records the refusal in `Replay.position_source` and
+returns the replay untouched, for the viewer to say so on screen.
 
 What makes these positions trustworthy
 --------------------------------------
-Two checks, both run against a full 12.10 capture (2,438s, 27 blocks, 3.09
-million moves over 154 actors), neither of which a decoding bug could pass by
-luck:
+Three checks against a full 12.10 capture (2,438s, 27 blocks, 3,069,141 moves
+over 154 actors), none of which a decoding bug could pass by luck.  The first
+two were established against the Python decoder and re-run against this one:
 
   * at every one of the 190 characterDeath events the killer and the victim
     are within 4,440 Unreal units of each other, most within 2,000 -- that is
@@ -29,7 +30,11 @@ luck:
     actor-to-track join are right;
   * a movement sample exists at the exact millisecond of every one of those
     events, which is what says the demo frame clock and the event clock are
-    the same clock and no offset is needed.
+    the same clock and no offset is needed;
+  * and the two decoders, written in different languages from different
+    sources, agree on all 10,544 samples of the stored 12.10 decode to the
+    last bit of x, y, z, yaw and pitch.  `vrfnet` is kept in the tree for
+    exactly that reason: it is the independent check on this one.
 
 Identifying player pawns
 ------------------------
@@ -48,12 +53,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from vrf_reader import REPLAYDATA, Oodle, VrfError, VrfFile
-from vrfnet.calibrate import load as load_features
+from vrf_reader import REPLAYDATA, VrfError, VrfFile
 from vrfnet.payload_transform import UnsupportedBuildError, transform_for
-from vrfnet.session import ReplaySession
-from vrfview import abilities, positioncache, positionfile
-from vrfview.model import POSITION_HZ, Player, Position, Replay, Track
+from vrfview import abilities, csharpdecode, positioncache, positionfile
+from vrfview.model import POSITION_HZ, Player, Replay, Track
 
 # The archetype path of a player pawn: /Game/Characters/<Codename>/<Codename>_PC
 CHARACTERS_ROOT = ("Game", "Characters")
@@ -92,25 +95,28 @@ def codename_for(archetype_path: str) -> str:
 @dataclass(frozen=True)
 class Options:
     """
-    The knobs on a decode: where Oodle is, how much to read, how finely.
+    The knobs on a decode: which decoder to run, how finely, and what may answer.
 
     Bundled rather than passed loose because every one of them is optional and
     a caller normally sets none: `attach(replay, path)` decodes the whole file
     at the default rate, which is what the viewer wants.
+
+    There is no `blocks` knob any more.  It existed to make a four-minute
+    decode testable in twelve seconds; a whole match now takes about four, and
+    the decoder reads the stream in one pass rather than block by block, so a
+    partial decode is neither cheap to ask for nor useful to have.
     """
 
-    oodle_dll: str | None = None
-    blocks: int | None = None
+    parser_exe: str | None = None
     hz: int = POSITION_HZ
     progress: Callable[[int, int], None] | None = None
     # Whether a stored decode may answer instead of a fresh one.  On by
-    # default because re-deriving four minutes of identical arithmetic is
-    # never what a caller wanted; off for the tests that have to prove the
-    # decoder itself still works.
+    # default because re-deriving identical arithmetic is never what a caller
+    # wanted; off for the tests that have to prove the decoder still works.
     cache: bool = True
     # Whether a fresh decode is allowed at all.  Off is how a caller asks the
-    # cheap question -- "is this one already done?" -- without risking four
-    # minutes on the answer being no.  See `attach_stored`.
+    # cheap question -- "is this one already done?" -- without spawning a
+    # decoder to find out the answer is no.  See `attach_stored`.
     decode: bool = True
 
 
@@ -180,44 +186,32 @@ def extract(
     out = Extraction(build=vrf.demo.build, hz=options.hz)
     # Ask about the build before anything expensive: the branch is in a plain
     # chunk, so four out of five captures in a library can be refused with no
-    # Oodle DLL, no decompression and no wait.
+    # decoder, no decompression and no wait.  The decoder supports exactly the
+    # branches this table names, which is why the table is still the authority.
     transform_for(vrf.demo.build)
-    oodle = Oodle.discover(options.oodle_dll)
-    session = ReplaySession(
-        features=load_features(),
-        branch=vrf.demo.build,
-        collect_movement=True,
+
+    if options.progress is not None:
+        options.progress(0, 1)
+    decoded = csharpdecode.run(
+        path,
+        hz=options.hz,
+        explicit=options.parser_exe,
     )
+    if options.progress is not None:
+        options.progress(1, 1)
 
-    period_ms = max(1, round(1000 / options.hz))
-    # actor -> time bucket -> the last position seen in that bucket.  Drained
-    # after every block, so a full match holds one block of moves rather than
-    # all 3.09 million of them at once.  Ability pawns get their own table so
-    # that widening the filter costs the drone and the turret and not all 143
-    # other actors that happen to move.
-    buckets = _Buckets()
+    out.moves = decoded.moves
+    # Counted off the plain chunk table rather than reported by the decoder:
+    # the number belongs in the provenance line and costs nothing to read here.
+    out.blocks = sum(1 for _ in vrf.data_blocks(kinds=(REPLAYDATA,)))
 
-    todo = list(vrf.data_blocks(kinds=(REPLAYDATA,)))
-    if options.blocks is not None:
-        todo = todo[: options.blocks]
-    for i, block in enumerate(todo):
-        raw = oodle.decompress(block.blob(vrf.data), block.decompressed_size)
-        session.feed_block(raw)
-        _drain(session, buckets, actor_ids=actor_ids, period_ms=period_ms, out=out)
-        if options.progress is not None:
-            options.progress(i + 1, len(todo))
-    out.blocks = len(todo)
+    out.spawns = abilities.spawns_from(decoded.archetypes, decoded.first_seen)
+    _sort(decoded, actor_ids=actor_ids, out=out)
 
-    out.spawns = abilities.spawns_from(
-        session.channels.archetypes,
-        session.channels.first_seen,
-    )
-    out.ability_positions = _tracks_from(buckets.abilities)
-
-    # session.channels.archetypes, not session.channels.channels: the live
-    # table has already lost anyone who disconnected, which is exactly the
-    # player a reconnect merge most needs a codename for.
-    for actor_guid, archetype in session.channels.archetypes.items():
+    # decoded.archetypes carries every actor that ever opened a channel, not
+    # only the ones still open at the end -- which is exactly the player a
+    # reconnect merge most needs a codename for.
+    for actor_guid, archetype in decoded.archetypes.items():
         codename = codename_for(archetype)
         if not codename:
             continue
@@ -225,81 +219,47 @@ def extract(
         if actor_guid in actor_ids:
             out.codenames[actor_guid] = codename
 
-    out.positions = _tracks_from(buckets.players)
     return out
 
 
-@dataclass
-class _Buckets:
-    """
-    The two thinning tables one block of movement is drained into.
-
-    Bundled rather than passed loose because they are always handled together
-    and always by the same rule: a sample belongs to exactly one of them, and
-    which one is the single decision `_drain` exists to make.
-    """
-
-    players: dict[int, dict[int, Position]] = field(default_factory=dict)
-    abilities: dict[int, dict[int, Position]] = field(default_factory=dict)
-
-
-def _tracks_from(buckets: dict[int, dict[int, Position]]) -> dict[int, Track]:
-    """Thinned buckets back into time-ordered tracks, one per actor."""
-    return {
-        actor_id: Track(
-            actor_id=actor_id,
-            samples=tuple(by_tick[t] for t in sorted(by_tick)),
-        )
-        for actor_id, by_tick in sorted(buckets.items())
-    }
-
-
-def _drain(
-    session: ReplaySession,
-    buckets: _Buckets,
+def _sort(
+    decoded: csharpdecode.Decoded,
     *,
     actor_ids: set[int],
-    period_ms: int,
     out: Extraction,
 ) -> None:
     """
-    Move one block of samples into the buckets, thinning as they go.
+    Send each decoded actor to players, to abilities, or to the floor.
 
-    Three destinations, and the order matters.  `actor_ids` is the event
-    stream's own set of players and still outranks everything: a pawn the
-    events name is a player even if its archetype reads oddly.  Only what is
-    left is offered to the ability parser, and only the kinds that actually
-    move are kept -- a `Projectile_` never emits a movement record, so a bucket
-    for one would be a promise of an arc that is not in the file.
+    The same three destinations, and the same order, the block-at-a-time drain
+    used before: `actor_ids` is the event stream's own set of players and still
+    outranks everything, so a pawn the events name is a player even if its
+    archetype reads oddly.  Only what is left is offered to the ability parser,
+    and only the kinds that actually move are kept -- a `Projectile_` never
+    emits a movement record, so a track for one would promise an arc that is
+    not in the file.
+
+    The thinning itself already happened, in the decoder, by the identical rule
+    (bucket by `t_ms // period`, last record in a bucket wins).
     """
-    for actor_id, samples in session.movement.samples.items():
+    players: dict[int, Track] = {}
+    ability: dict[int, Track] = {}
+    for actor_id, samples in sorted(decoded.samples.items()):
         if actor_id in actor_ids:
-            by_tick = buckets.players.setdefault(actor_id, {})
-        elif _is_moving_ability(session, actor_id):
-            by_tick = buckets.abilities.setdefault(actor_id, {})
+            target = players
+        elif _is_moving_ability(decoded.archetypes, actor_id):
+            target = ability
         else:
             out.ignored.add(actor_id)
             continue
-        for time_seconds, move in samples:
-            out.moves += 1
-            t_ms = round(time_seconds * 1000)
-            # Last one in a bucket wins: the newest record is the one that
-            # describes the instant the bucket stands for.
-            by_tick[t_ms // period_ms] = Position(
-                t_ms=t_ms,
-                actor_id=actor_id,
-                x=move.position.x,
-                y=move.position.y,
-                z=move.position.z,
-                yaw=move.yaw,
-                pitch=move.pitch,
-            )
-    session.movement.samples.clear()
+        target[actor_id] = Track(actor_id=actor_id, samples=tuple(samples))
+    out.positions = players
+    out.ability_positions = ability
 
 
-def _is_moving_ability(session: ReplaySession, actor_id: int) -> bool:
+def _is_moving_ability(archetypes: dict[int, str], actor_id: int) -> bool:
     """Whether this actor is an ability pawn -- a drone or a turret, not a smoke."""
-    path = session.channels.archetypes.get(actor_id)
+    path = archetypes.get(actor_id)
     if not path:
         return False
     ref = abilities.parse(path)
@@ -314,19 +274,21 @@ def attach(
     """
     Decode positions, abilities and codenames into `replay`, in place.
 
-    Never raises for want of positions.  An unsupported build, a missing Oodle
-    DLL and a JSON dump with no sidecar all end the same way -- `position_source`
-    says which, the model keeps every fact it already had, and the viewer says
-    on screen that it has no map to draw.
+    Never raises for want of positions.  An unsupported build, a decoder that
+    was never built and a JSON dump with no sidecar all end the same way --
+    `position_source` says which, the model keeps every fact it already had,
+    and the viewer says on screen that it has no map to draw.
 
-    Three sources, tried in order, and only the last one costs four minutes:
+    Three sources, tried in order, and only the last one runs a decoder:
 
       1. a sidecar **beside the file**, which is what `vrf-to-json --positions`
          writes and a user may have copied here deliberately;
       2. the machine's own cache (`vrfview.positioncache`), written by a
          previous decode of this same capture;
       3. a real decode -- after which the result is cached, so this is the last
-         time this capture costs anything.
+         time this capture costs anything.  The cache mattered more when this
+         step took four minutes; it still earns its keep, because reading 700
+         KB of JSON beats spawning a process and re-deriving 3 million moves.
 
     A JSON dump never reaches step 3: it carries no replication stream, so for
     it the sidecar is not an optimisation but the only source there is.
@@ -364,7 +326,12 @@ def attach(
     actor_ids = {p.actor_id for p in replay.players}
     try:
         found = extract(path, actor_ids, options)
-    except (UnsupportedBuildError, VrfError, OSError) as exc:
+    except (
+        UnsupportedBuildError,
+        csharpdecode.DecodeError,
+        VrfError,
+        OSError,
+    ) as exc:
         replay.position_source = _no_positions([*refused, str(exc)])
         return replay
 
@@ -384,7 +351,7 @@ def attach_stored(replay: Replay, path: str | Path) -> Replay:
 
     This is what makes a prepared capture open instantly instead of opening on
     a button.  It is safe to call on the Tk thread during navigation precisely
-    because it cannot become a four-minute decode: the worst case is reading a
+    because it cannot become a decode at all: the worst case is reading a
     10 MB JSON file, and the ordinary case is that there is nothing to read.
     """
     return attach(replay, path, Options(decode=False))

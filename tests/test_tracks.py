@@ -54,10 +54,6 @@ from vrfview.state import state_at
 DEMO_12_10 = Path("Demos/03fcbb4a-0064-4e4d-a209-091cb73ee5b8.vrf")
 DEMO_11_11 = Path("Demos/039f3991-5472-4119-bed2-838da0935f60.vrf")
 
-# Two blocks is about four minutes of the match: enough for two dozen kills to
-# test against, short of the four minutes a full decode takes.
-BLOCKS = 2
-
 # Rifle range on Haven, generously.  The map is some 10,000 units across, so a
 # pair of duellists this close cannot be an accident of decoding.
 WEAPON_RANGE = 5000
@@ -153,11 +149,15 @@ def moving_replay():
     replay.players = [Player(actor_id=1, team=TEAM_A), Player(actor_id=2, team=TEAM_B)]
     replay.rounds = [Round(number=1, index=0, start_ms=0, end_ms=10_000)]
     replay.positions = {
-        1: track(*(at(t, float(t), 0.0, actor_id=1) for t in range(0, 10_001, 100)),
-                 actor_id=1),
+        1: track(
+            *(at(t, float(t), 0.0, actor_id=1) for t in range(0, 10_001, 100)),
+            actor_id=1,
+        ),
         # Player 2 stops emitting at the moment they are killed.
-        2: track(*(at(t, 0.0, float(t), actor_id=2) for t in range(0, 5_001, 100)),
-                 actor_id=2),
+        2: track(
+            *(at(t, 0.0, float(t), actor_id=2) for t in range(0, 5_001, 100)),
+            actor_id=2,
+        ),
     }
     return replay
 
@@ -380,7 +380,11 @@ class AgainstARealCapture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         replay = load(DEMO_12_10)
-        tracks.attach(replay, DEMO_12_10, tracks.Options(blocks=BLOCKS))
+        # The whole match, because the whole match is about four seconds now.
+        # This used to decode two blocks to stay under a four-minute wait, and
+        # the tests below were written against that window -- which is why some
+        # of them still tolerate a player whose track does not span the file.
+        tracks.attach(replay, DEMO_12_10, tracks.Options(cache=False))
         cls.replay = resolve(annotate(replay), None)
 
     def covered(self, actor_id, t_ms):

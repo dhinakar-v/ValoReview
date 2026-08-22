@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The decode emitter.
+
+    This project exists because ValorantReplayParser's own CliReader can only
+    export everything, or everything plus diagnostics: 5.3 GB of NDJSON for one
+    match, of which this project needs about 700 KB. That CLI has no category
+    flag, so the cheapest honest fix is to reference the same libraries and
+    write only the two facts vrfview.tracks consumes, namely thinned movement
+    samples and the actor spawns that name agents and abilities.
+
+    It is deliberately mechanical. Every reading (who is a player, which spawn
+    is an ability, how casts group) stays in Python, where the tests are. See
+    libraries/vrfview/csharpdecode.py.
+
+    VrpRoot points at a clone of michel-giehl/ValorantReplayParser. Override it
+    when the clone lives somewhere else:
+
+        dotnet build csharp/VrfPositions -c Release -p:VrpRoot=D:\src\ValorantReplayParser
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>vrf-positions</AssemblyName>
+    <RootNamespace>VrfPositions</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(VrpRoot)' == ''">
+    <VrpRoot>$(MSBuildThisFileDirectory)..\..\..\ValorantReplayParser</VrpRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(VrpRoot)\src\Replay.Valorant\Replay.Valorant.csproj" />
+  </ItemGroup>
+
+</Project>

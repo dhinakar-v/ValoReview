@@ -14,10 +14,10 @@ Loading a replay is the same four steps everywhere
 `open_replay` is read -> infer -> name, in that order and for the same reasons
 `scripts/vrf_view.py` gives: `infer` cross-checks its team split against the
 codenames, and `names` needs them to name anybody.  Positions are *not* decoded
-here; the viewer offers a button for that, because four minutes before the
+here; the viewer offers a button for that, because a decode before the
 first frame is not an opening.
 
-The four minutes happen anyway -- earlier, and in the background
+The decode happens anyway -- earlier, and in the background
 ----------------------------------------------------------------
 `vrfhome.prewarm` starts once the window is up and decodes the playable
 captures one at a time into `vrfview.positioncache`, so by the time a card is

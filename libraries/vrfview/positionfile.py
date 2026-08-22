@@ -1,10 +1,10 @@
 """
 The positions sidecar: decoded tracks, on disk, next to a JSON dump.
 
-Decoding positions costs an Oodle DLL and about four minutes on a full match.
+Decoding positions costs a built decoder and a few seconds on a full match.
 The JSON path exists so that neither is needed twice, so `vrf-to-json` can
 write what it decoded and `vrfview.tracks` can read it back on a machine with
-no DLL at all.
+no .NET SDK and no clone at all.
 
 Why a sidecar and not the dump itself
 -------------------------------------
@@ -43,7 +43,7 @@ VERSION = 2
 # Every version this module can still read.  A v1 file is a real sidecar
 # written by `vrf-to-json --positions` before abilities were decoded, and it is
 # not wrong -- it simply says nothing about them.  Refusing it would throw away
-# a four-minute decode over a field it was never asked to carry.
+# a whole decode over a field it was never asked to carry.
 READABLE = (1, 2)
 SUFFIX = ".positions.json"
 

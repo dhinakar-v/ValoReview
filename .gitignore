@@ -227,3 +227,8 @@ assets/
 vendor/*
 !vendor/README.md
 
+
+# C# decoder build output (csharp/VrfPositions). The sources are committed; the
+# binaries are not, and they are rebuilt by runners/build-decoder.bat.
+csharp/**/bin/
+csharp/**/obj/

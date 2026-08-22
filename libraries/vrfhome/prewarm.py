@@ -1,9 +1,9 @@
 """
-Decode the library in the background, so no capture ever costs four minutes twice.
+Decode the library in the background, so no capture is ever decoded twice.
 
 `vrfhome.scan` describes a library from plain chunks in about four seconds.
 Actually *drawing* one needs the replication stream, which needs Oodle and
-about four minutes, and until now that was paid every single time a capture was
+about four seconds, and until now that was paid every single time a capture was
 opened -- `tracks.attach` wrote a sidecar only when `vrf-to-json` asked it to,
 and never read one back for a `.vrf` at all.  With `vrfview.positioncache` in
 place a decode is permanent, and the only question left is when it happens.
@@ -23,7 +23,7 @@ behind twenty they did not.
 Stopping is prompt
 ------------------
 The stop flag is checked in the per-block progress callback, not between
-captures.  Between captures would mean up to four minutes between asking the
+captures.  Between captures would mean a whole capture between asking the
 window to close and it closing.
 
 No tkinter here

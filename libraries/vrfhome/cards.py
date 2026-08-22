@@ -23,7 +23,7 @@ quietly drops eighty of a hundred files would be worse than the schematic ever
 was.
 
 The second chip is that capture's **preparation state**, from
-`vrfhome.prewarm`: a decode is four minutes the first time and instant every
+`vrfhome.prewarm`: a decode is a few seconds the first time and instant every
 time after, so the difference between QUEUED and READY is the difference
 between waiting and not, and it belongs on the card rather than being
 discovered after the click.

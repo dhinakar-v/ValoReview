@@ -6,6 +6,13 @@ code **ported by hand** from another project. A port is not a dependency: the
 code is in this repository, so its licence travels with it, and that licence is
 reproduced here in full as it requires.
 
+Since the positions decoder moved to `csharp/VrfPositions`, there is also a
+third relationship, and it is neither of those: this repository contains a
+small C# program that **compiles against** ValorantReplayParser's libraries.
+Nothing of theirs is copied in, but the resulting binary links their code and
+the code beneath it, so the section on OozSharp below matters before that
+binary is given to anybody.
+
 Each ported module names its upstream source file in its own docstring; this
 file is the licence record, not the index.
 
@@ -62,12 +69,50 @@ Not ported, and the likely next sources from the same project and the same
 licence should more of the payload be decoded: `Replay.Unreal/Parsing/
 FieldPayloadParser.cs` and `Replay.Unreal/Parsing/ArchiveVectorReaders.cs`.
 
-Its predecessor, `michel-giehl/ValorantReplayParserPlayground` (also MIT), is a
-fork of `Shiqan/FortniteReplayDecompressor`. Nothing here is taken from either;
-if anything ever is, Shiqan's notice belongs in this file too.
+---
 
-`OozSharp` is **not** used: this project resolves a native Oodle DLL instead
-(`libraries/oodlefind.py`).
+## OozSharp, and a licence to be careful about
+
+The Python pipeline still resolves a native Oodle DLL (`libraries/oodlefind.py`)
+and uses **no** OozSharp. But `csharp/VrfPositions` references
+`Replay.Valorant`, which references `Replay.Encoding`, which takes a NuGet
+dependency on **`OozSharp 3.0.1`** -- so a built `vrf-positions.exe` contains
+it. That is why this section exists.
+
+OozSharp is not a standalone project. It lives at `src/OozSharp/` inside
+[`Shiqan/FortniteReplayDecompressor`](https://github.com/Shiqan/FortniteReplayDecompressor),
+whose repository `LICENSE` -- the one the NuGet package ships -- is MIT,
+`Copyright (c) 2020-2026 Shiqan`. **However**, its `Kraken.cs` carries this
+header:
+
+```
+=== Kraken Decompressor for Windows ===
+Converted to C# for Fortnite by SL-x-TnT, original source code available at
+https://github.com/powzix/ooz.
+Copyright (C) 2016, Powzix
+This program is free software: ... GNU General Public License ... version 3 ...
+```
+
+So GPLv3-headed derived code is distributed under an MIT package file, and the
+upstream it derives from (`powzix/ooz`) has no LICENSE file at all. That
+conflict is not this project's to resolve, but it is this project's to know
+about: **building the decoder for local use is one thing; redistributing the
+binary is another**, and nobody should ship `vrf-positions.exe` without
+settling it. Building from source on the machine that uses it avoids the
+question entirely, which is what `runners\build-decoder.bat` does and why
+`vendor/parser/` is a drop-in rather than something committed here.
+
+Worth recording alongside it, since it is the reason this project did not take
+the decompressor when it took the parser: OozSharp implements **Mermaid only,
+and within Mermaid only the raw/memcpy chunk path**. `Kraken.cs` contains no
+Huffman and no TANS decoder, and seven paths raise `NotImplementedException`,
+`DecodeBytes` among them. It works on these captures -- all 21 supported
+captures in the reference library decode through it -- but it is a partial
+decoder, it is slower than the native `oo2core`, and decompression was never
+where the time went. `docs/valorant-replay-parser-features.md` has the numbers.
+
+The predecessor `michel-giehl/ValorantReplayParserPlayground` is itself a fork
+of `Shiqan/FortniteReplayDecompressor`; nothing is taken from either by hand.
 
 ---
 

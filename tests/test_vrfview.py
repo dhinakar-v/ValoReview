@@ -705,6 +705,11 @@ class TestHeadless(unittest.TestCase):
         "sight",
         "positioncache",
         "positionfile",
+        # The bridge to the C# decoder: it spawns a process and reads JSON, and
+        # must not need a display to do it -- vrfhome.prewarm decodes on a
+        # background thread, and the match list is the one place a decode is
+        # started without a viewer open.
+        "csharpdecode",
         # art resolves file paths and coordinates, never pixels; keeping it on
         # this list is what lets `dump` report art coverage with no Tk present.
         "art",

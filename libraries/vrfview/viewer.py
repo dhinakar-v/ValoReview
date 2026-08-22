@@ -18,7 +18,7 @@ blank and never a guess.
 
 Positions are decoded here, not at load
 ---------------------------------------
-A full match costs about four minutes and an Oodle DLL -- but only once.
+A full match costs about four seconds and a built decoder -- but only once.
 `tracks.attach` now consults a sidecar and then the machine cache before it
 decodes anything, so on a capture the match list has already prepared, or one
 opened a second time, the button never has to run at all and the map is there
