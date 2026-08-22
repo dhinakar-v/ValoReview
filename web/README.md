@@ -42,6 +42,7 @@ a line here saying what it buys.
 | `three` | The 3D scene. There is no smaller way to put a textured plane and ten markers in a perspective camera, and writing WebGL by hand to avoid a dependency would be a much larger thing to maintain than the dependency. |
 | `@react-three/fiber` | `three` as React components, so the scene's lifetime is the component's and `useFrame` is the per-frame hook. The alternative is a manual renderer, a manual resize observer and a manual teardown, all of which this already gets right. |
 | `@react-three/drei` | `OrbitControls` and `Html`. Orbit is a camera rig everybody writes the same way and nobody writes correctly the first time; `Html` is what puts a callout label in the scene without a text-geometry pipeline. |
+| `lucide-react` | The icon set. Every control used to be a bare uppercase word and the transport bar was ASCII -- `|<`, `<<`, `PLAY`. Drawing twenty-four glyphs by hand would be twenty-four paths to maintain and a set that stops the day somebody needs a twenty-fifth; the package is MIT, tree-shaken to what is imported, and one consistent grid. It is wrapped in `views/icons.tsx` rather than imported directly -- see *Icons, and the rule that makes them safe*. |
 
 `three` and its two wrappers are about a megabyte, and the 2D view is the
 default — so `Scene3D` is behind a `React.lazy`, and the readable view costs
@@ -57,8 +58,23 @@ are Python's output and live outside `web/`), `@types/three`, and
 WebGL, so nothing else in this repo can look at a single thing this page draws.
 See *Two test tiers* below.
 
-There is no UI kit, no CSS framework and no charting library. The layout is a
-handful of grid rows and two columns, and `src/app.css` is the whole of it.
+There is no UI kit, no CSS framework, no CSS-in-JS and no charting library.
+The stylesheet is three files and they have three different owners:
+
+| File | Written by | Holds |
+|---|---|---|
+| `src/tokens.css` | by hand | space, radius, type scale, elevation, motion, stacking. **No colour.** |
+| `src/theme.generated.css` | `scripts/make_theme.py` | every colour, and the argument for the ones that carry one. **Generated -- never edit it.** |
+| `src/fonts.css` | by hand | the four bundled `@font-face` declarations. |
+
+`src/app.css` imports the three and is the layout. The split is the point:
+colours round-trip through Python because the desktop app and the canvases
+share them and the palette carries an argument, while a spacing scale has no
+Python counterpart to drift from -- Tk geometry is not CSS geometry.
+
+Tokens rather than literals because the sheet they replaced had paddings at 2,
+4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 20, 24 and 28 pixels. A scale nobody can
+hold in their head is a scale that gets bypassed.
 
 ## Colours
 
@@ -68,11 +84,202 @@ anywhere else.** `tests/test_theme.py` fails if the committed file has gone
 stale.
 
 The palette carries an argument, which is why it is generated rather than
-copied. The brief names its red ATK and its blue DEF; this project does not
-adopt those meanings, because which team attacked is not recoverable from a
-replay — spike events carry no actor id. The hues are the brief's, the labels
-say A and B, and the reasoning lives beside the constants in `theme.py` where
-anyone changing them will read it.
+copied. The brief names its red for the attacking side and its blue for the
+defending one; this project does not adopt those meanings, because which team
+attacked is not recoverable from a replay — spike events carry no actor id.
+The hues are the brief's, the labels say A and B, and the reasoning lives
+beside the constants in `theme.py` where anyone changing them will read it.
+
+The surfaces are a ramp — `--app-bg`, `--card-bg`, `--card-hover`,
+`--field-bg` — and the text is three weights down from `--text-primary`. The
+brief named five flat greys, and an interface built from five has nowhere to
+put the states it actually has: a panel raised above a page, a row hovered
+inside it, an input sunk below it, a divider that has to read as stronger than
+a hairline. Every one of those was the same value, which is why the old page
+read flat.
+
+Two constraints on anyone changing this:
+
+* **`--team-a` and `--team-b` are pixel-tested.** `minimap.spec.ts` counts a
+  pixel as a marker within 36 RGB of a team colour and needs the radar's own
+  greys to stay outside that; `scene.spec.ts` identifies markers by hue after
+  3D lighting (`b - r > 40` for A, `r - b > 40` for B). Moving either toward
+  grey, or toward the other, fails both.
+* **`tests/test_theme.py` compares the generated file byte for byte**, checks
+  the emitted header still contains *not recoverable*, and asserts the CSS
+  never contains the substring the brief uses for the attacking side. Adding a
+  colour means a constant in `theme.py`, a row in `make_theme.py::COLOURS`, and
+  `runners\make-theme.bat`.
+
+`views/images.ts::palette()` reads the tokens back out with `getComputedStyle`,
+because a canvas cannot use a custom property. Its fallback hexes are the one
+place a colour is written twice, and they are a hazard worth knowing: a
+fallback fires silently, so a renamed token does not break the canvas — it
+quietly draws in last season's colours.
+
+## Typefaces, and why they are bundled now
+
+Three families, four `woff2` files, 124KB, latin subset, in `src/fonts/`.
+Barlow Condensed 600/700 for headings, Inter for everything that is a sentence
+or a label, JetBrains Mono for anything that has to line up in a column.
+
+They used to be stacks with no files behind them -- Tungsten falling back to
+Impact, DIN Next falling back to Arial -- on the argument that shipping a
+webfont for a heading was a poor trade for a local app. The trade changed when
+the fallbacks turned out to be what every machine actually rendered: the
+interface was Impact and Arial, not the brief's faces, and an analytics tool
+that renders in Impact reads as an accident.
+
+Bundled rather than linked, for the same reason nothing else here reaches the
+network: this page is served by a local Python process against files on a disk
+and is expected to work offline. A Google Fonts `<link>` would render the
+fallbacks with no connection and then reflow the page when there was one.
+Inter and JetBrains Mono are the variable builds, so one file each covers every
+weight. All three are SIL OFL 1.1 -- `src/fonts/OFL.txt` and `THIRD_PARTY.md`.
+
+The old stacks survive as the fallback tail, so a checkout with the font files
+stripped still looks deliberate rather than broken.
+
+## Icons, and the rule that makes them safe
+
+`views/icons.tsx` wraps `lucide-react`, and the wrapper exists for one reason:
+**an icon never replaces a label.**
+
+There is not one `data-testid` in this repository. Every DOM assertion is text,
+ARIA role-name, class or `title` -- `findByText("SIGHT")`,
+`getByRole("button", { name: "TRAILS", exact: true })`,
+`getByTitle("Next event")`. So `2D`, `3D`, `UTILITY`, `TRAILS`, `SIGHT`,
+`CALLOUTS` and `DECODE POSITIONS` are an interface other files depend on, and
+an icon inside a button is exactly the change that would rename them without
+any file that mentions them being edited.
+
+Hence `aria-hidden` and `focusable={false}` are set centrally in `Icon` rather
+than at each call site, the label is always its own text node beside the glyph,
+and the one control with no words -- the sound toggle -- carries an
+`aria-label`. `views/ui.test.tsx` is the standing check on all of it.
+
+The wordmark and the favicon are inline `<svg>` and a file, never an `<img>`:
+`MatchList.test.tsx` asserts `container.querySelector("img")` is null over the
+whole page in the no-thumbnail state, so a logo that happened to be an `<img>`
+would fail a test about map art.
+
+## Sound
+
+`views/sound.ts`, six voices, synthesised from oscillators and gain envelopes.
+No audio files and no dependency: a sampled set would be six binaries whose
+provenance and licence would need tracking the way the fonts' does, in exchange
+for warmth this interface has no use for. What it needs is confirmation -- a
+press landed, a decode finished, a request failed -- and a 20ms envelope says
+that as well as a recording does.
+
+Three things about it are pinned by `views/sound.test.ts`:
+
+* **off by default**, remembered in `localStorage`, toggled from the app bar.
+  An analytics tool that beeps before it was asked to is a defect report;
+* **no `AudioContext` until one is needed** -- built on the first sound played
+  while enabled, never at import, which is why no page test needs a mock;
+* **`prefers-reduced-motion` wins.** The stylesheet zeroes its transitions on
+  the same query. A sound is the one thing here that can be dropped without
+  changing what anything says.
+
+## Reach, and the two roles that were a promise rather than a label
+
+Everything under this heading is a fix, not a policy statement: each item was a
+real defect found by reading the code against the Web Interface Guidelines.
+
+**A `<label>` names its control by its text content, not by its `aria-label`.**
+`ui.Field` wraps a `<select>` in a `<label>` whose only other child is an
+`aria-hidden` glyph, and set `aria-label` on the label element -- which names
+the label and leaves the control anonymous. The match list's map filter
+therefore reached a screen reader as an unnamed combo box reading out whichever
+option was selected. It now renders a real text node in an `.sr-only` span:
+clipped to a 1px box rather than `display: none` or `visibility: hidden`, both
+of which take an element back *out* of the accessibility tree, which is the
+thing being fixed.
+
+**`role="tablist"` is a contract.** A reader that sees those roles tells the
+user to arrow between the tabs, announces "1 of 2", and looks for the panel
+each tab controls. `ui.Tabs` claimed all three and implemented none, which is
+worse than plain buttons because the instructions it puts in somebody's ear are
+wrong. It now has a roving `tabIndex` (one tab stop for the strip, not one per
+tab), arrow keys with Home/End and wrapping, and `aria-controls` pointing at a
+`ui.TabPanel` that names the tab back. Selection follows focus, which is the
+right pattern here because both panels are already in hand -- there is nothing
+to fetch, so nothing makes an arrow key expensive.
+
+The two ids they agree on are derived from the tab's own id rather than from
+`useId`, because the strip and its panel are rendered by two different
+components -- the caller decides what goes in the panel, which is the point --
+and a generated id cannot cross that boundary without a context for one string.
+Tab ids are unique within a page by construction: they are what `active` is
+compared against.
+
+**`color-scheme: dark`.** Scrollbars, `<select>` popups, the caret and the ring
+inside a form control are painted by the platform, and on Windows the platform
+paints them light unless told otherwise. It is not a colour and so is not in
+the generated palette; it names which of the browser's own two themes to use.
+`option` gets an explicit background too, because the rows inside a popup still
+inherit from the page on some platforms.
+
+**A skip link that moves the focus, not just the scroll.** `AppFrame` renders
+it first in the DOM, hidden until focused. Reaching the map from the keyboard
+was seven presses on every navigation -- brand, breadcrumb, decoder light,
+sound, and three more in the viewer's page head. `Shell.Page`'s `<main>` takes
+`id="main"` and `tabIndex={-1}` so the link lands the focus there; a link that
+only scrolls leaves the focus in the bar, so the next Tab returns to the first
+thing it was meant to skip.
+
+**The decode region is `aria-live="polite"`.** A decode takes about four
+seconds and reports itself only by changing a button's own words; without the
+live region its failure is a sentence that appears in silence. Polite rather
+than assertive: it is the result of something the user just pressed.
+
+Smaller, and each for a stated reason in `app.css`: `touch-action:
+manipulation` on the interactive set (no 300ms wait before a press registers on
+a control that is pressed in sequence), `-webkit-tap-highlight-color:
+transparent` (the hover and active states already say a press landed),
+`overscroll-behavior: contain` on the three regions that scroll inside
+themselves (the rail dragging the page under it is how a provenance section
+gets lost mid-read), `text-wrap: balance` on headings, and explicit
+`width`/`height` on all three `<img>` elements.
+
+Those dimensions are measured, not assumed. Every published `minimap.png` is
+1024 square and every `listview.png` 456x100, checked across the asset cache;
+the card thumbnail states the 200x52 box its CSS already reserves rather than
+the file's own size, because `object-fit: cover` reconciles the two and what
+the attributes are for is holding the row's height before the picture arrives.
+The player portrait states its 28x28 box for the same reason and because
+`icon.png` is 512 square for one agent and 1024 for the other twenty-eight.
+
+`views/ui.test.tsx` is the standing check on the first two, which are the two
+that can regress silently.
+
+## Keys
+
+`views/shortcuts.ts`. Every binding calls the same function the button beside
+it calls -- a key is a faster way to press a control, never a second
+implementation of what it meant. A shortcut that seeked by its own arithmetic
+would drift from `Replay.event_times` the first time the server's list changed.
+
+Two things follow from that rule and both were bugs before they were rules.
+
+**The listener is on the `window`, so it asks the focused element first.** That
+is what makes the bindings work wherever you are on the page, and it is also
+why a widget calling `preventDefault` does not stop them -- a window listener
+runs afterwards regardless. `ownsKey` is the guard: Space belongs to a focused
+`<button>` (taking it left Enter as the only way to work every layer switch on
+the page, for as long as a stage was mounted), and the arrow keys with Home/End
+belong to a `role="tablist"` (ArrowRight in the timeline's strip changed the tab
+*and* stepped the playhead; Home jumped to Rounds *and* seeked to zero).
+
+**A key exists exactly where its control does.** `MapStage` draws SIGHT only
+where there is a mask and CALLOUTS only in 3D, so `useTransportKeys` is handed
+the same two booleans. Without them `S` on a map with no mask set `showSight`
+with no effect and no caption -- and because the store is module-level, the
+next replay opened in the same session came up with the layer already on.
+
+`views/shortcuts.test.tsx` is the standing check on all three, and each
+assertion was confirmed to fail against the code it fixes.
 
 ## Types
 
