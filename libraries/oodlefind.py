@@ -20,7 +20,9 @@ Search order, most explicit and cheapest first:
 Steps 1 and 2 are configured on purpose, so a path that does not exist raises
 instead of quietly falling through to a scan -- a typo in .env should not look
 like a missing DLL.  Only step 5 touches the disk in bulk, and it writes its
-answer to the cache so it runs at most once per machine.  It globs a handful of
+answer to the project's own `.cache/` so it runs at most once per checkout --
+which is the right scope, because the answer is only meaningful while this
+tree's `vendor/` and `.env` say what they currently say.  It globs a handful of
 known layouts under each game rather than walking installs, because an rglob
 over a Fortnite directory is tens of thousands of files.
 """
@@ -35,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import envfile
+import vrfcache
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -266,24 +269,30 @@ def _reg_read(hive: str, key: str, value: str) -> str | None:
 
 
 def cache_file() -> Path:
-    """Where a resolved path is remembered, so the scan runs once per machine."""
-    local = os.environ.get("LOCALAPPDATA")
-    base = Path(local) if local else Path.home() / ".cache"
-    return base / "val-replay-analyzer" / "oodle.json"
+    """
+    Where a resolved path is remembered, so the scan runs once per checkout.
+
+    In the project's own `.cache/` rather than %LOCALAPPDATA%, beside the
+    decoded positions: one directory a user can find and delete.  Raises
+    `NoProjectRootError` when there is no project root, which both callers
+    below treat as "no cache" -- costing a rescan and nothing else.
+    """
+    return vrfcache.root() / "oodle.json"
 
 
 def _read_cache() -> Path | None:
     try:
         doc = json.loads(cache_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, vrfcache.NoProjectRootError):
         return None
     path = doc.get("path") if isinstance(doc, dict) else None
     return Path(path) if path else None
 
 
 def _write_cache(path: Path) -> None:
-    target = cache_file()
-    # A cache that cannot be written costs a rescan next run, nothing more.
-    with contextlib.suppress(OSError):
+    # A cache that cannot be written costs a rescan next run, nothing more --
+    # and with no project root there is nowhere to write one at all.
+    with contextlib.suppress(OSError, vrfcache.NoProjectRootError):
+        target = cache_file()
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps({"path": str(path)}), encoding="utf-8")

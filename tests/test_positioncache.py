@@ -15,9 +15,11 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import pytest
 
+import vrfcache
 from vrfview import positioncache, positionfile, tracks
 from vrfview.model import Position, Replay, Track
 
@@ -34,7 +36,31 @@ TURRET_PAWN = (
     "/Game/Characters/Killjoy/S0/Ability_E/Pawn_Killjoy_E_Turret"
     ".Default__Pawn_Killjoy_E_Turret_C"
 )
-SPAWNS = {41: (TURRET_CAST, 1200), 42: (TURRET_PAWN, 1400)}
+# The third field is where the actor's channel said it appeared, which version
+# 3 of the sidecar added.  The sub-actor has one and the pawn deliberately does
+# not: a pawn moves, so its track outranks any spawn point, and a v2 sidecar
+# has neither.
+SPAWNS = {
+    41: (TURRET_CAST, 1200, (1500.0, -2500.0, 220.0)),
+    42: (TURRET_PAWN, 1400, None),
+}
+
+# One Omen smoke: an `Ability_` at the caster's own feet and a `GameObject_`
+# where the smoke came to rest, a long way off.  Nothing here moves, so the
+# only position either will ever have is the point it spawned at -- and which
+# of the two the map should mark is the whole of `AbilityCast.landed`.
+SMOKE_CAST = (
+    "/Game/Characters/Wraith/S0/Ability_E/Ability_Wraith_E_Smoke"
+    ".Default__Ability_Wraith_E_Smoke_C"
+)
+SMOKE_OBJECT = (
+    "/Game/Characters/Wraith/S0/Ability_E/GameObject_Wraith_E_Smoke"
+    ".Default__GameObject_Wraith_E_Smoke_C"
+)
+SMOKE_SPAWNS = {
+    51: (SMOKE_CAST, 2000, (100.0, 100.0, 50.0)),
+    52: (SMOKE_OBJECT, 2100, (4000.0, -1000.0, 60.0)),
+}
 
 
 def track(actor_id=1, count=3):
@@ -60,16 +86,37 @@ def sidecar(**kwargs):
 
 
 class TestCachePaths(unittest.TestCase):
-    def test_the_cache_lives_beside_the_oodle_one(self):
+    def test_the_cache_lives_in_the_projects_own_cache_directory(self):
         """
-        Not `out/`, which `scan` uses and which is relative to the CWD.
+        Under `<project root>/.cache/`, beside every other disposable thing.
 
-        A four-second rescan can afford to lose its cache when the app is run
-        from another directory; a four-minute decode per capture cannot.
+        Not `out/`, which `scan` used and which is a bare relative path: the
+        root here is searched for rather than assumed, so a runner, a test and
+        a CLI invoked from a subdirectory all resolve the same directory.
         """
         root = positioncache.cache_root()
         assert root.name == positioncache.CACHE_DIRNAME
-        assert root.parent.name == positioncache.APP_DIRNAME
+        assert root.parent.name == vrfcache.CACHE_DIRNAME
+        assert root.parent.parent == vrfcache.project_root()
+
+    def test_no_project_root_means_no_entry_rather_than_an_error(self):
+        """
+        An installed copy has no project root, and must still open replays.
+
+        Every source here degrades to "no cache entry", because the fallback
+        is to decode -- which is what would have happened anyway.
+        """
+        with mock.patch.object(vrfcache.envfile, "find_upwards", return_value=None):
+            assert positioncache.read("x.vrf") is None
+            assert positioncache.has("x.vrf") is False
+            assert positioncache.entry("x.vrf") is None
+            assert positioncache.write("x.vrf", sidecar()) is None
+
+    def test_entry_answers_only_when_something_is_on_disk(self):
+        with TemporaryDirectory() as tmp:
+            assert positioncache.entry("nope.vrf", root=Path(tmp)) is None
+            positioncache.write("nope.vrf", sidecar(), root=Path(tmp))
+            assert positioncache.entry("nope.vrf", root=Path(tmp)) is not None
 
     def test_an_entry_is_named_from_the_capture(self):
         found = positioncache.cache_path(f"Demos/{MATCH}.vrf", root=Path("cache"))
@@ -135,7 +182,16 @@ class TestSidecarFormat(unittest.TestCase):
             positionfile.write(path, sidecar(ability_spawns=SPAWNS))
             raw = json.loads(path.read_text(encoding="utf-8"))
         assert "ability_casts" not in raw
-        assert raw["ability_spawns"]["41"] == [TURRET_CAST, 1200]
+        assert raw["ability_spawns"]["41"] == [
+            TURRET_CAST,
+            1200,
+            1500.0,
+            -2500.0,
+            220.0,
+        ]
+        # Two fields, not five with three zeros: a coordinate nobody has is
+        # not the map's origin.
+        assert raw["ability_spawns"]["42"] == [TURRET_PAWN, 1400]
 
     def test_a_malformed_spawn_is_refused(self):
         with TemporaryDirectory() as tmp:
@@ -146,6 +202,30 @@ class TestSidecarFormat(unittest.TestCase):
             path.write_text(json.dumps(doc), encoding="utf-8")
             with pytest.raises(positionfile.PositionFileError):
                 positionfile.read(path)
+
+    def test_a_version_two_sidecar_reads_with_no_coordinates(self):
+        """
+        v2 predates the spawn transform being measured, and is not wrong.
+
+        Its casts have a time and an identity and no place, which is the state
+        the whole project was in when it was written.  Refusing it would throw
+        away a correct decode over a field it was never asked to carry.
+        """
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "old.positions.json"
+            positionfile.write(path, sidecar(ability_spawns=SMOKE_SPAWNS))
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            doc["version"] = 2
+            doc["ability_spawns"] = {
+                actor: entry[:2] for actor, entry in doc["ability_spawns"].items()
+            }
+            path.write_text(json.dumps(doc), encoding="utf-8")
+
+            back = positionfile.read(path)
+        assert back.ability_spawns == {
+            51: (SMOKE_CAST, 2000, None),
+            52: (SMOKE_OBJECT, 2100, None),
+        }
 
     def test_a_version_one_sidecar_still_reads(self):
         """
@@ -237,6 +317,40 @@ class TestAttachSources(unittest.TestCase):
         assert cast.codename == "Killjoy"
         assert cast.slot == "E"
         assert cast.pawns == (42,)
+
+    def test_a_smoke_is_marked_where_it_landed_not_where_it_was_thrown(self):
+        """
+        One cast opens channels in two places, and only one of them is useful.
+
+        The `Ability_` actor appears at the caster's own feet -- a median 1 uu
+        from them, measured -- and the `GameObject_` appears where the smoke
+        came to rest.  Preferring the first spawn would put every smoke on the
+        thrower, which looks entirely plausible on a minimap and is wrong.
+        """
+        positionfile.write(
+            positionfile.sidecar_path(self.vrf),
+            sidecar(ability_spawns=SMOKE_SPAWNS),
+        )
+        found = tracks.attach(self.replay(), self.vrf)
+        cast = found.ability_casts[0]
+        assert {p.actor_id for p in cast.placements} == {51, 52}
+        assert cast.landed is not None
+        assert (cast.landed.actor_id, cast.landed.x) == (52, 4000.0)
+
+    def test_a_cast_with_a_pawn_is_placed_by_its_track_and_not_its_spawn(self):
+        """
+        A track says where the turret is now; a spawn point says where it began.
+
+        `landed` refuses rather than offering the staler of the two answers.
+        """
+        positionfile.write(
+            positionfile.sidecar_path(self.vrf),
+            sidecar(ability_spawns=SPAWNS, ability_tracks={42: track(42)}),
+        )
+        found = tracks.attach(self.replay(), self.vrf)
+        cast = found.ability_casts[0]
+        assert cast.pawns == (42,)
+        assert cast.landed is None
 
     def test_casts_are_regrouped_on_load_not_read_back_grouped(self):
         """

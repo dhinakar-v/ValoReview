@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import envfile
+import vrfcache
 from vrfview.model import POSITION_HZ, Position
 
 # An argument beats the environment, which beats a published drop-in, which
@@ -207,9 +208,30 @@ def run(
             out.unlink(missing_ok=True)
 
 
+SCRATCH_DIRNAME = "decode"
+
+
 def _scratch_for(vrf: Path) -> Path:
-    """A temporary of our own, not beside the capture: Demos/ is the user's."""
-    return Path(tempfile.gettempdir()) / f"{vrf.stem}.vrf-decode.json"
+    """
+    Somewhere of our own to let the decoder write.
+
+    Never beside the capture: `Demos/` is the user's directory, and the game
+    deletes from it.
+
+    The project's `.cache/decode/` when there is a project root, and the system
+    temp directory when there is not.  This is the one place in the project
+    that keeps that fallback, and it is not a cache: `run` unlinks the file the
+    moment it has read it.  A decode failing for want of somewhere to put a
+    scratch file would be a worse answer than putting it where every other
+    program puts one.
+    """
+    root = vrfcache.project_root()
+    base = (
+        root / vrfcache.CACHE_DIRNAME / SCRATCH_DIRNAME
+        if root is not None
+        else Path(tempfile.gettempdir())
+    )
+    return base / f"{vrf.stem}.vrf-decode.json"
 
 
 def read(path: str | Path) -> Decoded:

@@ -13,11 +13,18 @@ Decode and replay Valorant `.vrf` replay files.
     docs/           decoding research, findings, API reference and session handoffs
     Demos/          .vrf captures (gitignored)
     out/            vrf_to_json output (gitignored)
+    .cache/         decodes, scans and scratch; delete to reset (gitignored)
     assets/         downloaded Valorant art (gitignored)
     vendor/         Oodle and decoder drop-ins (gitignored except its README)
 
 `libraries/` is the source root, not a package: `uv sync` installs its contents so
 `import vrf_reader` and `import vrfnet` resolve from anywhere.
+
+`.cache/` is everything the project can regenerate -- decoded positions, the
+resolved Oodle path, the match-list scan and the decoder's scratch.
+`libraries/vrfcache.py` finds it by walking up for `pyproject.toml`, so it is
+the same directory whatever you run from. Deleting it is a complete reset; the
+next run simply does the work again.
 
 ## Running
 
@@ -104,9 +111,9 @@ has to come from elsewhere, and `libraries/oodlefind.py` looks in this order:
     Steam and Epic libraries  any installed UE4/UE5 game ships one
 
 The scan globs a few known layouts per game rather than walking whole installs,
-and caches its answer, so it costs a fraction of a second once per machine. The
-first two are configured deliberately, so a path that does not exist is an
-error rather than a silent fall-through to the scan.
+and caches its answer in `.cache/oodle.json`, so it costs a fraction of a
+second once per checkout. The first two are configured deliberately, so a path
+that does not exist is an error rather than a silent fall-through to the scan.
 
 To set it explicitly, copy `.env.example` to `.env` and fill in:
 

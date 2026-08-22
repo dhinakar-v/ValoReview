@@ -37,11 +37,13 @@ drops two of a hundred files is worse than one that says which two and why.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import vrfcache
 import vrfconfig
 from vrf_reader import VrfError, VrfFile
 from vrfnet.payload_transform import SUPPORTED_BRANCHES
@@ -54,11 +56,52 @@ RESULT_NOT_IN_FILE = "result not in file"
 POSITIONS_AVAILABLE = "positions decode on this build"
 POSITIONS_UNAVAILABLE = "no payload transform for this build; nothing to draw"
 
+
+def positions_available(build: str) -> bool:
+    """
+    Whether a decode can work on this build at all, before anything is tried.
+
+    A membership test against `payload_transform.SUPPORTED_BRANCHES`, which is
+    the decoder's own table, so this cannot drift from what a decode will do.
+    Here rather than on `MatchCard` because two interfaces ask it about two
+    different things -- a card asks whether to show a capture, and a viewer
+    asks whether to offer a DECODE button -- and a control that can only ever
+    refuse is worse than an explanation of its absence.
+    """
+    return build in SUPPORTED_BRANCHES
+
+
+def positions_note(build: str) -> str:
+    """The sentence that goes with the answer above."""
+    return POSITIONS_AVAILABLE if positions_available(build) else POSITIONS_UNAVAILABLE
+
+
 # What the footer says about the captures the default filter holds back.
 HIDDEN_NOTE = "{n} hidden - no payload transform for their build"
 
 CACHE_VERSION = 1
-DEFAULT_CACHE = Path("out") / "match-scan.json"
+CACHE_FILENAME = "match-scan.json"
+
+# Distinguishes "the caller said nothing" from "the caller said None", which
+# already means *disable the cache* and has two callers relying on it
+# (scripts/vrf_app.py --no-cache, vrfserve.library.rescan).
+_UNSET = object()
+
+
+def default_cache_path() -> Path | None:
+    """
+    Where the scan caches itself, or None if there is nowhere to.
+
+    This used to be `Path("out") / "match-scan.json"`, which was relative to
+    the *working directory*: running the app from anywhere but the repo root
+    silently addressed a different cache and rescanned the whole library.
+    `vrfcache` searches for the project root instead, so every entry point
+    agrees.  Resolved per call rather than at import, because a module-level
+    constant would freeze the root before a test could move it.
+    """
+    root = vrfcache.project_root()
+    return None if root is None else root / vrfcache.CACHE_DIRNAME / CACHE_FILENAME
+
 
 PER_PAGE = 10
 
@@ -90,7 +133,7 @@ class MatchCard:
     @property
     def positions_available(self) -> bool:
         """Whether the viewer will draw this one on a real map."""
-        return self.build in SUPPORTED_BRANCHES
+        return positions_available(self.build)
 
     @property
     def playable(self) -> bool:
@@ -99,9 +142,7 @@ class MatchCard:
 
     @property
     def positions_note(self) -> str:
-        return (
-            POSITIONS_AVAILABLE if self.positions_available else POSITIONS_UNAVAILABLE
-        )
+        return positions_note(self.build)
 
     @property
     def duration(self) -> str:
@@ -200,7 +241,9 @@ class Cache:
     nothing else.
     """
 
-    def __init__(self, path: str | Path | None = DEFAULT_CACHE):
+    def __init__(self, path: str | Path | None = _UNSET):
+        if path is _UNSET:
+            path = default_cache_path()
         self.path = Path(path) if path is not None else None
         self.entries: dict[str, dict] = {}
         self.dirty = False
@@ -219,10 +262,14 @@ class Cache:
     def save(self) -> None:
         if self.path is None or not self.dirty:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        doc = {"version": CACHE_VERSION, "entries": self.entries}
-        self.path.write_text(json.dumps(doc), encoding="utf-8")
-        self.dirty = False
+        # Same rule as the two caches beside it: one that cannot be written
+        # costs a rescan next run and nothing else, so a read-only directory
+        # must not take the match list down with it.
+        with contextlib.suppress(OSError):
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            doc = {"version": CACHE_VERSION, "entries": self.entries}
+            self.path.write_text(json.dumps(doc), encoding="utf-8")
+            self.dirty = False
 
     def get(self, path: Path) -> MatchCard | None:
         entry = self.entries.get(_key(path))

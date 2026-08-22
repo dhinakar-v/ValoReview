@@ -104,7 +104,7 @@ class Sandbox(unittest.TestCase):
         envfile.clear_cache()
 
     def locate(self, explicit=None):
-        # use_cache=False: a real cache in %LOCALAPPDATA% must not decide a test.
+        # use_cache=False: a real cache in .cache/ must not decide a test.
         return oodlefind.locate(explicit, use_cache=False)
 
 

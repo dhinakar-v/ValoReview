@@ -18,7 +18,9 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
+import vrfcache
 from vrfhome import scan
 
 DEMO_12_10 = Path("Demos/03fcbb4a-0064-4e4d-a209-091cb73ee5b8.vrf")
@@ -185,6 +187,27 @@ class Caching(unittest.TestCase):
         self.cache_path.write_text('{"version": 0, "entries": {}}', encoding="utf-8")
         cache = scan.Cache(self.cache_path)
         assert cache.entries == {}
+
+    def test_the_default_cache_lives_under_the_projects_dot_cache(self):
+        """
+        Not `out/`, which was relative to the working directory: running the
+        app from anywhere but the repo root addressed a different cache and
+        rescanned the whole library.
+        """
+        found = scan.default_cache_path()
+        assert found == vrfcache.root() / scan.CACHE_FILENAME
+        assert found.parent.name == vrfcache.CACHE_DIRNAME
+
+    def test_with_no_project_root_the_scan_simply_does_not_cache(self):
+        """An installed copy rescans; it does not fail to list the library."""
+        with mock.patch.object(vrfcache.envfile, "find_upwards", return_value=None):
+            assert scan.default_cache_path() is None
+            assert scan.Cache().path is None
+
+    def test_an_explicit_none_still_disables_the_cache(self):
+        """`--no-cache` and "resolve the default" must stay distinguishable."""
+        assert scan.Cache(path=None).path is None
+        assert scan.Cache().path is not None
 
     def test_no_cache_file_is_written_when_the_path_is_none(self):
         scan.scan(root=str(self.tmp), cache=scan.Cache(path=None))
