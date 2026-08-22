@@ -1,0 +1,314 @@
+/**
+ * The ink a sight cone is drawn in, shared by both views.
+ *
+ * `model/sight.ts` is the geometry and is parity-pinned against Python to the
+ * bit; this is everything downstream of it that is a *drawing* decision, and it
+ * lives in one module because the 2D canvas and the 3D scene used to make those
+ * decisions separately and did not agree.  The minimap drew a wedge for every
+ * living player and the scene drew exactly one, for whoever happened to be
+ * picked, with no hidden-team gate and no smoke occluders at all -- so the same
+ * switch meant two different things, and switching to 3D silently dropped nine
+ * cones.
+ *
+ * **This module reads no store.**  It is a pure function of its arguments, and
+ * that is load-bearing rather than tidy: `LayersMenu.test.tsx` scrapes
+ * `layers.<key>` out of the raw source of `MinimapCanvas.tsx` and `Scene3D.tsx`
+ * to check each layer is drawn by exactly the canvases it claims, so a gate
+ * moved in here would vanish from both files and fail that guard twice.  Each
+ * canvas keeps its own `state.layers.sight` check and calls this with the
+ * answer.
+ *
+ * Overlap is the message, so overlap is the opacity
+ * -------------------------------------------------
+ * This layer exists to say *which parts of the map nobody can see*, which is a
+ * question about how many cones cover a point rather than about any one of
+ * them.  A fixed per-cone alpha cannot answer it: ordinary source-over
+ * compositing stacks k cones to `1-(1-a)^k`, which saturates, so three overlaps
+ * and five overlaps converge on the same wash.
+ *
+ * So the alpha counts.  Each cone is `1/N` and k of them read as exactly `k/N`
+ * -- a crisp one-step jump wherever one cone's edge crosses another's interior.
+ * See `coneAlpha` for what N is, and `paintCones` for how that arithmetic is
+ * made exact.
+ */
+
+import type { MapArt } from "../api/types";
+import type { ReplayModel } from "../model/replay";
+import type { Occluder, SightMask, SightSettings } from "../model/sight";
+import { cone, forwardUv, uvRadius } from "../model/sight";
+import type { Snapshot } from "../model/state";
+import { sideOf } from "../model/synthetic";
+import { applyTransform } from "../model/transform";
+import { sideColour } from "./images";
+
+/*
+  Which placements are the thing an ability left standing, mirroring
+  `abilities.PLACING_KINDS`. A smoke is a `GameObject_`, and Omen's is a
+  `Zone_`; a `Projectile_` is the throw origin, a median 42 uu from the caster,
+  so occluding on one would put the smoke on top of the person who threw it.
+*/
+const PLACED_KINDS = new Set(["GameObject", "Zone", "Patch"]);
+
+/**
+ * The side of the square the 3D overlay is rasterised into.
+ *
+ * The 2D canvas rasterises in screen space and stays crisp at any zoom; the
+ * scene cannot, because what it hands the GPU is a texture on a ground quad.
+ * 1024 is the radar's own resolution, which is the line worth holding -- a cone
+ * edge is then never coarser than the map it is drawn on.  The cone's *shape*
+ * is quantised at `sight.GRID` (256) long before it reaches here, so this is
+ * four times finer than the geometry it draws and all the extra resolution buys
+ * is a clean antialiased rim.
+ */
+export const SIGHT_RASTER = 1024;
+
+/**
+ * The smallest denominator, which is one full side.
+ *
+ * Without it the wash gets heavier as people die -- N is the number of cones
+ * actually drawn, so two survivors would be 50% each and the last player alive
+ * would paint a solid, fully opaque wedge over the radar, in exactly the moment
+ * somebody is watching a clutch most closely.  Flooring at five keeps a full
+ * side reading 20% each and reaching 100% where all five overlap, which is the
+ * behaviour asked for, and leaves a lone survivor at 20% rather than blanking
+ * the map.
+ */
+export const SIGHT_MIN_DENOM = 5;
+
+/**
+ * The order the side layers are composited in.
+ *
+ * Fixed rather than incidental, so the picture is deterministic for the pixel
+ * suite: where both sides reach full coverage, whichever blits second wins
+ * outright.  Compositing the two layers additively instead would give magenta
+ * -- a third colour nothing on this canvas means -- so one of them has to be on
+ * top.
+ */
+const SIDE_ORDER = ["ATK", "DEF"];
+
+/** One cone to draw: the polygon in uv, and the side that owns its colour. */
+export interface DrawnCone {
+  side: string;
+  polygon: Array<[number, number]>;
+}
+
+/** How much ink one cone gets, given how many its side is drawing. */
+export function coneAlpha(count: number): number {
+  return 1 / Math.max(count, SIGHT_MIN_DENOM);
+}
+
+/**
+ * The round smokes standing at this instant, as uv circles.
+ *
+ * Two things about a smoke are looked up rather than decoded -- the radius, and
+ * how long it lasts.  A cast with neither is not a smoke and occludes nothing:
+ * there is no default size and no default lifetime, because a smoke of a
+ * made-up width standing for a made-up time is exactly the plausible wrong
+ * answer this project refuses.
+ *
+ * `cast.t_ms` is when the ability was *cast*, and a thrown smoke lands about a
+ * second later; the wire carries no time on a placement, so a smoke starts
+ * blocking slightly early.  Expiry is computed here rather than in
+ * `abilitiesAt`, which keeps a cast until the round ends on purpose and is
+ * parity-tested in both languages.
+ */
+export function smokesAt(art: MapArt, snap: Snapshot): Occluder[] {
+  const out: Occluder[] = [];
+  for (const cast of snap.roundCasts) {
+    const { smoke_radius_uu: radiusUu, smoke_duration_ms: life } = cast;
+    if (radiusUu === null || life === null) {
+      continue;
+    }
+    const age = snap.t_ms - cast.t_ms;
+    if (age < 0 || age > life) {
+      continue;
+    }
+    const radius = uvRadius(art.transform, radiusUu);
+    // Every placement, not just `landed`: two smokes from one agent in one
+    // round are a single `AbilityCast`, and `landed` names only the first.
+    for (const place of cast.placements) {
+      if (!PLACED_KINDS.has(place.kind)) {
+        continue;
+      }
+      const [u, v] = applyTransform(art.transform, place.x, place.y);
+      out.push({ u, v, radius });
+    }
+  }
+  return out;
+}
+
+/**
+ * Every cone that should be on screen at this instant, in uv.
+ *
+ * No selection anywhere in here: the layer switch is the only control, and a
+ * cone is drawn for every living player whose side is shown.  What it must not
+ * get wrong is which way somebody is looking, so the heading goes through
+ * `forwardUv`, which probes a world point and transforms it rather than doing
+ * trigonometry in image space -- that puts every cone ninety degrees out and
+ * looks entirely plausible on screen.
+ */
+export function sightCones(args: {
+  model: ReplayModel;
+  art: MapArt;
+  snap: Snapshot;
+  silhouette: SightMask;
+  settings: SightSettings;
+  shown: (team: string) => boolean;
+  smokes: readonly Occluder[];
+}): DrawnCone[] {
+  const { model, art, snap, silhouette, settings, shown, smokes } = args;
+  const reach = uvRadius(art.transform, settings.max_range_uu);
+  const out: DrawnCone[] = [];
+
+  for (const player of model.replay.players) {
+    // The same gate the marker loops use: a hidden side drawing a cone but no
+    // marker would be a new way for the two to disagree.
+    if (!shown(player.team)) {
+      continue;
+    }
+    // `snap.positions`, not `positionOf`: that falls back to where somebody
+    // died, and a cone at a corpse is a claim about a dead player's vision.
+    if (!snap.alive.has(player.actor_id)) {
+      continue;
+    }
+    const position = snap.positions.get(player.actor_id);
+    if (position === undefined) {
+      continue;
+    }
+    const polygon = cone(
+      silhouette,
+      applyTransform(art.transform, position.x, position.y),
+      forwardUv(art.transform, position.x, position.y, position.yaw, settings.probe_uu),
+      reach,
+      settings,
+      smokes,
+    );
+    // An empty cone means draw nothing. Never a fallback circle: a circle where
+    // a cone belongs claims the player can see in every direction.
+    if (polygon.length < 3) {
+      continue;
+    }
+    out.push({ side: sideOf(model.replay, player.team, snap.t_ms), polygon });
+  }
+  return out;
+}
+
+/**
+ * A scratch canvas of a given size, made on first use and kept.
+ *
+ * Lazily, and **never from a component body**: `getContext("2d")` returns null
+ * under jsdom and emits a "not implemented" line on the way, so a scratch built
+ * in a `useRef` initialiser would fire once per mount in every page test, for a
+ * drawing those tests never reach.  Built here, behind the callers' own guards,
+ * it costs nothing where there is nothing to draw.
+ */
+function scratchFor(
+  ref: { current: HTMLCanvasElement | null },
+  width: number,
+  height: number,
+): CanvasRenderingContext2D | null {
+  let canvas = ref.current;
+  if (canvas === null) {
+    canvas = document.createElement("canvas");
+    ref.current = canvas;
+  }
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  return canvas.getContext("2d");
+}
+
+/**
+ * Paint every cone onto `target`: one solid colour per side, `k/N` per overlap.
+ *
+ * Why this needs a scratch canvas and two composite modes
+ * ------------------------------------------------------
+ * `source-over` cannot produce `k/N`.  `lighter` can -- it is the compositing
+ * spec's `plus-lighter`, premultiplied per-channel addition with
+ * `alpha = min(1, src + dst)`, and `globalAlpha` applies to the source *before*
+ * the operator -- so k fills at `1/N` accumulate to exactly `k/N`.  What it
+ * must not do is add to the radar underneath, which would brighten the map
+ * rather than shade it; hence an offscreen buffer and a plain blit at the end.
+ *
+ * The colour is then made solid **structurally** rather than arithmetically.
+ * The cones are filled in white, so the scratch holds nothing but a coverage
+ * count in its alpha channel, and one `source-in` rectangle stamps the side's
+ * colour through it (`Ar = Ad`, `Cr = C`).  Filling in the colour directly
+ * would also work today -- the floored denominator means `k/N` can never exceed
+ * 1 -- but it would fail *silently*, whitening the wash, the day somebody
+ * changes the denominator.  This way there is no arithmetic left to get wrong.
+ *
+ * A requirement rather than a preference: **no stroke.**  An outline is a
+ * second ink whose weight counts nothing, and it would draw a hard line through
+ * the middle of the very gradient this layer is made of.
+ */
+export function paintCones(
+  target: CanvasRenderingContext2D,
+  cones: readonly DrawnCone[],
+  colours: Record<string, string>,
+  project: (u: number, v: number) => [number, number],
+  ref: { current: HTMLCanvasElement | null },
+  size: { width: number; height: number; scale: number },
+): void {
+  if (cones.length === 0) {
+    return;
+  }
+  const bySide = new Map<string, DrawnCone[]>();
+  for (const drawn of cones) {
+    const found = bySide.get(drawn.side);
+    if (found === undefined) {
+      bySide.set(drawn.side, [drawn]);
+    } else {
+      found.push(drawn);
+    }
+  }
+  // The two known sides first, in a fixed order, then anything else sorted, so
+  // an unresolved side can never silently reorder the two that matter.
+  const sides = [
+    ...SIDE_ORDER.filter((side) => bySide.has(side)),
+    ...[...bySide.keys()].filter((side) => !SIDE_ORDER.includes(side)).sort(),
+  ];
+
+  const context = scratchFor(
+    ref,
+    Math.round(size.width * size.scale),
+    Math.round(size.height * size.scale),
+  );
+  if (context === null) {
+    return;
+  }
+
+  for (const side of sides) {
+    const group = bySide.get(side)!;
+
+    context.setTransform(size.scale, 0, 0, size.scale, 0, 0);
+    context.clearRect(0, 0, size.width, size.height);
+    context.globalCompositeOperation = "lighter";
+    context.globalAlpha = coneAlpha(group.length);
+    context.fillStyle = "#ffffff";
+    for (const { polygon } of group) {
+      context.beginPath();
+      polygon.forEach(([u, v], i) => {
+        const [x, y] = project(u, v);
+        if (i === 0) {
+          context.moveTo(x, y);
+        } else {
+          context.lineTo(x, y);
+        }
+      });
+      context.closePath();
+      context.fill();
+    }
+    // Stamp the side's colour through the coverage those fills accumulated.
+    context.globalCompositeOperation = "source-in";
+    context.globalAlpha = 1;
+    context.fillStyle = sideColour(colours, side);
+    context.fillRect(0, 0, size.width, size.height);
+    // Back to the default, or the next side's `clearRect` composites rather
+    // than clearing and this frame's ATK bleeds into its DEF.
+    context.globalCompositeOperation = "source-over";
+
+    target.drawImage(context.canvas, 0, 0, size.width, size.height);
+  }
+}

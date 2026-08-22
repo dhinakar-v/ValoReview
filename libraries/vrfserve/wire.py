@@ -104,7 +104,7 @@ def map_art(art: MapArt, root: Path) -> dict:
 
 def sight_mask(mask, map_key: str) -> dict:
     """
-    One map's playable silhouette, and the sentence that says what it is.
+    One map's playable silhouette, thresholded where it is decided.
 
     The mask is thresholded here rather than in the browser, and that is not
     an optimisation.  `sight.GRID` and `sight.ALPHA_FLOOR` decide what "open"
@@ -114,17 +114,14 @@ def sight_mask(mask, map_key: str) -> dict:
     one answer, and `tests/golden/cone.json` checks the arithmetic on top of
     it in both languages.
 
-    `caption` travels **with** the cells, so nothing can draw a cone without
-    having been handed the sentence saying what it is a cone of.  One byte
-    per cell rather than a bit, because the far end's `blocked` is then a
-    literal port of this one's and not a second thing to get right.
+    One byte per cell rather than a bit, because the far end's `blocked` is
+    then a literal port of this one's and not a second thing to get right.
     """
     return {
         "map_key": map_key,
         "size": mask.size,
         "cells": base64.b64encode(mask.cells).decode("ascii"),
         "open_fraction": mask.open_fraction,
-        "caption": sight_mod.CAPTION,
         "max_range_uu": sight_mod.MAX_RANGE_UU,
         "fov_degrees": sight_mod.FOV_DEGREES,
         "ray_step_degrees": sight_mod.RAY_STEP_DEGREES,

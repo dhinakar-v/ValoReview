@@ -437,14 +437,13 @@ class MapsAreAddressedByName(unittest.TestCase):
             assert self.client.get(shaped).status_code == 404
 
 
-class SightMaskTravelsWithItsCaption(unittest.TestCase):
+class SightMaskIsThresholdedInPython(unittest.TestCase):
     """
-    A cone is drawn from a mask, and the mask arrives with the sentence.
+    A cone is drawn from a mask, and the mask is built in exactly one place.
 
-    `sight.CAPTION` says what a cone raycast against a radar's alpha channel
-    is and is not -- a silhouette, not collision, and two-dimensional.  It
-    travels in the same document as the cells so that no client can render a
-    wedge without having been handed the words for it.
+    `sight.GRID` and `sight.ALPHA_FLOOR` decide what "open" means, and a
+    browser downscale is not Pillow's, so the cells and the constants that
+    produced them travel together and the far end does no thresholding.
     """
 
     def setUp(self):
@@ -483,11 +482,6 @@ class SightMaskTravelsWithItsCaption(unittest.TestCase):
         assert doc["size"] == built.size
         assert base64.b64decode(doc["cells"]) == built.cells
         assert doc["open_fraction"] == pytest.approx(built.open_fraction)
-
-    def test_the_caption_is_sight_pys_own_words(self):
-        doc = self.client.get("/api/maps/Haven/sight").json()
-        assert doc["caption"] == sight.CAPTION
-        assert "not collision" in doc["caption"]
 
     def test_the_constants_come_from_the_module_that_decides_them(self):
         doc = self.client.get("/api/maps/Haven/sight").json()

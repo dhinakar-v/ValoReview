@@ -58,14 +58,14 @@ export type LayerKey = keyof Layers;
 export const DEFAULT_LAYERS: Layers = {
   utility: true,
   /*
-    On by default, which reverses an earlier decision on both of its clauses.
+    On by default, and for everybody in both views.
 
-    It argued the claim was weak enough to be asked for, and that ten
-    overlapping wedges say nothing anyway. The second half was wrong: ten
-    wedges say which parts of the map nobody can see, which is the only
-    question this layer was ever for, and one wedge cannot answer it. The
-    first half is answered by the caption, which travels with the mask and
-    states in words what the cone is a cone of.
+    An earlier decision had this off and drawing one wedge for a selected
+    player, arguing that ten overlapping wedges say nothing. They say the one
+    thing this layer is for -- which parts of the map nobody can see -- and one
+    wedge cannot. The overlap is now what carries the answer rather than what
+    spoils it: `sightlayer` gives each cone `1/N` of its side's ink and stacks
+    coverage additively, so k cones over a point read as exactly `k/N`.
 
     `MapStage` follows `hasMask` when it mounts, so a map with no radar on
     disk does not come up with a lit switch that draws nothing.

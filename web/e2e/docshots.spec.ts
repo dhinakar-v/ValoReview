@@ -147,9 +147,9 @@ test("the README's screenshots, regenerated", async ({ page }, testInfo) => {
     "false",
   );
 
-  // 5. Sight and trails. The cone is drawn for every living player, so this
-  // no longer needs a selection -- the click stays because the picked wedge is
-  // the heavier one and the picture should show that.
+  // 5. Sight and trails. A cone is drawn for every living player at the same
+  // weight, so this needs no selection; the click stays because the picked
+  // marker is what the README paragraph beside this shot describes.
   // Where the click goes is computed the way `gallery.spec.ts` computes it --
   // through the model's own transform, so it lands on a player rather than near
   // one.

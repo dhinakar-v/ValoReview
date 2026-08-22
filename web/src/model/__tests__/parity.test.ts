@@ -217,7 +217,6 @@ describe("applyTransform", () => {
 
 describe("sight", () => {
   const fixture = golden<{
-    caption: string;
     fov_degrees: number;
     ray_step_degrees: number;
     seed_cells: number;

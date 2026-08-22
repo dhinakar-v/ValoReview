@@ -44,7 +44,6 @@ import unittest
 from pathlib import Path
 
 import make_golden
-from vrfview import sight
 
 REPO = Path(__file__).resolve().parents[1]
 GOLDEN = REPO / "tests" / "golden"
@@ -253,12 +252,9 @@ class TransformPinsTheAxisSwap(unittest.TestCase):
         )
 
 
-class ConeCarriesItsOwnCaption(unittest.TestCase):
+class ConeFixtureIsWellFormed(unittest.TestCase):
     def setUp(self):
         self.doc = _fixture("cone.json")
-
-    def test_the_caption_is_sight_pys_own_words(self):
-        assert self.doc["caption"] == sight.CAPTION
 
     def test_the_mask_round_trips_through_base64(self):
         mask = self.doc["mask"]

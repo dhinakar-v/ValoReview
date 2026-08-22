@@ -750,7 +750,6 @@ def cone_fixture() -> dict:
 
     return {
         "_": HEADER,
-        "caption": sight.CAPTION,
         "grid": sight.GRID,
         "alpha_floor": sight.ALPHA_FLOOR,
         "fov_degrees": sight.FOV_DEGREES,

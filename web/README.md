@@ -300,7 +300,7 @@ belong to a `role="tablist"` (ArrowRight in the timeline's strip changed the tab
 **A key exists exactly where its control does.** `MapStage` draws SIGHT only
 where there is a mask and CALLOUTS only in 3D, so `useTransportKeys` is handed
 the same two booleans. Without them `S` on a map with no mask set `showSight`
-with no effect and no caption -- and because the store is module-level, the
+with nothing to show for it -- and because the store is module-level, the
 next replay opened in the same session came up with the layer already on.
 
 `views/shortcuts.test.tsx` is the standing check on all three, and each
@@ -347,10 +347,12 @@ Each of these is load-bearing, and each is pinned by a test in
   nothing to press at all, so the sentence names `runners\build-decoder.bat`.
   They are fixed by different things and therefore say different things. A
   control that cannot do anything is worse than an explanation of its absence.
-- **A sight cone is never drawn without its caption.** The sentence saying what
-  the wedge is — the radar silhouette, not collision, 2D only — travels in the
-  same document as the cells it is raycast against, so there is no state in
-  which the page has one and not the other.
+- **A sight cone means the same thing in both views.** `views/sightlayer.ts`
+  owns the selection, the gates, the colours and the ink, and the two canvases
+  call it — so a cone cannot be drawn for everybody here and for one picked
+  player there, which is what they did for months. The opacity is the overlap:
+  each cone is `1/N` of its side, accumulated additively on an offscreen buffer,
+  because ordinary compositing saturates and stops counting.
 - **Where `Track.at` refuses, nothing is drawn.** Not a last-known position, in
   either view. The refusal exists to stop a plausible coordinate being
   invented, and a fallback downstream of it would undo exactly that.

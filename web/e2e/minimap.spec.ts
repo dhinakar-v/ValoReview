@@ -345,8 +345,6 @@ test.describe("the 2D minimap", () => {
     expect(drawn.length, "several players have a cone to draw here").toBeGreaterThan(2);
 
     await setLayer(page, "SIGHT", true);
-    // The sentence travels with the mask, and is rendered verbatim.
-    await expect(page.getByText(sight.caption, { exact: true })).toBeVisible();
     const lit = await readCanvas(page, canvas);
 
     // Sample halfway along every ray of every cone, each rotated about the

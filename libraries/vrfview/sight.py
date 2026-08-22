@@ -22,10 +22,10 @@ sightlines and the drawn lines take that to 38.17%, because Riot already
 encodes opaque geometry *as* the silhouette and the lines on top of the floor
 are largely things you can see over.  `walls.py` carries the whole table.  The
 lines are in the occluder because a cone that stops at interior structure was
-asked for and is the more useful picture; what they are not is more accurate,
-and the caption says so.
+asked for and is the more useful picture; what they are not is more accurate.
 
-So the contract is narrow and the caller must say so on screen:
+So the contract is narrow, and whatever draws this is drawing an
+approximation:
 
   * transparent means outside the rendered radar, which is *usually* wall or
     void and is not the same claim as "opaque geometry blocks vision";
@@ -37,11 +37,11 @@ So the contract is narrow and the caller must say so on screen:
     as the floor beneath it;
   * a doorway narrower than the working grid closes.
 
-`GET /api/maps/{key}/sight` sends the mask, `CAPTION` and the constants that
-produced it as one document, so a browser cannot draw a wedge without having
-been handed the sentence saying what it is a wedge of.  The geometry here is
-plain arithmetic over a bitmask and is tested against a synthetic image with
-no display and no art cache.
+`GET /api/maps/{key}/sight` sends the mask and the constants that produced it
+as one document: `GRID` and `ALPHA_FLOOR` decide what "open" means and a
+browser downscale is not Pillow's, so one authority answers it once.  The
+geometry here is plain arithmetic over a bitmask and is tested against a
+synthetic image with no display and no art cache.
 
 Everything is in uv space
 -------------------------
@@ -93,17 +93,6 @@ SEED_CELLS = 2
 # How far ahead the heading probe is placed, in Unreal units.  Any distance
 # works; the direction is renormalised.  Matches minimap.FACING_PROBE_UU.
 PROBE_UU = 100.0
-
-# What a cone drawn from this mask is, in words.  It lives here rather than in
-# whichever view draws it because the claim belongs to the raycaster: anything
-# handed a `SightMap` is handed this sentence too, and cannot render a cone
-# while quietly leaving off what it is a cone of.
-CAPTION = (
-    "SIGHT (approx) — the radar's silhouette and the lines drawn on it, not "
-    "collision. 2D only: it ignores heaven and tunnels, and Riot's lines also "
-    "outline low boxes and ledges you can see over. Smokes are simulated from "
-    "a looked-up radius and duration."
-)
 
 
 @dataclass(frozen=True)

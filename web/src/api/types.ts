@@ -260,9 +260,10 @@ export interface AbilityCast {
    * Null for everything that is not one, which is most casts -- a molly has a
    * radius and does not block sight, and a wall blocks sight and is not a
    * circle. Looked up in `vrfview.abilityfacts` on (codename, slot), so it is
-   * *simulated* exactly the way `range_uu` is and the sight caption says so.
-   * `MinimapCanvas` turns these into `Occluder`s and stops sight rays inside
-   * them while the cast is younger than `smoke_duration_ms`.
+   * *simulated* exactly the way `range_uu` is, and `smoke_source` carries the
+   * word it is taken on. `sightlayer.smokesAt` turns these into `Occluder`s
+   * and stops sight rays inside them while the cast is younger than
+   * `smoke_duration_ms`.
    */
   smoke_radius_uu: number | null;
   smoke_duration_ms: number | null;
@@ -275,11 +276,6 @@ export interface SightMaskDoc {
   /** Base64, one byte per cell, row-major, 1 open. Thresholded in Python. */
   cells: string;
   open_fraction: number;
-  /**
-   * What a cone drawn from this is, in words. It travels with the cells so
-   * nothing can render a wedge without having been handed the sentence.
-   */
-  caption: string;
   max_range_uu: number;
   fov_degrees: number;
   ray_step_degrees: number;

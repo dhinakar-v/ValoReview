@@ -366,47 +366,30 @@ export function MapStage({
         <LayersMenu hasMask={maskDoc !== null} is3d={mode === "3d"} />
       </Transport>
 
-      <Captions
-        sightCaption={maskDoc?.caption ?? null}
-        maskUnavailable={maskUnavailable}
-      />
+      <Captions maskUnavailable={maskUnavailable} />
     </div>
   );
 }
 
 /**
- * Every claim a layer is making, in words, under the view making it.
+ * Every claim the page is making, in words, under the view making it.
  *
- * The sight caption is never held here as a constant, precisely so it cannot
- * drift: the sentence saying what a cone is travels in the same document as the
- * cells it is raycast against, and is rendered verbatim.  The simulated notice
- * beside it is the same idea for the generated numbers, and it is always shown,
- * because those numbers are always on screen.
+ * The simulated notice is unconditional, because the numbers it is about are
+ * always on screen.  The second line is not a claim but a report: it appears
+ * only when a map has no radar on disk, and it is the server's own sentence for
+ * why the sight layer cannot be offered.
  *
  * The mark beside each is `aria-hidden`, because one of these sentences is
  * matched exactly by a test and a glyph that joined the text node would change
  * what it is.
  */
-function Captions({
-  sightCaption,
-  maskUnavailable,
-}: {
-  sightCaption: string | null;
-  maskUnavailable: string | null;
-}) {
-  const showSight = usePlayback((state) => state.layers.sight);
+function Captions({ maskUnavailable }: { maskUnavailable: string | null }) {
   return (
     <div className="captions">
       <p>
         <Icon glyph={glyphs.simulated} size={12} />
         <span>{SIMULATED_NOTE}</span>
       </p>
-      {showSight && sightCaption ? (
-        <p>
-          <Icon glyph={glyphs.sight} size={12} />
-          <span>{sightCaption}</span>
-        </p>
-      ) : null}
       {maskUnavailable ? (
         <p>
           <Icon glyph={glyphs.noArt} size={12} />

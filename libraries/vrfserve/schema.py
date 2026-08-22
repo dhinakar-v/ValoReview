@@ -158,11 +158,7 @@ class MapDoc(BaseModel):
 
 class SightDoc(BaseModel):
     """
-    One map's playable silhouette, thresholded in Python, plus its caption.
-
-    The caption is not decoration and is not optional: a cone drawn from this
-    is the radar's own silhouette and not a line of sight, and travelling the
-    sentence with the cells is what stops a client drawing one without it.
+    One map's playable silhouette, thresholded in Python.
 
     `cells` is base64 of one byte per cell, row-major, 1 open and 0 blocked --
     `sight.SightMap.cells` unchanged, so the browser's `blocked` is a literal
@@ -174,7 +170,6 @@ class SightDoc(BaseModel):
     size: int
     cells: str
     open_fraction: float
-    caption: str
     max_range_uu: float
     fov_degrees: float
     ray_step_degrees: float
@@ -348,7 +343,8 @@ class AbilityCastDoc(BaseModel):
     # flash have a radius and do not block sight, and a wall blocks sight and
     # is not a circle.  The browser stops a sight ray inside this radius while
     # the cast is younger than this duration -- so it is *simulated* in exactly
-    # the way `range_uu` is, and the sight caption says so.
+    # the way `range_uu` is: a looked-up radius and a looked-up lifetime, and
+    # `abilityfacts` carries a source string for each.
     smoke_radius_uu: float | None = None
     smoke_duration_ms: int | None = None
     smoke_source: str | None = None

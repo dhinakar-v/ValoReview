@@ -65,13 +65,14 @@ import { mod, radians } from "../model/angles";
 import type { ReplayModel } from "../model/replay";
 import { floorZ } from "../model/replay";
 import type { SightMask, SightSettings } from "../model/sight";
-import { cone, decodeMask, forwardUv, uvRadius } from "../model/sight";
+import { decodeMask, forwardUv } from "../model/sight";
 import { positionOf, spikeLocation, stateAt } from "../model/state";
 import { segments } from "../model/track";
 import { applyTransform } from "../model/transform";
 import { sideOf } from "../model/synthetic";
 import { palette, sideColour, useImages } from "./images";
-import { selectedActor, teamShown, usePlayback } from "./playback";
+import { teamShown, usePlayback } from "./playback";
+import { SIGHT_RASTER, paintCones, sightCones, smokesAt } from "./sightlayer";
 
 /** Marker sizes, in scene units — which are fractions of the radar's side. */
 const BODY_RADIUS = 0.006;
@@ -139,7 +140,7 @@ export function Scene3D(props: SceneProps) {
       <Trails {...props} colours={colours} />
       <Actors {...props} colours={colours} />
       <Spike {...props} colours={colours} />
-      <SightWedge {...props} colours={colours} />
+      <SightOverlay {...props} colours={colours} />
       <Callouts art={props.art} />
     </Canvas>
   );
@@ -187,7 +188,7 @@ function Ground({
   useEffect(() => () => texture?.dispose(), [texture]);
 
   return (
-    <mesh geometry={geometry}>
+    <mesh geometry={geometry} renderOrder={0}>
       {/*
         White where there is a radar to show unmodified, and the panel colour
         where there is not.  That second value used to be the literal
@@ -512,12 +513,35 @@ function Spike({
 
 
 /**
- * The sight wedge, flat on the ground plane and staying there.
+ * Every living player's sight cone, as one overlay lying on the ground plane.
  *
  * It is a two-dimensional claim about a silhouette; extruding it into a frustum
  * would be inventing the geometry this project does not have.
+ *
+ * One quad rather than one mesh per player, and that is what makes this view
+ * agree with the minimap instead of merely resembling it.  The overlap opacity
+ * this layer is built on -- k cones over a point reading as exactly `k/N` --
+ * cannot be had from k separate transparent meshes: fixed-function alpha
+ * blending stacks them to `1-(1-a)^k`, so five cones at 20% would come out at
+ * 67% rather than 100%, and an additive blend would brighten the radar instead
+ * of shading it.  Coverage has to be accumulated somewhere that is not the
+ * framebuffer.  So `sightlayer` rasterises the cones exactly as it does for the
+ * 2D canvas, and the result arrives here as a texture -- same selection, same
+ * gates, same colours, same arithmetic, one implementation.
+ *
+ * What is *not* the same is edge fidelity: the minimap rasterises in screen
+ * space and stays crisp at any zoom, where this is a fixed `SIGHT_RASTER` grid
+ * in uv.  At 1024 that matches the radar underneath it and is four times finer
+ * than the 256-cell mask the cone shape comes from, so nothing is lost that was
+ * ever there -- but zoomed hard into a corner, this rim is resampled and that
+ * one is not.
+ *
+ * Two things this gains by sharing the code, both of which were quiet faults
+ * rather than deliberate differences: a hidden side no longer draws a cone with
+ * no marker under it, and a smoke now cuts the cone here the way it always has
+ * on the minimap.
  */
-function SightWedge({
+function SightOverlay({
   model,
   art,
   mask,
@@ -541,68 +565,142 @@ function SightWedge({
     [mask],
   );
 
+  /** Where the cones are accumulated before they reach the texture's canvas. */
+  const scratch = useRef<HTMLCanvasElement | null>(null);
+  /*
+    What was painted last, so a paused viewer costs nothing.
+
+    `useFrame` runs at 60 Hz and the cone set changes only with the playhead,
+    the layer switch, which sides are shown and which map this is.  Without
+    this the overlay would push four megabytes to the GPU sixty times a second
+    to redraw a picture that had not changed -- and this viewer is paused most
+    of the time, and always paused when Playwright photographs it.
+  */
+  const painted = useRef<string | null>(null);
+
+  /*
+    The canvas, the texture over it and the mesh, built together and kept
+    together.
+
+    The canvas is deliberately *returned* rather than parked in a ref during
+    render.  Under `StrictMode` React invokes this factory twice and throws one
+    result away, so a ref written here can end up holding the discarded
+    canvas while the surviving texture wraps the other -- and then every frame
+    paints cones into a canvas the GPU never samples, which is a scene with no
+    cones in it and no error anywhere.  Keeping them in one object makes that
+    unrepresentable.
+  */
   const built = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = SIGHT_RASTER;
+    canvas.height = SIGHT_RASTER;
+
+    const texture = new THREE.CanvasTexture(canvas);
+    // `flipY = false` and the UVs written out longhand below, so texture (0,0)
+    // is the first pixel painted and u, v mean exactly what `applyTransform`
+    // returns -- the same contract `Ground` holds itself to.
+    texture.flipY = false;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    // No mip chain: it would be rebuilt on every upload, which is the cost
+    // nobody profiles, and this quad is never seen at a minifying distance.
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+
     const geometry = new THREE.BufferGeometry();
+    // (u, v) -> (x, y, z) = (u, SIGHT_LIFT, v), the same quad as the ground.
+    geometry.setAttribute(
+      "position",
+      new THREE.Float32BufferAttribute(
+        [0, SIGHT_LIFT, 0, 1, SIGHT_LIFT, 0, 0, SIGHT_LIFT, 1, 1, SIGHT_LIFT, 1],
+        3,
+      ),
+    );
+    geometry.setAttribute("uv", new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 1, 1], 2));
+    geometry.setAttribute(
+      "normal",
+      new THREE.Float32BufferAttribute([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0], 3),
+    );
+    geometry.setIndex([0, 2, 1, 2, 3, 1]);
+
     const mesh = new THREE.Mesh(
       geometry,
       new THREE.MeshBasicMaterial({
-        color: new THREE.Color(colours.unknown!),
+        map: texture,
         transparent: true,
-        opacity: 0.22,
+        // The alpha is in the texture, one cone at a time. A material opacity
+        // here would scale the whole wash and break the `k/N` it encodes.
+        opacity: 1,
         side: THREE.DoubleSide,
         depthWrite: false,
       }),
     );
+    // Explicit, rather than relying on the transparent sort to favour the
+    // lifted quad: the ground is 0, and this lies on top of it.
+    mesh.renderOrder = 1;
     mesh.visible = false;
-    return mesh;
-  }, [colours]);
+    return { mesh, texture, canvas };
+  }, []);
+
+  useEffect(
+    () => () => {
+      built.texture.dispose();
+      built.mesh.geometry.dispose();
+      (built.mesh.material as THREE.Material).dispose();
+    },
+    [built],
+  );
 
   useFrame(() => {
     const state = usePlayback.getState();
-    const actorId = selectedActor(state);
-    if (!state.layers.sight || actorId === null || silhouette === null || settings === null) {
-      built.visible = false;
+    if (!state.layers.sight || silhouette === null || settings === null) {
+      built.mesh.visible = false;
+      // Forget what was painted, so switching the layer back on repaints even
+      // though nothing else moved.  Without this, toggling SIGHT off and on
+      // again while paused leaves the key unchanged, takes the early return
+      // below, and never puts the mesh back -- a switch that works once.
+      painted.current = null;
+      return;
+    }
+    const key = `${state.tMs}|${state.hiddenTeams.join(",")}|${mask?.map_key ?? ""}`;
+    if (key === painted.current) {
+      return;
+    }
+
+    const context = built.canvas.getContext("2d");
+    if (context === null) {
+      built.mesh.visible = false;
       return;
     }
     const snap = stateAt(model, state.tMs);
-    const position = snap.positions.get(actorId);
-    if (position === undefined || !snap.alive.has(actorId)) {
-      built.visible = false;
-      return;
-    }
-    const polygon = cone(
+    const cones = sightCones({
+      model,
+      art,
+      snap,
       silhouette,
-      applyTransform(art.transform, position.x, position.y),
-      forwardUv(art.transform, position.x, position.y, position.yaw, settings.probe_uu),
-      uvRadius(art.transform, settings.max_range_uu),
       settings,
-    );
-    // An empty cone means draw nothing, never a fallback shape.
-    if (polygon.length < 3) {
-      built.visible = false;
-      return;
-    }
-    const vertices = new Float32Array(polygon.length * 3);
-    polygon.forEach(([u, v], i) => {
-      vertices[i * 3] = u;
-      vertices[i * 3 + 1] = SIGHT_LIFT;
-      vertices[i * 3 + 2] = v;
+      shown: (team: string) => teamShown(state, team),
+      smokes: smokesAt(art, snap),
     });
-    const index: number[] = [];
-    for (let i = 1; i < polygon.length - 1; i += 1) {
-      index.push(0, i, i + 1);
-    }
-    built.geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-    built.geometry.setIndex(index);
-    built.geometry.computeBoundingSphere();
-    const player = model.replay.players.find((p) => p.actor_id === actorId);
-    (built.material as THREE.MeshBasicMaterial).color.set(
-      sideColour(colours, player ? sideOf(model.replay, player.team, snap.t_ms) : "?"),
+
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, SIGHT_RASTER, SIGHT_RASTER);
+    paintCones(
+      context,
+      cones,
+      colours,
+      (u, v) => [u * SIGHT_RASTER, v * SIGHT_RASTER],
+      scratch,
+      { width: SIGHT_RASTER, height: SIGHT_RASTER, scale: 1 },
     );
-    built.visible = true;
+    built.texture.needsUpdate = true;
+    built.mesh.visible = cones.length > 0;
+    // Only once the paint has actually happened: marking the key done above
+    // would make any early exit permanent for that instant.
+    painted.current = key;
   });
 
-  return <primitive object={built} />;
+  return <primitive object={built.mesh} />;
 }
 
 /**

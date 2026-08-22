@@ -52,11 +52,12 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
   await take("2d-trails.png");
   await toggleLayer(page, "TRAILS");
 
-  // A cone is drawn for every living player now, so this no longer *needs* a
-  // selection -- but the picked player's wedge is the heavier one, and a
-  // gallery shot of the layer should show that difference rather than ten
-  // identical washes. So the click stays, and it lands where the model says a
-  // player is: clicking empty canvas selects nobody.
+  // The cones no longer care about a selection -- every living player gets
+  // one, at the same weight, and overlap is what varies. The click stays
+  // because a picked *marker* is still a feature worth having in the gallery:
+  // it is three times the size with a light ring and its own hover card. It
+  // lands where the model says a player is, since clicking empty canvas
+  // selects nobody.
   const minimap = page.locator("canvas.minimap");
   const image = await readCanvas(page, minimap);
   const box = placeSquare(image.width, image.height);
@@ -77,6 +78,12 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
     () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
   );
   await take("3d-scene.png");
+  // The scene draws the same cones as the minimap now, for the same people, at
+  // the same weights -- so the gallery shows both, because "the same" is a
+  // claim a person should be able to check by looking at two pictures.
+  await setLayer(page, "SIGHT", true);
+  await take("3d-sight.png");
+  await setLayer(page, "SIGHT", false);
   await toggleLayer(page, "CALLOUTS");
   await take("3d-callouts.png");
 

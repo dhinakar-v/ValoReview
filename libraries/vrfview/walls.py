@@ -66,8 +66,9 @@ kills in Valorant are through or over one of those.
 
 So the trade is a cone that stops at interior structure, which is the picture
 that was asked for and the more useful one to look at, against a cone that
-stops short of things a bullet would not.  The caption says so in words, which
-is the whole of what this project can honestly do about it.
+stops short of things a bullet would not.  Both rates are pinned by
+`tests/test_positions.py::WhatTheDrawnLinesCost`, which is the whole of what
+this project can honestly do about it.
 
 The last row closes off the obvious rescue.  Thick ink is not a different
 population from thin ink -- eroding to lines at least three pixels wide throws

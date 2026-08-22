@@ -94,8 +94,11 @@ reads as a feature that does not exist.
 
 The sight cone is raycast against the **radar image's own alpha channel** — 57–72%
 of every published `minimap.png` is transparent void — so it is an approximation
-of a silhouette and the caption says exactly that. There is no collision, navmesh
-or height data anywhere in this project. The trail splits wherever the position
+of a silhouette rather than a line of sight. There is no collision, navmesh
+or height data anywhere in this project. One cone is drawn per living player in
+both views, and the opacity counts rather than being fixed: each is `1/N` of its
+side's ink, so k cones over a point read as exactly `k/N` and a full side
+covering one lane paints it solid. The trail splits wherever the position
 lookup would refuse to interpolate, so it never draws a line through a wall the
 model would not cross.
 
@@ -118,7 +121,7 @@ by kind and by side, each row seeking the playhead to it.
 | **Match list** | A whole library described headlessly and cached by `(path, mtime, size)`, with a background worker decoding ahead of you (`vrfhome/`) |
 | **Server** | Ten routes and no more, deciding nothing: the model reads, infers, looks up and decodes, and a handler that started deciding would be a fourth place a claim could come from (`vrfserve/`) |
 | **2D and 3D** | The playback model is ported to TypeScript and runs in the browser, because `state_at` is 0.127 ms and a round trip is not (`web/src/model/`) |
-| **Sight** | A cone per living player, raycast against the radar's silhouette and the wall lines drawn on it, and stopped by smokes; on by default, captioned with what it is an approximation of (`vrfview/sight.py`) |
+| **Sight** | A cone per living player in 2D and 3D alike, raycast against the radar's silhouette and the wall lines drawn on it, and stopped by smokes; on by default, needing no selection, with overlap carried by the opacity (`vrfview/sight.py`, `web/src/views/sightlayer.ts`) |
 | **Catalogue** | Map, agent, role and weapon art and Riot's own callouts, cached locally from `valorant-api.com` (`scripts/fetch_assets.py`, `vrfview/art.py`) |
 
 ### What is read and what is generated

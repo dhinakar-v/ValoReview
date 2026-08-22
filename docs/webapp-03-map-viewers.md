@@ -15,8 +15,8 @@ in the same place and one of them standing above the other.
 **There is no map geometry in this project — no collision, no navmesh, no
 height data.** The 3D scene is the radar image as a ground plane, players at
 their real height, and nothing else. No walls, no floors, no extruded elevation
-bands. That constraint is not a limitation to work around; it is the thing the
-caption has to say.
+bands. That constraint is not a limitation to work around; it is the thing
+every claim this view makes has to be measured against.
 
 ## Order of work
 
@@ -113,12 +113,12 @@ Rules carried over verbatim, each because it fails plausibly rather than loudly:
   would make exact parity untestable). 65 KB per map, once. `blocked` uses
   `Math.floor`, not `| 0` — truncation toward zero wraps a ray off the left edge
   into column 0. An empty `cone()` means **draw nothing**, never a fallback
-  circle. `sight.CAPTION` renders verbatim.
+  circle.
 
 New endpoint: `GET /api/maps/{key}/sight` → `{size, cells (base64), open_fraction,
-caption, max_range_uu, fov_degrees, ray_step_degrees, seed_cells}`. The caption
-travels **with** the mask so nothing can draw a cone without having been handed
-the sentence saying what it is a cone of.
+max_range_uu, fov_degrees, ray_step_degrees, seed_cells}`. The constants travel
+**with** the mask because `sight.py` is where they are decided, and a client
+that re-derived them could disagree with the cells it was handed.
 
 ## Part C — the 3D scene
 
@@ -174,17 +174,20 @@ desktop viewer. Fix it in both ports and say so in the commit.
 Player trails are a **new feature**, not a port — the tk minimap drew them for
 ability pawns only. Toggleable layer, default off, same gap rule.
 
-Sight stays a flat polygon on the ground plane. It is a 2D claim about a
-silhouette; extruding it into a frustum would be inventing geometry.
+Sight stays flat on the ground plane. It is a 2D claim about a silhouette;
+extruding it into a frustum would be inventing geometry. **Superseded in the
+build:** it is no longer a polygon per picked player but one overlay quad
+carrying every living player's cone, rasterised by `web/src/views/sightlayer.ts`
+— the same function the minimap calls, so the two views cannot drift in what
+they draw, who they draw it for, or how heavily.
 
-### The caption this view needs
+### What this view is, and is not
 
-Same register as the sight caption, and required for the same reason: *the
-ground is Riot's radar image at one flat height; heights are the players' own
-replicated z at the map's horizontal scale; there is no floor, wall or ceiling
-geometry anywhere in this project.* On Split a player in heaven and a player in
-the tunnel beneath sit above the same pixel at different heights, and the plane
-between them is a picture, not a floor.
+*The ground is Riot's radar image at one flat height; heights are the players'
+own replicated z at the map's horizontal scale; there is no floor, wall or
+ceiling geometry anywhere in this project.* On Split a player in heaven and a
+player in the tunnel beneath sit above the same pixel at different heights, and
+the plane between them is a picture, not a floor.
 
 ## Part D — two things the C# decoder may have unlocked
 

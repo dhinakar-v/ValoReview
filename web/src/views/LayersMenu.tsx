@@ -123,11 +123,11 @@ export const MAP_LAYERS: Entry[] = [
     key: "sight",
     label: "SIGHT",
     icon: glyphs.sight,
-    hint: "Every living player's approximate view cone; 3D draws only the picked one",
+    hint: "Every living player's approximate view cone",
     drawnIn: ["2d", "3d"],
-    // The mask, and only the mask: `Scene3D` draws the wedge too, so this is
-    // not a 2D-only layer.  The caption's "2D only" is about the
-    // approximation being flat, not about which view you are in.
+    // The mask, and only the mask.  Both canvases draw the same cones from the
+    // same `sightlayer` functions now, so there is no view in which this row is
+    // inert -- only a map with no radar on disk to raycast against.
     why: ({ hasMask }) =>
       hasMask ? null : "No radar mask on disk for this map, and SIGHT raycasts one.",
   },

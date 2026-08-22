@@ -1,7 +1,7 @@
 /**
  * The approximate sight cone, raycast against the radar's own silhouette.
  *
- * A port of `vrfview.sight`, and the caption travels with it.  This project has
+ * A port of `vrfview.sight`.  This project has
  * no collision data, no navmesh and no height information anywhere: a map is a
  * radar PNG, four transform scalars and a list of point callouts, and that is
  * the entire spatial model.  What it does have is a measurement -- the area
@@ -10,14 +10,11 @@
  * leaves that silhouette gives an occluder that is measured rather than
  * invented.
  *
- * The contract is narrow and whatever draws this must say so on screen:
+ * The contract is narrow, and everything drawn from it is an approximation:
  * transparent means outside the rendered radar, which is usually wall or void
  * and is not the same claim as "opaque geometry blocks vision"; it is
  * two-dimensional, so Bind's teleporters read as solid and Split's heaven reads
- * as the floor beneath it; and a doorway narrower than the grid closes.  The
- * server sends `caption` in the same document as the cells for exactly that
- * reason -- nothing can draw a cone without having been handed the sentence
- * saying what it is a cone of.
+ * as the floor beneath it; and a doorway narrower than the grid closes.
  *
  * The mask is thresholded in Python
  * ---------------------------------

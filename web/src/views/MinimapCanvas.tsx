@@ -37,7 +37,7 @@ import type { AbilityCast, MapArt, Player, SightMaskDoc } from "../api/types";
 import type { ReplayModel } from "../model/replay";
 import type { SightMask, SightSettings } from "../model/sight";
 import type { Occluder } from "../model/sight";
-import { cone, decodeMask, forwardUv, uvRadius } from "../model/sight";
+import { decodeMask, uvRadius } from "../model/sight";
 import type { Snapshot } from "../model/state";
 import { positionOf, spikeLocation, stateAt } from "../model/state";
 import { segments } from "../model/track";
@@ -47,6 +47,7 @@ import { sideOf } from "../model/synthetic";
 import { markerScale, panBy, viewBox, zoomAt } from "../model/viewport";
 import { palette, sideColour, useImages } from "./images";
 import { usePlayback, selectedActor, teamShown } from "./playback";
+import { paintCones, sightCones, smokesAt } from "./sightlayer";
 
 /** Marker sizes, in CSS pixels, carried over from the desktop viewer. */
 const AVATAR_PX = 26;
@@ -75,30 +76,6 @@ const FACING_HALF = 6;
 
 /** How much larger a hovered or pinned marker is drawn. */
 const PICKED_SCALE = 3;
-
-/*
-  How much ink one sight cone gets, and why there are two pairs.
-
-  0.22 fill and 0.5 stroke were the single-wedge values, and ten of those
-  stacked are a solid sheet: five attackers looking down one lane would paint
-  the lane opaque and the map underneath would be gone. The unpicked cones are
-  therefore light enough that overlap reads as *more* rather than as a fill,
-  which is what makes ten of them legible at once. The picked player keeps the
-  old weight -- that is what still makes one player findable, the same job
-  PICKED_SCALE does for the marker.
-*/
-const SIGHT_FILL = 0.09;
-const SIGHT_EDGE = 0.22;
-const SIGHT_FILL_PICKED = 0.22;
-const SIGHT_EDGE_PICKED = 0.5;
-
-/*
-  Which placements are the thing an ability left standing, mirroring
-  `abilities.PLACING_KINDS`. A smoke is a `GameObject_`, and Omen's is a
-  `Zone_`; a `Projectile_` is the throw origin, a median 42 uu from the caster,
-  so occluding on one would put the smoke on top of the person who threw it.
-*/
-const PLACED_KINDS = new Set(["GameObject", "Zone", "Patch"]);
 
 /*
  * The death X's arm, in CSS pixels before the zoom scale.
@@ -195,6 +172,14 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
   /** The un-zoomed square, which is what the camera arithmetic works from. */
   const fitRef = useRef<Box>({ left: 0, top: 0, side: 0 });
   const dragRef = useRef<{ x: number; y: number } | null>(null);
+  /**
+   * Where the sight cones are accumulated before they reach this canvas.
+   *
+   * Held across frames rather than made per frame, and deliberately empty here:
+   * `paintCones` builds it on first use, so a page test that never draws a cone
+   * never asks jsdom for a 2D context it does not have.
+   */
+  const sightScratch = useRef<HTMLCanvasElement | null>(null);
 
   const icons = useImages(model.replay.players.map((player) => player.icon_url));
   const iconFor = useMemo(() => {
@@ -300,9 +285,10 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
           colours,
           silhouette,
           settings,
-          chosen: selectedActor(state),
           shown: (team: string) => teamShown(state, team),
           smokes: smokesAt(art, snap),
+          scratch: sightScratch,
+          size: { width, height, scale: dpr },
         });
       }
       if (state.layers.trails) {
@@ -594,17 +580,22 @@ function drawSpike(
 /**
  * Every living player's approximate view cone, one wedge each.
  *
- * It used to draw one, for whoever was selected, and `DEFAULT_LAYERS` argued
- * that ten overlapping wedges say nothing.  What ten wedges actually say is
- * which parts of the map nobody can see, which is the question this layer is
- * for -- so the answer to the overlap was not fewer cones, it was less ink per
- * cone.  The picked-out player keeps the old weight so the selection still
- * reads; everybody else is a wash.
+ * Nobody is picked out any more, and that is the point rather than a
+ * simplification.  This drew one cone for a selected player once, then ten at
+ * two different weights so the selection still read; both made the switch mean
+ * something about *a player* when the question it answers is about the map --
+ * which parts of it nobody can see.  A selection has nothing to say about that,
+ * so the marker keeps `PICKED_SCALE` and the cone does not.
  *
- * Everything about this is an approximation and the caption under the canvas
- * says so.  What it must not be is wrong about which way somebody is looking,
- * so the heading goes through `forwardUv`, which probes a world point and
- * transforms it rather than doing trigonometry in image space.
+ * The weight is the count instead: `sightlayer.paintCones` gives each cone
+ * `1/N` of its side's ink and accumulates overlap additively, so k cones over a
+ * point read as exactly `k/N` and a full side covering one lane paints it
+ * solid.  No stroke -- an outline is a second ink that counts nothing and cuts
+ * a hard line through the gradient this layer is made of.
+ *
+ * `Scene3D` paints the identical picture from the identical two functions, at
+ * the identical alphas; the only difference is that it rasterises in uv onto a
+ * ground quad where this rasterises in screen space.
  */
 function drawSight(
   context: CanvasRenderingContext2D,
@@ -616,108 +607,23 @@ function drawSight(
     colours: Record<string, string>;
     silhouette: SightMask;
     settings: SightSettings;
-    chosen: number | null;
     shown: (team: string) => boolean;
     smokes: readonly Occluder[];
+    scratch: { current: HTMLCanvasElement | null };
+    size: { width: number; height: number; scale: number };
   },
 ): void {
   const { model, art, snap, box, colours, silhouette, settings } = args;
-  const { chosen, shown, smokes } = args;
-  const reach = uvRadius(art.transform, settings.max_range_uu);
+  const { shown, smokes, scratch, size } = args;
 
-  context.save();
-  for (const player of model.replay.players) {
-    // The same gate the marker loop uses: a hidden team drawing a cone but no
-    // marker would be a new way for the two to disagree.
-    if (!shown(player.team)) {
-      continue;
-    }
-    // `snap.positions`, not `positionOf`: that falls back to where somebody
-    // died, and a cone at a corpse is a claim about a dead player's vision.
-    if (!snap.alive.has(player.actor_id)) {
-      continue;
-    }
-    const position = snap.positions.get(player.actor_id);
-    if (position === undefined) {
-      continue;
-    }
-    const polygon = cone(
-      silhouette,
-      applyTransform(art.transform, position.x, position.y),
-      forwardUv(art.transform, position.x, position.y, position.yaw, settings.probe_uu),
-      reach,
-      settings,
-      smokes,
-    );
-    // An empty cone means draw nothing. Never a fallback circle: a circle where
-    // a cone belongs claims the player can see in every direction.
-    if (polygon.length < 3) {
-      continue;
-    }
-    const colour = sideColour(
-      colours,
-      sideOf(model.replay, player.team, snap.t_ms),
-    );
-    context.beginPath();
-    polygon.forEach(([u, v], i) => {
-      const [x, y] = uvToPixels(box, u, v);
-      if (i === 0) {
-        context.moveTo(x, y);
-      } else {
-        context.lineTo(x, y);
-      }
-    });
-    context.closePath();
-    const picked = chosen === player.actor_id;
-    context.globalAlpha = picked ? SIGHT_FILL_PICKED : SIGHT_FILL;
-    context.fillStyle = colour;
-    context.fill();
-    context.globalAlpha = picked ? SIGHT_EDGE_PICKED : SIGHT_EDGE;
-    context.strokeStyle = colour;
-    context.lineWidth = 1;
-    context.stroke();
-  }
-  context.restore();
-}
-
-/**
- * The round smokes standing at this instant, as uv circles.
- *
- * Two things are looked up rather than decoded and both are said out loud in
- * the sight caption: the radius, and how long a smoke lasts.  A cast with
- * neither is not a smoke and occludes nothing -- there is no default size and
- * no default lifetime, because a smoke of a made-up width standing for a
- * made-up time is exactly the plausible wrong answer this project refuses.
- *
- * `cast.t_ms` is when the ability was *cast*, and a thrown smoke lands about a
- * second later; the wire carries no time on a placement, so a smoke starts
- * blocking slightly early.  Expiry is computed here rather than in
- * `abilitiesAt`, which keeps a cast until the round ends on purpose and is
- * parity-tested in both languages.
- */
-function smokesAt(art: MapArt, snap: Snapshot): Occluder[] {
-  const out: Occluder[] = [];
-  for (const cast of snap.roundCasts) {
-    const { smoke_radius_uu: radiusUu, smoke_duration_ms: life } = cast;
-    if (radiusUu === null || life === null) {
-      continue;
-    }
-    const age = snap.t_ms - cast.t_ms;
-    if (age < 0 || age > life) {
-      continue;
-    }
-    const radius = uvRadius(art.transform, radiusUu);
-    // Every placement, not just `landed`: two smokes from one agent in one
-    // round are a single `AbilityCast`, and `landed` names only the first.
-    for (const place of cast.placements) {
-      if (!PLACED_KINDS.has(place.kind)) {
-        continue;
-      }
-      const [u, v] = applyTransform(art.transform, place.x, place.y);
-      out.push({ u, v, radius });
-    }
-  }
-  return out;
+  paintCones(
+    context,
+    sightCones({ model, art, snap, silhouette, settings, shown, smokes }),
+    colours,
+    (u, v) => uvToPixels(box, u, v),
+    scratch,
+    size,
+  );
 }
 
 /**

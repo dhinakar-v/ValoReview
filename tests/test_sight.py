@@ -365,26 +365,3 @@ class FromPath(unittest.TestCase):
             assert first is not None
             # Kept, not rebuilt: the same object comes back.
             assert cache.get(path) is first
-
-
-class Caption(unittest.TestCase):
-    def test_the_sentence_lives_with_the_raycaster(self):
-        """
-        Anything handed a mask is handed the sentence that says what it is.
-
-        The caption used to belong to the one view that drew a cone, which
-        meant a second view could draw one and quietly leave off what it was
-        a cone of.
-        """
-        assert "not collision" in sight.CAPTION
-        assert "2D only" in sight.CAPTION
-
-    def test_it_admits_what_the_white_ink_is_not(self):
-        """
-        The ink outlines low boxes and ledges, and a reader has to be told.
-
-        A cone that stops at a crate is the approximation working as designed,
-        and is indistinguishable from a bug unless the caption says so.
-        """
-        assert "lines drawn on it" in sight.CAPTION
-        assert "see over" in sight.CAPTION
