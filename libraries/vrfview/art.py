@@ -7,10 +7,10 @@ paths, the world-to-image transform and Riot's callout coordinates.  The split
 is deliberate -- a name is a claim about the replay, a file path is not, and the
 two are cached and reported separately.
 
-Nothing here imports tkinter.  Path resolution and the transform arithmetic are
-plain data work, and keeping them display-free is what lets `vrf_view.py dump`
-report art coverage on a machine with no Tk, and lets the whole of this module
-be tested headlessly.  vrfview.images is the Tk half.
+Nothing here draws.  Path resolution and the transform arithmetic are plain
+data work, so the whole of this module is tested with no art on disk and no
+image library loaded -- which is what lets a handler resolve a radar's URL and
+transform without opening the PNG behind them.
 
 The joins, which are valcatalog's and not re-derived here
 ---------------------------------------------------------

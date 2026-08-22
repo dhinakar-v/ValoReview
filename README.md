@@ -5,7 +5,7 @@ Decode and replay Valorant `.vrf` replay files.
 ## Layout
 
     libraries/      importable code -- vrf_reader.py, vrf_to_json.py, vrfnet/, vrfview/, vrfserve/
-    scripts/        standalone CLIs -- vrf_net.py, vrf_view.py, vrf_serve.py, fetch_assets.py
+    scripts/        standalone CLIs -- vrf_net.py, vrf_serve.py, fetch_assets.py
     csharp/         the position decoder (VrfPositions); see The decoder below
     web/            the browser interface (React over vrfserve; web/dist gitignored)
     runners/        .bat launchers; each one works from any directory
@@ -35,15 +35,9 @@ Every runner forwards its arguments and returns the underlying exit code.
     runners\vrf-to-json.bat <replay.vrf> -o out.json --positions
                                                     and a positions sidecar
     runners\vrf-net.bat actors <block.bin>          decode the replication stream
-    runners\vrf-app.bat                             browse the replay library
-    runners\vrf-app.bat --list                      the same scan, as text
-    runners\vrf-serve.bat                           the same library, in a browser
+    runners\vrf-serve.bat                           the replay library, in a browser
     runners\vrf-serve.bat --routes                  list the endpoints, bind nothing
-    runners\make-icons.bat                          draw the transport glyphs
     runners\build-decoder.bat                       build the position decoder
-    runners\vrf-view.bat <replay.vrf>               open one replay directly
-    runners\vrf-view.bat dump <replay.json>         headless text dump
-    runners\vrf-view.bat catalog                    what names and art are cached
     runners\fetch-assets.bat list                   plan the art download
     runners\fetch-assets.bat fetch                  ~85 MB into assets/
 
@@ -55,13 +49,17 @@ sources answered, so an empty list can always say where it looked.
 
 ## Positions on a machine with no decoder
 
-`vrf-view.bat ... --positions` decodes player positions out of the replication
-stream, which needs the built decoder and about four seconds on a full match,
-and works only on the builds `vrfnet/payload_transform.py` supports.
+Decoding positions needs the built decoder and about four seconds on a full
+match, and works only on the builds `vrfnet/payload_transform.py` supports.
 `vrf-to-json.bat ... --positions` does that decode once and writes
-`<out>.positions.json` beside the dump; from then on `vrf-view.bat dump
-out.json --positions` reads the sidecar and needs no decoder at all. A sidecar
-belonging to another match is refused rather than drawn.
+`<out>.positions.json` beside the dump; from then on anything that opens the
+capture reads the sidecar and needs no decoder at all. A sidecar belonging to
+another match is refused rather than drawn.
+
+The server does the same on its own account: `vrfhome/prewarm.py` decodes the
+library in the background, one capture at a time, into `.cache/positions/`, so
+a card is usually ready before it is clicked. The viewer's DECODE POSITIONS
+button handles whatever is not.
 
 ## The decoder
 
@@ -142,49 +140,41 @@ and its agents as UUIDs. Both resolve against Riot's published content catalogue
 which is what turns them into `Abyss` and `Astra, Killjoy, Waylay, ...` in the
 viewer and in `dump`.
 
-The lookup is cache-first and needs no key: `vrf-view` reads
+The lookup is cache-first and needs no key: `libraries/valcatalog.py` reads
 `assets/content-<locale>.json` if a refresh has written one, else the
 `assets/manifest.json` that `fetch-assets` already produces, else it falls back to
 a built-in codename table -- and it always says which of the three answered.
 
-    runners\vrf-view.bat catalog             what is cached, and where it is looked for
-    runners\vrf-view.bat catalog --refresh   fetch val-content-v1 (needs RIOT_API)
-    runners\vrf-view.bat dump x.vrf --no-catalog     ignore any catalogue
-
-`--refresh` is the only command in the project that calls api.riotgames.com. Put a
-personal development key in `.env` as `RIOT_API=RGAPI-...`; they expire every 24
-hours. Everything else works offline and keyless.
+`fetch-assets` is unauthenticated and is what the server actually consumes; the
+`val-content-v1` refresh path in `libraries/valapi.py` is the only thing in the
+project that calls api.riotgames.com, and it needs a personal development key in
+`.env` as `RIOT_API=RGAPI-...`. Everything else works offline and keyless.
 
 ## Art
 
-`fetch-assets` caches Riot's map and agent art under `assets/`, and the viewer
-draws two things with it. A **roster band** across the top: the map's menu strip
-and one icon per loadout slot, in the file's own order -- the file links a loadout
-to no actor net ID, so the band is captioned as unattributable. (A player can still
-be named, but from its own pawn; see *Positions* below.) And a **map reference
-window**, behind the `Map` button: Riot's
-radar image with Riot's own callouts, placed through the world-to-image transform
-in `assets/manifest.json`.
+`fetch-assets` caches Riot's map, agent, role and weapon art under `assets/`,
+and the server hands it to the page by URL: `GET /api/maps/{name}` carries the
+radar image, the world-to-image transform and Riot's own callouts, and
+`GET /api/weapons` carries the weapon catalogue as one document.
 
-That window plots nothing from the replay: it describes the map, not the match, and
-is handed no replay to be tempted by.
+Art is a picture and never a claim. A missing or partial `assets/` costs
+thumbnails, portraits and the radar image and changes nothing the interface
+states -- `--no-art` forces that path deliberately.
 
 ## Positions
 
 Player positions are in a `.vrf`, but not in the open. Riot obfuscates every
-property payload in the replication stream; `vrfnet` undoes that and decodes the
-movement RPC underneath, which carries a position, a heading and a velocity per
-player about a hundred times a second.
+property payload in the replication stream; the decoder undoes that and decodes
+the movement RPC underneath, which carries a position, a heading and a velocity
+per player about a hundred times a second.
 
-    runners\vrf-view.bat dump x.vrf --positions          decode and report them
-
-It is opt-in because it is still the slowest thing here: it needs the decoder
-built by `runners\build-decoder.bat` and takes about four seconds on a full
-match, against 0.04s for everything else. It took four minutes until the same
-decode moved out of Python; see **The decoder** below.
+It is the slowest thing here: it needs the decoder built by
+`runners\build-decoder.bat` and takes about four seconds on a full match,
+against 0.04s for everything else. It took four minutes until the same decode
+moved out of Python; see **The decoder** above.
 Decoding also names each player -- an agent's pawn states its own archetype, so
-`dump` reports a per-player agent alongside the unattributable loadout roster,
-and the two agree by two joins that share no term.
+a per-player agent is read beside the unattributable loadout roster, and the two
+agree by two joins that share no term.
 
 Only some builds decode. The transform changes every patch, so `12.10`, `12.11`
 and `13.00`--`13.02` work and everything older -- including the reference capture
@@ -194,14 +184,12 @@ and `13.00`--`13.02` work and everything older -- including the reference captur
       '++Ares-Core+release-11.11'; supported: ...
 
 Nothing else changes when positions are absent, and nothing invents one when they
-are: a player with no track is drawn with no track.
+are: a player with no track is drawn with no track. A capture whose build has no
+transform is not listed as playable at all, which costs one string comparison and
+no decompression.
 
-    runners\vrf-view.bat x.vrf --no-art       draw no art at all
-    runners\vrf-view.bat x.vrf --assets DIR   read the cache from somewhere else
-
-Art is optional everywhere: with no `assets/`, the viewer loses the band and the
-button and states exactly what it stated before. `dump` and `catalog` both report
-what resolved.
+    runners\vrf-serve.bat --no-art            serve no pictures at all
+    runners\vrf-serve.bat --assets DIR        read the cache from somewhere else
 
 Player names, ranks and per-round economy live in `val-match-v1`, which is
 **403 on a personal development key** --
@@ -225,15 +213,17 @@ proxies `/api` and `/assets` across, so both modes are same-origin and no CORS i
 granted to anyone. `web/README.md` covers the rest, including why each npm
 dependency is there.
 
-The CustomTkinter app (`runners\vrf-app.bat`) still works and is unchanged. Both
-read the same model through `vrfview.pipeline`.
+There was a CustomTkinter desktop app beside it, reading the same model through
+`vrfview.pipeline`. It has been removed: the browser interface replaced every
+page it had, and two interfaces over one model meant every claim had two places
+to be made and two places to drift.
 
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/). The decoding pipeline is stdlib and stays
-that way; the interfaces on top of it are not. `customtkinter` is the desktop widget
-set, `Pillow` reads the radar PNG's alpha channel for the sight mask and draws the
-transport glyphs, and `fastapi`/`uvicorn` are the web interface. `pyproject.toml`
+that way; the interface on top of it is not. `fastapi`/`uvicorn` are the web
+interface and `Pillow` reads the radar PNG's alpha channel for the sight mask.
+`pyproject.toml`
 is the only dependency list — there is no `requirements.txt` mirroring it, because
 two lists drift. `pip install .` reads it as readily as `uv sync` does.
 `python-dotenv` is deliberately not used — `libraries/envfile.py`
@@ -250,4 +240,5 @@ directly.
     runners\lint.bat              # lint           (config: ruff.toml)
     runners\format.bat            # format
     runners\make-theme.bat        # regenerate web/src/theme.generated.css
+    runners\make-golden.bat       # regenerate tests/golden (the two-language contract)
     cd web && npm test            # the browser tests

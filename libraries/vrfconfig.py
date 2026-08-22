@@ -14,8 +14,8 @@ environment win.  `libraries/envfile.py` already implements that contract, and
 `oodlefind` and `valapi` already read `.env` through it.  Adopting the package
 here would have put two readers of one file in one process, differing only in
 which module they live in, so the dependency was declined and this module calls
-`envfile` instead.  The app's other two dependencies (customtkinter, Pillow)
-buy things the standard library does not have; this one would not have.
+`envfile` instead.  The dependencies this project does keep (fastapi, uvicorn,
+Pillow) buy things the standard library does not have; this one would not have.
 
 Nothing here mutates `os.environ`, and nothing here touches the disk beyond
 reading `.env`: a `DEMO_PATH` that does not exist resolves normally and reports

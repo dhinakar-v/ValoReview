@@ -17,7 +17,7 @@ Two mounts, in this order, for two different reasons.  `/assets` is
 `assets/` is the ordinary state of a fresh checkout: it has to 404 a picture,
 not refuse to start.  The page is mounted last, at `/`, so it cannot shadow the
 API; when it has not been built the mount is replaced by one sentence naming the
-command that builds it, on the same principle as `MissingArtView` -- say what is
+command that builds it, on the rule this project keeps everywhere -- say what is
 missing rather than draw something in its place.
 """
 

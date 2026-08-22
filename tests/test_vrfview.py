@@ -13,7 +13,6 @@ scoring kills after their own death.  That test pins the corrected reading.
 
 from __future__ import annotations
 
-import ast
 import json
 import tempfile
 import unittest
@@ -678,75 +677,6 @@ def _png_bytes(width: int, height: int) -> bytes:
         + width.to_bytes(4, "big")
         + height.to_bytes(4, "big")
     )
-
-
-class TestHeadless(unittest.TestCase):
-    """The model must stay usable with no display and no Tk build.
-
-    Read statically rather than by importing in a subprocess: a source walk
-    also catches an import that hides behind a function body or a branch, and
-    it follows first-party imports so a model module cannot reach tkinter
-    through a sibling either.
-    """
-
-    MODEL_MODULES = (
-        "model",
-        "infer",
-        "loader",
-        "names",
-        "state",
-        "clock",
-        "theme",
-        # The ability path parser and the sight raycaster are model-layer too:
-        # one parses strings, the other marches a bitmask, and both are only
-        # useful to a canvas.  Keeping them here is what proves neither
-        # reached for a widget on the way.
-        "abilities",
-        "sight",
-        "positioncache",
-        "positionfile",
-        # The bridge to the C# decoder: it spawns a process and reads JSON, and
-        # must not need a display to do it -- vrfhome.prewarm decodes on a
-        # background thread, and the match list is the one place a decode is
-        # started without a viewer open.
-        "csharpdecode",
-        # art resolves file paths and coordinates, never pixels; keeping it on
-        # this list is what lets `dump` report art coverage with no Tk present.
-        "art",
-        # The provenance account is data about the model, and the one page a
-        # non-Tk interface has to be able to render.
-        "provenance",
-    )
-
-    @staticmethod
-    def _imported_modules(module: str) -> set[str]:
-        """Every module name `vrfview.<module>` imports, however deeply nested."""
-        source = REPO / "libraries" / "vrfview" / f"{module}.py"
-        tree = ast.parse(source.read_text(encoding="utf-8"))
-        names: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                names.add(node.module)
-                names.update(f"{node.module}.{a.name}" for a in node.names)
-        return names
-
-    def test_model_layers_never_import_tkinter(self):
-        pending = list(self.MODEL_MODULES)
-        walked: set[str] = set()
-        while pending:
-            module = pending.pop()
-            if module in walked:
-                continue
-            walked.add(module)
-            for name in self._imported_modules(module):
-                assert name.split(".")[0] != "tkinter", (
-                    f"vrfview.{module} imports {name}"
-                )
-                if name.startswith("vrfview.") and name.count(".") == 1:
-                    pending.append(name.split(".", 1)[1])
-        assert walked >= set(self.MODEL_MODULES)
 
 
 @unittest.skipUnless(JSON.exists(), "reference JSON not present")

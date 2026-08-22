@@ -275,22 +275,3 @@ class TestStopping(unittest.TestCase):
         warmer.resume()
         warmer.join(TIMEOUT)
         assert [p.stem for p in harness.decoded] == ["b"]
-
-
-class TestHeadless(unittest.TestCase):
-    def test_prewarm_imports_no_tkinter(self):
-        """
-        Same rule `scan` follows: this schedules work and reports strings.
-
-        A caller marshals those onto its own UI thread, which is what lets the
-        whole queue be tested with no display.
-        """
-        import ast
-
-        source = Path("libraries/vrfhome/prewarm.py").read_text(encoding="utf-8")
-        for node in ast.walk(ast.parse(source)):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    assert alias.name.split(".")[0] != "tkinter"
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                assert node.module.split(".")[0] != "tkinter"

@@ -32,11 +32,12 @@ read as stronger than a hairline.  Every one of those was previously the same
 `APP_BG` up to `FIELD_BG` and three text weights down from `TEXT_PRIMARY`, and
 each is one deliberate stop from the one beside it.
 
-There used to be two palettes in this file -- these constants for the
-CustomTkinter pages and the block below for the Tk canvas.  They are now one
-ramp expressed twice, because the two toolkits draw the same application and
-two dark greys that are nearly the same colour is a bug that looks like a
-render artefact.
+There used to be two palettes in this file, one per surface the desktop app
+drew on.  They are one ramp now, and the desktop app is gone: what reads these
+constants today is `scripts/make_theme.py`, which writes them into
+`web/src/theme.generated.css`.  The file stays here rather than moving into the
+generator because the palette carries an argument -- see the paragraph above --
+and the values and the reason belong together.
 """
 
 from __future__ import annotations

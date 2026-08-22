@@ -6,9 +6,8 @@ Write the palette out as CSS custom properties.
     runners\make-theme.bat --print    write nothing, show what it would write
 
 `libraries/vrfview/theme.py` stays the one place the colours are decided, and
-this generates from it, on the same principle as `make_icons.py`: a value the
-interface shows should have one home, and a second copy in another language is
-a second thing to forget to change.
+this generates from it: a value the interface shows should have one home, and a
+second copy in another language is a second thing to forget to change.
 
 It matters more here than a duplicated hex string usually would, because the
 palette carries an argument.  The brief names its red ATK and its blue DEF, and

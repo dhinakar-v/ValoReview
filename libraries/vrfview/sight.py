@@ -22,9 +22,11 @@ So the contract is narrow and the caller must say so on screen:
     as the floor beneath it;
   * a doorway narrower than the working grid closes.
 
-`vrfview.minimap` draws the polygon and owns the caption that states all three.
-Nothing here imports tkinter; the geometry is plain arithmetic over a bitmask
-and is tested against a synthetic image with no display and no art cache.
+`GET /api/maps/{key}/sight` sends the mask, `CAPTION` and the constants that
+produced it as one document, so a browser cannot draw a wedge without having
+been handed the sentence saying what it is a wedge of.  The geometry here is
+plain arithmetic over a bitmask and is tested against a synthetic image with
+no display and no art cache.
 
 Everything is in uv space
 -------------------------

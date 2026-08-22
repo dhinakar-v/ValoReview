@@ -586,22 +586,20 @@ class ArtIsAPictureOnly(unittest.TestCase):
 
 class Headless(unittest.TestCase):
     """
-    The server must not reach a toolkit, and `wire` must not reach a framework.
+    `wire` must not reach a framework.
 
-    The first is what makes deleting the CustomTkinter modules safe.  The second
-    is what keeps serialisation testable without a server, and is the reason
-    `wire` builds plain dicts instead of models: a builder that needed a request
-    or a PNG would be inventing a claim at the edge rather than carrying one.
+    The toolkit half of this rule moved to `tests/test_layering.py`, which now
+    asserts it over the whole of `libraries/` rather than over this package --
+    there is no widget set left anywhere to make an exception for.
+
+    What is left is the rule that keeps serialisation testable without a
+    server, and it is the reason `wire` builds plain dicts instead of models:
+    a builder that needed a request or a PNG would be inventing a claim at the
+    edge rather than carrying one.
     """
 
     BANNED: ClassVar[dict[str, set[str]]] = {
-        "app": {"tkinter", "customtkinter"},
-        "ids": {"tkinter", "customtkinter"},
-        "library": {"tkinter", "customtkinter"},
-        "schema": {"tkinter", "customtkinter"},
         "wire": {
-            "tkinter",
-            "customtkinter",
             "fastapi",
             "starlette",
             "pydantic",

@@ -4,11 +4,12 @@ version = "0.1.0"
 description = "Decode and replay Valorant .vrf replay files."
 readme = "README.md"
 requires-python = ">=3.11"
-# The decoding pipeline is stdlib and stays that way; the interfaces on top of
-# it are not.  customtkinter is the widget set the original brief specifies and
-# is on its way out with the desktop app; Pillow reads the radar PNG's alpha
-# channel for the sight mask and draws the transport glyphs, so it stays after
-# the widgets go.
+# The decoding pipeline is stdlib and stays that way; the interface on top of
+# it is not.  customtkinter was the widget set the original brief specified and
+# went with the desktop app.  Pillow outlived it, which the comment here used
+# to predict and is now simply the case: `vrfview/sight.py` reads the radar
+# PNG's alpha channel to build the sight mask, and nothing else in the tree
+# draws a pixel.
 #
 # fastapi and uvicorn are the web interface.  The rule here has always been to
 # add a dependency only when the standard library genuinely lacks the thing,
@@ -24,7 +25,6 @@ requires-python = ">=3.11"
 # two readers of one .env in one process.  vrfconfig.py says so at greater
 # length.
 dependencies = [
-    "customtkinter>=6.0.0",
     "fastapi>=0.115.0",
     "Pillow>=11.0.0",
     "uvicorn>=0.30.0",

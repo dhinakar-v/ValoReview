@@ -27,8 +27,8 @@ import webbrowser
 from pathlib import Path
 
 # This file drives libraries/vrfserve/, and the two are named differently on
-# purpose -- a script and a package of the same name collide on import, which
-# is the trap scripts/vrf_view.py documents at greater length.
+# purpose: a script and a package of the same name collide on import, and the
+# package wins, so `import vrfserve` would never reach this module.
 import uvicorn
 
 from vrfserve.app import Settings, create_app, decoder_doc

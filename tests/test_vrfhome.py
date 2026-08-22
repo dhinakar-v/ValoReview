@@ -6,14 +6,12 @@ sorting, filtering, paging and the cache are arithmetic over a list, and
 pinning them against a real library would make the suite depend on which
 replays happen to sit in Demos/.
 
-`vrfhome.scan` must stay importable with no display, which is what the import
-test asserts -- the page that draws these cards imports customtkinter, and if
-that ever leaked into the scanner the whole suite would need a screen.
+That `scan` reaches for no widget set is asserted in `tests/test_layering.py`
+now, over the whole of `libraries/` rather than over this one module.
 """
 
 from __future__ import annotations
 
-import sys
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -212,22 +210,6 @@ class Caching(unittest.TestCase):
     def test_no_cache_file_is_written_when_the_path_is_none(self):
         scan.scan(root=str(self.tmp), cache=scan.Cache(path=None))
         assert not self.cache_path.exists()
-
-
-class HeadlessImport(unittest.TestCase):
-    def test_the_scanner_pulls_in_no_toolkit(self):
-        """
-        The page imports customtkinter; the scanner must not.
-
-        Asserted against sys.modules after importing scan on its own, because
-        an accidental `from vrfhome.cards import ...` inside scan.py would be
-        invisible until the first machine with no display ran the suite.
-        """
-        assert "vrfhome.scan" in sys.modules
-        assert "vrfhome.cards" not in sys.modules
-        source = Path("libraries/vrfhome/scan.py").read_text(encoding="utf-8")
-        for forbidden in ("import tkinter", "import customtkinter", "from PIL"):
-            assert forbidden not in source
 
 
 @unittest.skipUnless(DEMO_12_10.exists(), "needs the 12.10 reference capture")
