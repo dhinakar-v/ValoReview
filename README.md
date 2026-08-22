@@ -169,8 +169,8 @@ if you want positions, and optionally an `oo2core_*_win64.dll` if you want to
 read compressed chunks directly.
 
 ```bash
-git clone https://github.com/dhinakar-v/val-replay-analyzer.git
-cd val-replay-analyzer
+git clone https://github.com/dhinakar-v/ValoReview.git
+cd ValoReview
 uv sync                                    # .venv, the project and the dev tools
 
 git clone https://github.com/michel-giehl/ValorantReplayParser.git ../ValorantReplayParser
@@ -278,7 +278,7 @@ sequenceDiagram
 ## Repository layout
 
 ```text
-val-replay-analyzer/
+ValoReview/
 ├── libraries/            importable code; the source root, not a package
 │   ├── vrf_reader.py     the container: header, chunks, events
 │   ├── vrf_to_json.py    a whole capture as one JSON document
@@ -600,5 +600,5 @@ properties.
 <p align="center">
   <img src="web/public/favicon.svg" alt="" width="28" /><br />
   <strong>ValoReview</strong> · Valorant · local captures<br />
-  <a href="https://github.com/dhinakar-v/val-replay-analyzer">github.com/dhinakar-v/val-replay-analyzer</a>
+  <a href="https://github.com/dhinakar-v/ValoReview">github.com/dhinakar-v/ValoReview</a>
 </p>
