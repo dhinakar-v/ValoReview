@@ -45,6 +45,7 @@ import {
   rgbDistance,
   momentAt,
   stepToEvent,
+  setLayer,
   toggleLayer,
 } from "./harness";
 
@@ -159,6 +160,13 @@ test.describe("the 3D scene", () => {
 
     // Utility off in both views: the point of comparison is Riot's radar, and
     // a diamond drawn in one view and not the other is only noise here.
+    /*
+      SIGHT off. The 2D canvas draws a cone for every living player and
+      `Scene3D` still draws at most one, for the picked player, so leaving the
+      layer on would make these two pictures differ by exactly that wash --
+      and this spec's whole method is comparing them.
+    */
+    await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
     const flat = await readCanvas(page, minimap);
     const box = placeSquare(flat.width, flat.height);
@@ -244,6 +252,7 @@ test.describe("the 3D scene", () => {
    */
   test("draws a marker for every player the camera can see", async ({ page }) => {
     const { art, model } = await openFirstPlayable(page);
+    await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
     const moment = firstCrowdedEvent(model);
     const tMs = moment.tMs;
@@ -322,6 +331,7 @@ test.describe("the 3D scene", () => {
     page,
   }) => {
     const { art, model } = await openFirstPlayable(page);
+    await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
 
     // Into the scene first: the default camera frames rather less than the

@@ -57,10 +57,20 @@ export type LayerKey = keyof Layers;
 
 export const DEFAULT_LAYERS: Layers = {
   utility: true,
-  // Off by default and asked for deliberately: the claim is weak enough -- a
-  // radar silhouette, not collision -- that it should be a choice, and ten
-  // overlapping wedges say nothing anyway.
-  sight: false,
+  /*
+    On by default, which reverses an earlier decision on both of its clauses.
+
+    It argued the claim was weak enough to be asked for, and that ten
+    overlapping wedges say nothing anyway. The second half was wrong: ten
+    wedges say which parts of the map nobody can see, which is the only
+    question this layer was ever for, and one wedge cannot answer it. The
+    first half is answered by the caption, which travels with the mask and
+    states in words what the cone is a cone of.
+
+    `MapStage` follows `hasMask` when it mounts, so a map with no radar on
+    disk does not come up with a lit switch that draws nothing.
+  */
+  sight: true,
   // A new feature rather than a port: the desktop minimap drew trails for
   // ability pawns only.
   trails: false,

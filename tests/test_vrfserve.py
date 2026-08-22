@@ -26,6 +26,7 @@ import json
 import threading
 import time
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import ClassVar
@@ -65,12 +66,17 @@ def _write_radar(path: Path) -> None:
     image.save(path)
 
 
+# A build `payload_transform` has a transform for, so a card carrying it is
+# playable and the match list does not filter it away.
+SUPPORTED_BUILD = "++Ares-Core+release-12.10"
+
+
 def _supplier():
     """A fresh Replay per call, the way `pipeline.open_replay` gives one."""
     return lambda *_args, **_kwargs: _replay()
 
 
-def _replay(build: str = "++Ares-Core+release-12.10") -> Replay:
+def _replay(build: str = SUPPORTED_BUILD) -> Replay:
     replay = Replay(
         source="capture.vrf",
         match_id="m-1",
@@ -306,6 +312,35 @@ class Endpoints(unittest.TestCase):
         client = self._with_broken_capture()
         assert client.get("/api/library").json()["cards"] == []
         assert client.get("/api/library?playable_only=false").json()["cards"] == []
+
+    def test_the_match_list_is_newest_first(self):
+        """
+        The order is the handler's, and the browser renders what it is sent.
+
+        Asserted here rather than only in `tests/test_vrfhome.py`, where
+        `sort_cards(descending=True)` is already pinned: the flag defaults to
+        ascending, so what this guards is the route passing it at all.  The
+        cards are installed directly because a dated, playable card needs a
+        readable capture and this suite has none.
+        """
+        library = self.client.app.state.library
+        library.result = scan.ScanResult(
+            cards=[
+                scan.MatchCard(
+                    path=self.tmp / f"{name}.vrf",
+                    match_id=name,
+                    map_name="Haven",
+                    build=SUPPORTED_BUILD,
+                    recorded_utc=datetime(2026, 6, day, tzinfo=UTC),
+                )
+                for name, day in (("older", 1), ("newest", 3), ("middle", 2))
+            ],
+        )
+        library._register()
+
+        doc = self.client.get("/api/library").json()
+        schema.LibraryDoc.model_validate(doc)
+        assert [c["match_id"] for c in doc["cards"]] == ["newest", "middle", "older"]
 
     def test_an_unknown_replay_id_is_a_404(self):
         assert self.client.get("/api/replays/" + "0" * 16).status_code == 404

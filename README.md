@@ -118,7 +118,7 @@ by kind and by side, each row seeking the playhead to it.
 | **Match list** | A whole library described headlessly and cached by `(path, mtime, size)`, with a background worker decoding ahead of you (`vrfhome/`) |
 | **Server** | Ten routes and no more, deciding nothing: the model reads, infers, looks up and decodes, and a handler that started deciding would be a fourth place a claim could come from (`vrfserve/`) |
 | **2D and 3D** | The playback model is ported to TypeScript and runs in the browser, because `state_at` is 0.127 ms and a round trip is not (`web/src/model/`) |
-| **Sight** | A per-player cone raycast against the radar's alpha channel, off by default, captioned with what it is an approximation of (`vrfview/sight.py`) |
+| **Sight** | A cone per living player, raycast against the radar's silhouette and the wall lines drawn on it, and stopped by smokes; on by default, captioned with what it is an approximation of (`vrfview/sight.py`) |
 | **Catalogue** | Map, agent, role and weapon art and Riot's own callouts, cached locally from `valorant-api.com` (`scripts/fetch_assets.py`, `vrfview/art.py`) |
 
 ### What is read and what is generated
@@ -335,6 +335,7 @@ runners\lint.bat              # lint           (config: ruff.toml)
 runners\format.bat            # format
 runners\make-theme.bat        # regenerate web/src/theme.generated.css
 runners\make-golden.bat       # regenerate tests/golden (the two-language contract)
+runners\make-walls.bat        # regenerate assets/maps/*/walls.png (--overlay to check them)
 
 cd web && npm test            # vitest under jsdom: the model ports and the sentences
 cd web && npm run test:e2e    # playwright against a real Chromium: pixels only

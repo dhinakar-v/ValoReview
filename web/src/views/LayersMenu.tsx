@@ -123,7 +123,7 @@ export const MAP_LAYERS: Entry[] = [
     key: "sight",
     label: "SIGHT",
     icon: glyphs.sight,
-    hint: "The selected player's approximate view cone",
+    hint: "Every living player's approximate view cone; 3D draws only the picked one",
     drawnIn: ["2d", "3d"],
     // The mask, and only the mask: `Scene3D` draws the wedge too, so this is
     // not a 2D-only layer.  The caption's "2D only" is about the

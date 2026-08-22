@@ -247,6 +247,36 @@ export async function toggleLayer(page: Page, name: string): Promise<void> {
 }
 
 /**
+ * Put one layer into a known state, whether or not it is already there.
+ *
+ * `toggleLayer` is a *flip*, and every spec that called it meant "turn this
+ * on".  That was fine while every layer this suite touches started off, and it
+ * failed silently the moment one did not: the helper asserts only that the box
+ * changed, so `toggleLayer(page, "SIGHT")` on an on-by-default layer switches
+ * it **off**, the spec goes green, and the screenshot it was taking has no
+ * cone in it.  Three specs were in that state.
+ *
+ * So a spec that wants a layer on says so, and one that wants it off -- to
+ * count marker pixels without a cone wash over them -- says that.
+ */
+export async function setLayer(page: Page, name: string, on: boolean): Promise<void> {
+  await openLayers(page);
+  const row = page
+    .locator(".check-row")
+    .filter({ has: page.getByText(name, { exact: true }) });
+  const box = row.getByRole("checkbox");
+  await expect(box, `${name} is offered as a working switch here`).toBeEnabled();
+  if ((await box.isChecked()) !== on) {
+    await row.click();
+  }
+  await expect(box, `${name} is ${on ? "on" : "off"}`).toBeChecked({ checked: on });
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "LAYERS", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false");
+}
+
+/**
  * Reach a moment: pick its round, then press `>>` into it.
  *
  * Both halves are the interface a person uses, which is the rule the rest of

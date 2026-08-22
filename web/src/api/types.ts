@@ -254,6 +254,19 @@ export interface AbilityCast {
    * the spawn transform was read, which is every v1 and v2 sidecar.
    */
   landed: Placement | null;
+  /**
+   * A round smoke: how wide it is, how long it stands, and on whose word.
+   *
+   * Null for everything that is not one, which is most casts -- a molly has a
+   * radius and does not block sight, and a wall blocks sight and is not a
+   * circle. Looked up in `vrfview.abilityfacts` on (codename, slot), so it is
+   * *simulated* exactly the way `range_uu` is and the sight caption says so.
+   * `MinimapCanvas` turns these into `Occluder`s and stops sight rays inside
+   * them while the cast is younger than `smoke_duration_ms`.
+   */
+  smoke_radius_uu: number | null;
+  smoke_duration_ms: number | null;
+  smoke_source: string | null;
 }
 
 export interface SightMaskDoc {

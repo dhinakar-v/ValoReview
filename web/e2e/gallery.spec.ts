@@ -17,7 +17,14 @@ import { expect, test } from "@playwright/test";
 
 import { positionOf, stateAt } from "../src/model/state";
 import { applyTransform, placeSquare, uvToPixels } from "../src/model/transform";
-import { firstCrowdedEvent, openFirstPlayable, readCanvas, stepToEvent, toggleLayer } from "./harness";
+import {
+  firstCrowdedEvent,
+  openFirstPlayable,
+  readCanvas,
+  setLayer,
+  stepToEvent,
+  toggleLayer,
+} from "./harness";
 
 test("every view, rendered and saved for a person to look at", async ({ page }, testInfo) => {
   const { replay, art, model } = await openFirstPlayable(page);
@@ -45,10 +52,11 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
   await take("2d-trails.png");
   await toggleLayer(page, "TRAILS");
 
-  // A cone needs somebody selected, and selecting them means clicking where
-  // the model says they are: clicking empty canvas selects nobody, and the
-  // picture then shows the SIGHT button lit and no cone, which is correct
-  // behaviour and useless to look at.
+  // A cone is drawn for every living player now, so this no longer *needs* a
+  // selection -- but the picked player's wedge is the heavier one, and a
+  // gallery shot of the layer should show that difference rather than ten
+  // identical washes. So the click stays, and it lands where the model says a
+  // player is: clicking empty canvas selects nobody.
   const minimap = page.locator("canvas.minimap");
   const image = await readCanvas(page, minimap);
   const box = placeSquare(image.width, image.height);
@@ -59,9 +67,9 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
   const [u, v] = applyTransform(art.transform, chosen.x, chosen.y);
   const [px, py] = uvToPixels(box, u, v);
   await minimap.click({ position: { x: px, y: py } });
-  await toggleLayer(page, "SIGHT");
+  await setLayer(page, "SIGHT", true);
   await take("2d-sight.png");
-  await toggleLayer(page, "SIGHT");
+  await setLayer(page, "SIGHT", false);
 
   await page.getByRole("button", { name: "3D", exact: true }).click();
   await expect(page.locator(".stage-canvas canvas")).toBeVisible();

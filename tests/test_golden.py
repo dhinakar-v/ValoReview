@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import unittest
 from pathlib import Path
 
@@ -389,3 +390,71 @@ class ClockIsDrivenByDeltasAndNeverByTheWallClock(unittest.TestCase):
         """A stopped clock is what pause is for; a zero speed is a stuck one."""
         zero = next(s for s in self.steps if s["op"] == "set_speed" and s["arg"] == 0.0)
         assert zero["speed"] > 0
+
+
+class SmokesStopACone(unittest.TestCase):
+    """
+    The dynamic half of the occluder, which the mask cannot carry.
+
+    A wall is one document per map and is fetched once; a smoke is a fact about
+    one millisecond of one round, so it travels as an argument to `cone` rather
+    than as cells in the bitmask.  These fixtures are what keeps the TypeScript
+    port of that argument honest -- see parity.test.ts.
+    """
+
+    def setUp(self):
+        self.doc = _fixture("cone.json")
+        self.cones = self.doc["smoke_cones"]
+
+    @staticmethod
+    def _reach(entry):
+        """How far the middle ray of a cone got, which is the one aimed dead on."""
+        polygon = entry["polygon"]
+        middle = polygon[len(polygon) // 2]
+        return math.dist(entry["origin"], middle)
+
+    def _named(self, fragment):
+        return next(c for c in self.cones if fragment in c["why"])
+
+    def test_a_smoke_in_the_way_stops_the_ray_short(self):
+        smoked = self._named("east into a smoke")
+        clear = self._named("no smoke")
+        assert self._reach(smoked) < self._reach(clear)
+
+    def test_a_smoke_behind_the_origin_stops_nothing(self):
+        """
+        Otherwise the test would pass for a rule that just shortens every cone.
+
+        A circle test that used distance from the centre without regard to
+        which way the ray went would fail exactly here.
+        """
+        behind = self._named("behind the origin")
+        clear = self._named("no smoke")
+        assert self._reach(behind) == self._reach(clear)
+
+    def test_standing_inside_a_smoke_does_not_blank_the_cone(self):
+        """
+        `SEED_CELLS` gates the circle test as well as the mask.
+
+        Without that a player who threw a smoke at their own feet would have no
+        cone at all, which is the same "blinks off exactly when it matters"
+        failure the seed exists to prevent.
+        """
+        inside = self._named("from inside the smoke")
+        assert self._reach(inside) > 0
+        assert len(inside["polygon"]) == len(inside["rays"]) + 1
+
+    def test_every_cone_still_carries_one_point_per_ray(self):
+        """The invariant the whole fixture format rests on."""
+        for entry in self.cones:
+            assert len(entry["polygon"]) == len(entry["rays"]) + 1, entry["why"]
+
+    def test_the_untouched_cones_prove_the_default_path_did_not_move(self):
+        """
+        `cones` predates occluders and is regenerated with an empty list.
+
+        If adding the argument had changed the arithmetic of a cone with no
+        smokes in it, these six would have moved and the whole port would need
+        re-checking.
+        """
+        assert len(self.doc["cones"]) == 6

@@ -63,7 +63,7 @@ import { Failed } from "./Shell";
 import { Transport } from "./Transport";
 import { Button, Chip, EmptyState, Panel, Segmented } from "./ui";
 import { useImages } from "./images";
-import { seek, selectedActor, usePlayback, usePlaybackDriver } from "./playback";
+import { seek, usePlayback, usePlaybackDriver } from "./playback";
 
 // `three` and its two wrappers are about a megabyte of the bundle, and the 2D
 // view is the default and is not a stepping stone to this one. Loading the
@@ -99,6 +99,27 @@ export function MapStage({
     // offering it.
     retry: false,
   });
+
+  /*
+    SIGHT is on by default, and a map with no radar image on disk cannot draw
+    it. Left alone that is a ticked switch over an unchanged canvas -- the
+    exact "a control that appears to do something and does not" fault
+    `LayersMenu` was rewritten to remove, and worse than the disabled row it
+    already renders, because a tick is a claim that the layer is on.
+
+    So the store is corrected to match what can actually be drawn, when the
+    query settles. Only ever *off*: turning it back on would fight a reader who
+    switched it off on purpose, and this settles again for every replay opened
+    in this session.
+  */
+  const noMask = mask.isError;
+  useEffect(() => {
+    if (noMask) {
+      usePlayback.setState((state) => ({
+        layers: { ...state.layers, sight: false },
+      }));
+    }
+  }, [noMask]);
 
   const decode = useMutation({
     mutationFn: () => api.decode(replay.id),
@@ -366,18 +387,6 @@ export function MapStage({
  * matched exactly by a test and a glyph that joined the text node would change
  * what it is.
  */
-/**
- * What SIGHT needs, said on the stage rather than inside a closed menu.
- *
- * The cone is drawn for one player because ten overlapping wedges over one
- * radar are a wash -- the argument `DEFAULT_LAYERS` already makes.  Switching
- * the layer on with nobody picked therefore correctly draws nothing, and until
- * this sentence existed that was indistinguishable from a layer that does not
- * work.  `gallery.spec.ts` had even written the behaviour down in a comment.
- */
-export const SIGHT_NEEDS_A_PLAYER =
-  "SIGHT is drawn for one player: point at a marker, or click one to pin it.";
-
 function Captions({
   sightCaption,
   maskUnavailable,
@@ -386,7 +395,6 @@ function Captions({
   maskUnavailable: string | null;
 }) {
   const showSight = usePlayback((state) => state.layers.sight);
-  const chosen = usePlayback(selectedActor);
   return (
     <div className="captions">
       <p>
@@ -397,20 +405,6 @@ function Captions({
         <p>
           <Icon glyph={glyphs.sight} size={12} />
           <span>{sightCaption}</span>
-        </p>
-      ) : null}
-      {/*
-        SIGHT on with nobody picked draws nothing, and that is correct -- ten
-        overlapping wedges say nothing, which is the argument `DEFAULT_LAYERS`
-        makes for the layer being off by default.  What was missing is anybody
-        saying so: the switch lit up and the map did not change, which reads as
-        a broken layer.  Additional to the server's caption, never instead of
-        it: that sentence travels with the mask and is asserted verbatim.
-      */}
-      {showSight && chosen === null ? (
-        <p>
-          <Icon glyph={glyphs.sight} size={12} />
-          <span>{SIGHT_NEEDS_A_PLAYER}</span>
         </p>
       ) : null}
       {maskUnavailable ? (

@@ -611,7 +611,11 @@ def _name_casts(replay: Replay, spawns: list) -> None:
     agent name is left empty on purpose: it is a catalogue lookup, and
     `vrfview.names` is the one place those are made.
     """
-    replay.ability_casts = abilities.casts(spawns, round_of=_round_number(replay))
+    replay.ability_casts = abilities.casts(
+        spawns,
+        round_of=_round_number(replay),
+        opened_at=_round_opening(replay),
+    )
 
 
 def _round_number(replay: Replay):
@@ -622,6 +626,22 @@ def _round_number(replay: Replay):
         return rnd.number if rnd is not None else 0
 
     return number
+
+
+def _round_opening(replay: Replay):
+    """
+    `Replay.round_at` as the millisecond -> round-start callable it also wants.
+
+    Separate from `_round_number` rather than one callable returning the round,
+    because `casts` asks two different questions of it and neither wants to
+    know that a `Round` is a dataclass.
+    """
+
+    def opening(t_ms: int) -> int | None:
+        rnd = replay.round_at(t_ms)
+        return rnd.start_ms if rnd is not None else None
+
+    return opening
 
 
 def _name_pawns(replay: Replay, codenames: dict[int, str]) -> None:

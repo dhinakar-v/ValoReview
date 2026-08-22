@@ -217,6 +217,9 @@
       "travel_note": null,
       "range_uu": null,
       "range_source": null,
+      "smoke_radius_uu": null,
+      "smoke_duration_ms": null,
+      "smoke_source": null,
       "placements": [
         {
           "actor_id": 899,
@@ -238,7 +241,7 @@
       "player_actor_id": 202,
       "agent": "Omen",
       "identity": "Omen",
-      "slot": "Q",
+      "slot": "C",
       "internal_name": "Smoke",
       "published_name": null,
       "icon_url": null,
@@ -253,6 +256,9 @@
       "travel_note": "no position on wire",
       "range_uu": 410.0,
       "range_source": "wiki.playvalorant.com/Dark_Cover: smoke radius 4.1 m",
+      "smoke_radius_uu": 410.0,
+      "smoke_duration_ms": 15000,
+      "smoke_source": "wiki.playvalorant.com/Dark_Cover: smoke radius 4.1 m; duration is a community figure and was NOT verified against a published source from this tree",
       "placements": [
         {
           "actor_id": 910,

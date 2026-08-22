@@ -301,6 +301,9 @@ def ability_cast(
             published = slot.name
             icon = asset_url(slot.icon, cache.root)
     published_range = abilityfacts.facts_for(cast.agent, cast.display_name)
+    # Keyed on the codename and slot, not the agent and internal name: the
+    # internal name splits for the same ability -- see `abilityfacts._SMOKES`.
+    smoke = abilityfacts.smoke_for(cast.codename, cast.slot)
     distance = None
     for actor_id in cast.pawns:
         track = replay.ability_track(actor_id)
@@ -329,6 +332,9 @@ def ability_cast(
         "travel_note": None if distance is not None else NO_POSITION,
         "range_uu": published_range.radius_uu if published_range else None,
         "range_source": published_range.source if published_range else None,
+        "smoke_radius_uu": smoke.radius_uu if smoke else None,
+        "smoke_duration_ms": smoke.duration_ms if smoke else None,
+        "smoke_source": smoke.source if smoke else None,
         "placements": [placement(p) for p in cast.placements],
         "landed": placement(cast.landed) if cast.landed is not None else None,
     }

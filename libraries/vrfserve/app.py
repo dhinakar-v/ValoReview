@@ -258,6 +258,12 @@ def _add_library_routes(
         the epoch -- and a second implementation of that in another language is
         exactly the drift this project spends its docstrings avoiding.
 
+        The order is newest first.  A match list is read the way a recording is
+        looked for -- the one just played is the one being looked for -- so the
+        brief's ascending default is asked to reverse here rather than being
+        changed in `scan`, where `descending` is the flag that says so and the
+        undated cards stay at the end either way.
+
         Only playable captures are listed.  A build with no payload transform
         has no positions to draw and there is no schematic to fall back to, so
         the interface offers nothing to open; the filter is applied here rather
@@ -267,7 +273,7 @@ def _add_library_routes(
         result = library.result
         cards = scan.filter_cards(result.cards, map_name=query.map_name)
         cards = [c for c in cards if c.playable]
-        cards = scan.sort_cards(cards)
+        cards = scan.sort_cards(cards, descending=True)
         root = result.root or vrfconfig.demo_root(config.demo_path)
         return {
             "root": demo_root_doc(root),

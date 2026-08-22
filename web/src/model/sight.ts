@@ -37,6 +37,23 @@ export interface SightMask {
   cells: Uint8Array;
 }
 
+/**
+ * A round smoke standing in the world, in uv space.
+ *
+ * In uv rather than world units because that is the space a ray is already
+ * marched in, so a smoke is converted once per frame instead of once per step.
+ * `radius` is `uvRadius(transform, smoke_radius_uu)`.
+ *
+ * It carries no time: whether a smoke is still standing is decided by whoever
+ * builds the list, so the raycaster stays a pure function of geometry the way
+ * the mask is. Mirrors `sight.Occluder`.
+ */
+export interface Occluder {
+  u: number;
+  v: number;
+  radius: number;
+}
+
 /** The constants the server sends beside the cells; `sight.py` decides them. */
 export interface SightSettings {
   max_range_uu: number;
@@ -136,6 +153,7 @@ export function march(
   direction: [number, number],
   radius: number,
   seedCells: number,
+  occluders: readonly Occluder[] = [],
 ): [number, number] {
   const [u0, v0] = origin;
   const [du, dv] = direction;
@@ -145,7 +163,7 @@ export function march(
     const travelled = i * cell;
     const u = u0 + du * travelled;
     const v = v0 + dv * travelled;
-    if (i > seedCells && blocked(mask, u, v)) {
+    if (i > seedCells && (blocked(mask, u, v) || inside(occluders, u, v))) {
       // Stop on the last open cell, not inside the wall, so the polygon traces
       // the silhouette rather than overlapping it.
       const back = (i - 1) * cell;
@@ -153,6 +171,26 @@ export function march(
     }
   }
   return [u0 + du * radius, v0 + dv * radius];
+}
+
+/**
+ * Whether this step has walked into a smoke.
+ *
+ * Squared distance, and that is about parity rather than about speed. `hypot`
+ * is approximate by specification in both languages and `sqrt` would be a
+ * needless rounding besides; multiply, subtract and compare are exactly
+ * specified in IEEE-754, so this agrees with Python by construction and
+ * `tests/golden/cone.json` compares the two to the bit.
+ */
+function inside(occluders: readonly Occluder[], u: number, v: number): boolean {
+  for (const smoke of occluders) {
+    const du = u - smoke.u;
+    const dv = v - smoke.v;
+    if (du * du + dv * dv <= smoke.radius * smoke.radius) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -199,6 +237,7 @@ export function cone(
   forward: [number, number],
   radius: number,
   settings: SightSettings,
+  occluders: readonly Occluder[] = [],
 ): Array<[number, number]> {
   if (radius <= 0) {
     return [];
@@ -209,6 +248,8 @@ export function cone(
   }
   return [
     origin,
-    ...rays.map((ray) => march(mask, origin, ray, radius, settings.seed_cells)),
+    ...rays.map((ray) =>
+      march(mask, origin, ray, radius, settings.seed_cells, occluders),
+    ),
   ];
 }

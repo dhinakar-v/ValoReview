@@ -148,6 +148,14 @@ def round_of(t_ms):
     return 0
 
 
+def opened_at(t_ms):
+    """Where the round containing this instant began, for the leftover guard."""
+    for rnd in ROUNDS:
+        if rnd.contains(t_ms):
+            return rnd.start_ms
+    return None
+
+
 class TestSpawns(unittest.TestCase):
     def test_an_actor_with_no_recorded_time_is_skipped(self):
         """A cast at the wrong instant lands in the wrong round; absence does not."""
@@ -213,17 +221,45 @@ class TestCasts(unittest.TestCase):
         assert len(found[0].pawns) == 1
         assert found[0].has_track
 
-    def test_effects_with_no_cast_are_dropped(self):
+    def test_a_leftover_reopening_at_a_round_boundary_is_not_a_cast(self):
         """
         A smoke still standing when the round rolled over is not a new cast.
 
-        Its `GameObject_` reopens in the next round's window with no
-        `Ability_` beside it, and reporting that would put a decision in a
-        round nobody made it in.
+        It reopens under a fresh actor id a few milliseconds into the next
+        round, and reporting that would put a decision in a round nobody made
+        it in.  What identifies it is **when** it opened, not what kind it is:
+        measured over the reference library, 495 groups open in the first
+        100 ms of a round and then nothing does until four seconds in.
         """
-        assert (
-            abilities.casts(spawns((JETT_SMOKE_ZONE, 70_000)), round_of=round_of) == []
+        found = abilities.casts(
+            spawns((JETT_SMOKE_ZONE, 60_100)),
+            round_of=round_of,
+            opened_at=opened_at,
         )
+        assert found == []
+
+    def test_the_same_effect_in_the_middle_of_a_round_is_a_cast(self):
+        """
+        The other half, and the one the old kind-based guard got wrong.
+
+        Excluding `GameObject_` from `CAST_KINDS` dropped this too, which cost
+        every ability whose only witness is the thing it left behind --
+        Brimstone's sky smokes spawn 142 of them against 4 `Ability_` actors
+        library-wide, so his smokes did not exist at all.
+        """
+        found = abilities.casts(
+            spawns((JETT_SMOKE_ZONE, 70_000)),
+            round_of=round_of,
+            opened_at=opened_at,
+        )
+        assert len(found) == 1
+        assert found[0].round_no == 2
+        assert found[0].kinds == ("GameObject",)
+
+    def test_with_no_round_starts_nothing_is_called_a_leftover(self):
+        """A replay with no rounds has no boundaries to be handed over at."""
+        found = abilities.casts(spawns((JETT_SMOKE_ZONE, 60_100)), round_of=round_of)
+        assert len(found) == 1
 
     def test_a_catalogue_name_is_applied_where_it_is_given(self):
         found = abilities.casts(

@@ -24,7 +24,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Decoder, MapArt, Replay, SightMaskDoc } from "../api/types";
@@ -32,9 +32,17 @@ import { SIMULATED_NOTE } from "../model/synthetic";
 import { MapStage } from "./MapStage";
 import { DEFAULT_LAYERS, usePlayback } from "./playback";
 
+// The server's own sentence, duplicated here on purpose: this suite stubs
+// `fetch`, so the only way to assert the page renders the caption *verbatim*
+// is to have a copy to compare against. It went stale once already -- the
+// stub served this same constant, so the suite was comparing it with itself
+// and could not notice. `test_golden.py` and `minimap.spec.ts` are what catch
+// the drift; keep this in step with `sight.CAPTION` when that moves.
 const CAPTION =
-  "SIGHT (approx) — the radar silhouette, not collision. 2D only: it ignores " +
-  "heaven, tunnels and anything you can see over.";
+  "SIGHT (approx) — the radar's silhouette and the lines drawn on it, not " +
+  "collision. 2D only: it ignores heaven and tunnels, and Riot's lines also " +
+  "outline low boxes and ledges you can see over. Smokes are simulated from " +
+  "a looked-up radius and duration.";
 
 const REPLAY: Replay = {
   id: "abc123",
@@ -289,10 +297,31 @@ describe("the captions", () => {
   });
 
   it("does not state a claim the layer is not making", async () => {
+    /*
+      The layer is on by default now, so the half of this that used to run --
+      "the switch is offered and the caption is absent" -- is gone. The rule it
+      was protecting is not: a caption is a claim about what is on the canvas,
+      so switching the layer off has to take the sentence with it.
+    */
     show({ has_positions: true });
+    expect(await screen.findByText(CAPTION)).toBeTruthy();
+    usePlayback.setState({ layers: { ...DEFAULT_LAYERS, sight: false } });
+    await waitFor(() => expect(screen.queryByText(CAPTION)).toBeNull());
     await openLayers();
     expect(await screen.findByText("SIGHT")).toBeTruthy();
-    expect(screen.queryByText(CAPTION)).toBeNull();
+  });
+
+  it("draws the cone without anybody being picked first", () => {
+    /*
+      What the layer being on by default is *for*. It used to draw for one
+      selected player, so a fresh replay showed a lit switch and an unchanged
+      map, and a sentence had to be added to explain that. There is nothing to
+      explain now, and `SIGHT_NEEDS_A_PLAYER` went with it.
+    */
+    show({ has_positions: true });
+    expect(usePlayback.getState().layers.sight).toBe(true);
+    expect(usePlayback.getState().selected).toBeNull();
+    expect(usePlayback.getState().hovered).toBeNull();
   });
 });
 

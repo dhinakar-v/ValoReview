@@ -41,6 +41,7 @@ import {
   openLayers,
   readCanvas,
   stepToEvent,
+  setLayer,
   toggleLayer,
   waitForArt,
 } from "./harness";
@@ -146,8 +147,9 @@ test("the README's screenshots, regenerated", async ({ page }, testInfo) => {
     "false",
   );
 
-  // 5. Sight and trails, which need somebody selected: clicking empty canvas
-  // selects nobody, and the picture is then of a lit SIGHT switch and no cone.
+  // 5. Sight and trails. The cone is drawn for every living player, so this
+  // no longer needs a selection -- the click stays because the picked wedge is
+  // the heavier one and the picture should show that.
   // Where the click goes is computed the way `gallery.spec.ts` computes it --
   // through the model's own transform, so it lands on a player rather than near
   // one.
@@ -162,9 +164,9 @@ test("the README's screenshots, regenerated", async ({ page }, testInfo) => {
   const [px, py] = uvToPixels(box, u, v);
   await minimap.click({ position: { x: px, y: py } });
   await toggleLayer(page, "TRAILS");
-  await toggleLayer(page, "SIGHT");
+  await setLayer(page, "SIGHT", true);
   await shot("05-sight-trails.png", stage);
-  await toggleLayer(page, "SIGHT");
+  await setLayer(page, "SIGHT", false);
   await toggleLayer(page, "TRAILS");
 
   // 6. The scene, with Riot's callouts on it.
