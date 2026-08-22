@@ -371,6 +371,41 @@ def sidecar_for(replay: Replay, found: Extraction) -> positionfile.Sidecar:
     )
 
 
+def sidecar_of(replay: Replay) -> positionfile.Sidecar:
+    """
+    Whatever positions a replay is already carrying, in the stored shape.
+
+    `sidecar_for` needs an `Extraction`, which exists only in the moments after
+    a decode.  A replay that came back from the cache has its tracks and
+    nothing else, so anything that wants to hand those on -- a server serving
+    them to a browser, a caller writing a second copy -- needs this instead.
+
+    **This is not a lossless sidecar and must not be written as one.**  A
+    sidecar stores raw ability spawns, and `_apply_sidecar` regroups them into
+    casts on every load precisely so the grouping rules can improve without
+    invalidating a cached decode.  That means the raw spawns are gone by the
+    time a `Replay` exists: a cast knows its own actor, slot and codename, but
+    not the archetype path it was read from.  So `ability_spawns` is empty
+    here, deliberately, and a round trip through this would silently drop the
+    ability grouping of every future load.
+
+    Nothing is invented to fill the gap.  What this does carry is what the
+    replay genuinely states: the tracks, the codenames its pawns declared, and
+    the sentence the decoder wrote about itself.
+    """
+    return positionfile.Sidecar(
+        positions=replay.positions,
+        codenames={p.actor_id: p.codename for p in replay.players if p.codename},
+        description=replay.position_source,
+        match_id=replay.match_id,
+        build=replay.build,
+        hz=POSITION_HZ,
+        # Not reconstructible from a loaded replay; see the docstring.
+        ability_spawns={},
+        ability_tracks=replay.ability_tracks,
+    )
+
+
 def _no_positions(reasons: list[str]) -> str:
     """Every reason there are no positions, in the order they were met."""
     return f"no positions: {'; '.join(r for r in reasons if r)}" if reasons else ""

@@ -42,11 +42,27 @@ class ArtDoc(BaseModel):
     agents: int
 
 
+class DecoderDoc(BaseModel):
+    """
+    Whether positions can be decoded at all, and by what.
+
+    `found` gates the DECODE button. When it is false, `hint` is the sentence
+    naming the command that would fix it -- an interface that offers a button
+    which cannot work is worse than one that explains why there is none.
+    """
+
+    found: bool
+    path: str
+    described: str
+    hint: str
+
+
 class ConfigDoc(BaseModel):
     """Where the server is looking, and what it found there."""
 
     demo_root: DemoRootDoc
     art: ArtDoc
+    decoder: DecoderDoc
     catalog_source: str
     web_built: bool
     web_hint: str

@@ -63,4 +63,16 @@ export const api = {
   map: (key: string) => get<MapArt>(`/api/maps/${encodeURIComponent(key)}`),
   closeReplay: (id: string) =>
     fetch(`/api/replays/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  decode: async (id: string): Promise<Replay> => {
+    // Synchronous on purpose: the decode is about four seconds, which is
+    // inside a request, so there is no job to poll and no stream to open.
+    const response = await fetch(`/api/replays/${encodeURIComponent(id)}/decode`, {
+      method: "POST",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await detailOf(response));
+    }
+    return (await response.json()) as Replay;
+  },
 };

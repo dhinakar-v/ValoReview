@@ -31,9 +31,19 @@ export interface ArtSummary {
   agents: number;
 }
 
+export interface Decoder {
+  /** Gates the DECODE button. False means no .NET SDK and no drop-in. */
+  found: boolean;
+  path: string;
+  described: string;
+  /** When absent, the sentence naming the command that would fix it. */
+  hint: string;
+}
+
 export interface Config {
   demo_root: DemoRoot;
   art: ArtSummary;
+  decoder: Decoder;
   catalog_source: string;
   web_built: boolean;
   web_hint: string;

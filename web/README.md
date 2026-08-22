@@ -37,7 +37,7 @@ a line here saying what it buys.
 |---|---|
 | `react`, `react-dom` | The view layer. |
 | `react-router-dom` | Real URLs. `/map/:key` is not a convenience: the map reference must be reachable *without* a replay, and a route that can only receive a map key is how the desktop guarantee — `mapref.show` is handed no `Replay` — survives becoming an address. |
-| `@tanstack/react-query` | Fetch state. Refetch-on-focus is off: a local server reading files off a disk does not go stale on its own, and a rescan is a button. |
+| `@tanstack/react-query` | Fetch state. Refetch-on-focus is off: a local server reading files off a disk does not go stale on its own, and a rescan is a button. It also owns the decode mutation, which replaces the whole replay rather than patching the tracks. |
 
 Dev: `vite`, `@vitejs/plugin-react`, `typescript`, `vitest`, `jsdom`,
 `@testing-library/react`, `openapi-typescript`.
@@ -86,6 +86,7 @@ Three of these are load-bearing, and each is pinned by a test in
   never a placeholder drawing. A diagram in the place a map goes reads as a map
   however it is captioned, so the two things that can be missing — the decode
   and the radar image — each get words instead.
+- **A DECODE button appears only where one can work.** Without a built decoder there is nothing to press, so the sentence names `runners\build-decoder.bat` instead. A control that cannot do anything is worse than an explanation of its absence.
 
 And one about arithmetic: `applyTransform` swaps the axes, world *y* into u.
 That is measured, not assumed, and the unswapped form produces a plausible

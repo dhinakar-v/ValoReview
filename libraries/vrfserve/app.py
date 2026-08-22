@@ -24,20 +24,24 @@ missing rather than draw something in its place.
 
 from __future__ import annotations
 
+import json
+import threading
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 import vrfconfig
-from vrfhome import scan
+from vrfhome import prewarm, scan
 from vrfserve import schema, wire
 from vrfserve.library import Library
 from vrfview import art as art_mod
+from vrfview import csharpdecode, names, pipeline, positionfile, tracks
 
 if TYPE_CHECKING:
     from vrfview.art import ArtCache
@@ -59,6 +63,73 @@ SPA_ASSETS = "static"
 # comfortably above it and a page of cards usually is too.
 GZIP_MINIMUM = 1024
 
+# Decodes are serialised: the decoder is a CPU-bound subprocess and two at
+# once make both slower, which is the same reason the prewarmer runs one
+# worker. Module level rather than per-app so a test client cannot
+# accidentally get a second one.
+_DECODE_LOCK = threading.Lock()
+
+
+class _Preparation:
+    """
+    The background decode, and the statuses it reports.
+
+    `Prewarmer.on_change` fires on its own worker thread. There is no event
+    loop to marshal onto here -- the plan for a four-minute decode wanted an
+    SSE stream and a thread-to-loop bridge, and a four-second one does not, so
+    a status is just written into a dict behind a lock and read by whoever
+    polls. That is the whole of the machinery this replaced.
+    """
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._statuses: dict[str, dict] = {}
+        self.worker = None
+
+    def start(self, cards, catalog, registry) -> None:
+        self.worker = prewarm.Prewarmer(
+            cards,
+            on_change=lambda path, status: self._record(registry, path, status),
+            catalog=catalog,
+        )
+        # Seed from the worker's own queue, not from every card. `Prewarmer`
+        # queues only what is playable, and reporting QUEUED for a capture that
+        # will never be prepared would be a chip claiming a wait that is not
+        # going to end. No chip at all is the honest answer there.
+        for card in self.worker.queue:
+            self._record(registry, card.path, self.worker.status(card.path))
+        self.worker.start()
+
+    def _record(self, registry, path, status) -> None:
+        with self._guard:
+            self._statuses[registry.id_for_path(path)] = {
+                "state": status.state,
+                "note": status.note,
+                "done": status.done,
+                "total": status.total,
+                "label": status.label,
+            }
+
+    def status(self, replay_id: str) -> dict | None:
+        with self._guard:
+            return self._statuses.get(replay_id)
+
+    def all(self) -> dict:
+        with self._guard:
+            return dict(self._statuses)
+
+    def pause(self) -> None:
+        if self.worker is not None:
+            self.worker.pause()
+
+    def resume(self) -> None:
+        if self.worker is not None:
+            self.worker.resume()
+
+    def stop(self) -> None:
+        if self.worker is not None:
+            self.worker.stop()
+
 
 @dataclass
 class Settings:
@@ -69,6 +140,16 @@ class Settings:
     catalog: object | None = None
     web_dir: Path = WEB_DIR
     use_cache: bool = True
+    # The compiled decoder. None lets csharpdecode resolve it the way
+    # oodlefind established: environment, then a vendor drop-in, then whatever
+    # this working tree last built.
+    parser_exe: str | None = None
+    # Whether to fill the position cache in the background, the way the desktop
+    # app does. On by default for the same reason it is there: a prepared
+    # capture opens on the map instead of on a button. Off is for anyone who
+    # started the server to look at one replay and would rather it not decode
+    # twenty others.
+    prewarm: bool = True
 
     @property
     def web_built(self) -> bool:
@@ -81,6 +162,28 @@ def demo_root_doc(root) -> dict:
         "exists": root.exists,
         "source": root.source,
         "described": root.described,
+    }
+
+
+def decoder_doc(parser_exe: str | None) -> dict:
+    """
+    Whether a decode is possible at all, and where the decoder came from.
+
+    A machine with no .NET SDK and no drop-in has no decoder, and that is an
+    ordinary state -- the same kind of ordinary as a missing `assets/`.  It
+    costs positions and nothing else, so it is reported as a sentence rather
+    than raised: the page can then say why there is no DECODE button instead of
+    offering one that cannot work.
+    """
+    try:
+        found = csharpdecode.locate(parser_exe)
+    except csharpdecode.DecodeError as exc:
+        return {"found": False, "path": "", "described": str(exc), "hint": str(exc)}
+    return {
+        "found": True,
+        "path": str(found),
+        "described": f"decoder at {found}",
+        "hint": "",
     }
 
 
@@ -102,7 +205,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     library = Library(catalog=config.catalog, root=config.demo_path)
     library.rescan(cache=config.use_cache)
 
+    preparation = _Preparation()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        """Fill the position cache while nobody is asking for anything."""
+        if config.prewarm:
+            preparation.start(library.result.cards, config.catalog, library.registry)
+        yield
+        # Asked, not waited for: the worker is a daemon and checks between
+        # captures, so it drops out inside a second.
+        preparation.stop()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="Valorant replay analyzer",
         description=(
             "Reads .vrf captures off DEMO_PATH and serves what they state, "
@@ -114,10 +230,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(GZipMiddleware, minimum_size=GZIP_MINIMUM)
     app.state.library = library
     app.state.settings = config
+    app.state.preparation = preparation
 
     _add_config_routes(app, config)
-    _add_library_routes(app, library, config)
-    _add_replay_routes(app, library, config)
+    _add_library_routes(app, library, config, preparation)
+    _add_replay_routes(app, library, config, preparation)
     _add_map_routes(app, config)
     _mount_static(app, config)
     return app
@@ -130,13 +247,31 @@ def _add_config_routes(app: FastAPI, config: Settings) -> None:
         return {
             "demo_root": demo_root_doc(vrfconfig.demo_root(config.demo_path)),
             "art": art_doc(config.art),
+            "decoder": decoder_doc(config.parser_exe),
             "catalog_source": getattr(config.catalog, "described", "") or "",
             "web_built": config.web_built,
             "web_hint": "" if config.web_built else WEB_HINT,
         }
 
 
-def _add_library_routes(app: FastAPI, library: Library, config: Settings) -> None:
+def _add_library_routes(
+    app: FastAPI,
+    library: Library,
+    config: Settings,
+    preparation: _Preparation,
+) -> None:
+    @app.get(f"{API}/jobs")
+    def read_jobs() -> dict:
+        """
+        What the background decode has prepared, per capture.
+
+        Polled rather than streamed. At four seconds a capture there is nothing
+        a stream would tell a reader that a refresh does not, and an SSE
+        endpoint would be a connection to keep alive for the sake of a progress
+        bar nobody has time to read.
+        """
+        return {"statuses": preparation.all()}
+
     @app.get(f"{API}/library", response_model=schema.LibraryDoc)
     def read_library(query: Annotated[schema.LibraryQuery, Query()]) -> dict:
         """
@@ -180,13 +315,41 @@ def _add_library_routes(app: FastAPI, library: Library, config: Settings) -> Non
             "page_count": scan.page_count(cards),
             "per_page": scan.PER_PAGE,
             "cards": [
-                wire.card(c, library.id_of(c.path), config.art, None)
+                wire.card(
+                    c,
+                    library.id_of(c.path),
+                    config.art,
+                    preparation.status(library.id_of(c.path)),
+                )
                 for c in scan.page(cards, number=query.page)
             ],
         }
 
 
-def _add_replay_routes(app: FastAPI, library: Library, config: Settings) -> None:
+def _decode_now(library: Library, config: Settings, replay_id: str, path) -> object:
+    """
+    Read the capture fresh, decode it, name it, and swap it in.
+
+    A fresh `Replay`, never the cached one. `Replay` is the only mutable
+    dataclass in the model and three modules annotate it in place, so a GET
+    arriving mid-decode must see one replay or the other -- never one whose
+    positions have landed but whose codenames have not.
+    """
+    replay = pipeline.open_replay(path, config.catalog)
+    tracks.attach(replay, path, tracks.Options(parser_exe=config.parser_exe))
+    # Again, because the codenames only exist once the stream has been read:
+    # naming before the decode leaves every agent a `Hunter`.
+    names.resolve(replay, config.catalog)
+    library.replace(replay_id, replay)
+    return replay
+
+
+def _add_replay_routes(
+    app: FastAPI,
+    library: Library,
+    config: Settings,
+    preparation: _Preparation,
+) -> None:
     @app.get(f"{API}/replays/{{replay_id}}", response_model=schema.ReplayDoc)
     def read_replay(replay_id: str) -> dict:
         """
@@ -206,6 +369,71 @@ def _add_replay_routes(app: FastAPI, library: Library, config: Settings) -> None
     def close_replay(replay_id: str) -> dict:
         """Let go of an open replay.  An unknown id is not an error to close."""
         return {"closed": library.close(replay_id)}
+
+    @app.post(f"{API}/replays/{{replay_id}}/decode", response_model=schema.ReplayDoc)
+    def decode_replay(replay_id: str) -> dict:
+        """
+        Decode this capture's positions now, and answer with the whole replay.
+
+        Synchronous, and that is the design rather than a shortcut.  The decode
+        is about four seconds since it moved to `csharp/VrfPositions`, which is
+        inside an ordinary request; a job id, a progress stream and a client
+        that polls for them would all be machinery in service of a wait that no
+        longer happens.  FastAPI runs a sync handler in a threadpool, so those
+        seconds occupy a worker and not the event loop.
+
+        The whole replay comes back, not just the tracks.  A decode does not
+        only produce positions: each pawn also states its own agent codename,
+        and every ability cast names the agent that made it, so the roster and
+        the cast list are different afterwards too.  The desktop viewer has to
+        rebuild its body and its transport bar by hand for exactly this reason.
+
+        **A build with no payload transform is a 200.**  `tracks.attach` is
+        documented never to raise for want of positions -- it writes the
+        refusal into `position_source` -- and turning that into a 500 here
+        would make an honest answer look like a server fault.
+        """
+        path = library.registry.path(replay_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail=NO_SUCH_REPLAY)
+
+        # One at a time. The decoder is a CPU-bound subprocess, and two at once
+        # halve both -- the same reason vrfhome.prewarm runs a single worker.
+        # The queue is paused for the duration: the user asked for this one,
+        # and it must not compete with twenty they did not. Unlike the desktop
+        # app there is no window whose closing resumes it, so the pause lasts
+        # exactly as long as the request and cannot be left on by a closed tab.
+        preparation.pause()
+        try:
+            with _DECODE_LOCK:
+                replay = _decode_now(library, config, replay_id, path)
+        finally:
+            preparation.resume()
+        return wire.replay_doc(replay, replay_id, config.art)
+
+    @app.get(f"{API}/replays/{{replay_id}}/positions")
+    def read_positions(replay_id: str) -> Response:
+        """
+        The decoded tracks, in the format the sidecar and the cache already use.
+
+        Six parallel arrays per actor rather than a record per sample: about a
+        third of the bytes, and the shape a typed array wants at the far end.
+        One builder feeds all three, so a test can assert this body is what
+        `positionfile.write` would have put on disk.
+
+        A replay with no positions gets the document with empty tracks **and
+        its `position_source`**, not a 404. Whether a decode happened is a fact
+        about the replay; 404 would say the replay does not exist.
+        """
+        entry = library.open(replay_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=NO_SUCH_REPLAY)
+        with entry.lock:
+            if entry.positions_json is None:
+                document = positionfile.to_document(tracks.sidecar_of(entry.replay))
+                entry.positions_json = json.dumps(document).encode("utf-8")
+            body = entry.positions_json
+        return Response(content=body, media_type="application/json")
 
 
 def _add_map_routes(app: FastAPI, config: Settings) -> None:

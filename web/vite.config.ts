@@ -1,6 +1,7 @@
-/// <reference types="vitest/config" />
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+// vitest/config rather than vite: it is the same defineConfig widened to
+// accept the `test` block below, which vite's own type does not know about.
+import { defineConfig } from "vitest/config";
 
 // The dev server proxies /api and /assets to the Python server, so development
 // and production are both same-origin and CORS never enters the picture. A CORS

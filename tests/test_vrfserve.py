@@ -21,20 +21,32 @@ Three properties are worth more than the rest and are pinned individually.
 from __future__ import annotations
 
 import ast
+import json
+import threading
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import ClassVar
+from unittest import mock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from vrfhome import scan
+from vrfserve import app as app_mod
 from vrfserve import ids, schema, wire
 from vrfserve.app import Settings, create_app
+from vrfview import positionfile, tracks
 from vrfview.art import ArtCache, Callout, MapArt, Transform
-from vrfview.model import Loadout, Player, Replay, Round
+from vrfview.model import Loadout, Player, Position, Replay, Round, Track
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+def _supplier():
+    """A fresh Replay per call, the way `pipeline.open_replay` gives one."""
+    return lambda *_args, **_kwargs: _replay()
 
 
 def _replay() -> Replay:
@@ -400,3 +412,340 @@ class Headless(unittest.TestCase):
             for name in self._imports(module):
                 root = name.split(".")[0]
                 assert root not in banned, f"vrfserve.{module} imports {name}"
+
+
+class DecoderReported(unittest.TestCase):
+    """
+    Whether a decode is possible has to be answerable without attempting one.
+
+    A machine with no .NET SDK and no drop-in has no decoder. That is ordinary,
+    it costs positions and nothing else, and the page has to be able to say so
+    rather than offer a button that cannot work.
+    """
+
+    def setUp(self):
+        self._dir = TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def _config(self, parser_exe: str | None):
+        settings = Settings(
+            demo_path=str(self.tmp),
+            web_dir=self.tmp / "nowhere",
+            use_cache=False,
+            parser_exe=parser_exe,
+        )
+        return TestClient(create_app(settings)).get("/api/config").json()
+
+    def test_a_parser_exe_pointing_at_nothing_is_reported_not_raised(self):
+        doc = self._config(str(self.tmp / "no-such-decoder.dll"))
+        schema.ConfigDoc.model_validate(doc)
+        assert not doc["decoder"]["found"]
+        assert doc["decoder"]["hint"]
+        assert "no-such-decoder.dll" in doc["decoder"]["hint"]
+
+    def test_the_server_still_starts_and_serves_without_a_decoder(self):
+        settings = Settings(
+            demo_path=str(self.tmp),
+            web_dir=self.tmp / "nowhere",
+            use_cache=False,
+            parser_exe=str(self.tmp / "absent.dll"),
+        )
+        client = TestClient(create_app(settings))
+        assert client.get("/api/library").status_code == 200
+
+    def test_a_real_decoder_is_named(self):
+        fake = self.tmp / "vrf-positions.dll"
+        fake.write_bytes(b"not really a decoder, but it is a file")
+        doc = self._config(str(fake))
+        assert doc["decoder"]["found"]
+        assert str(fake) in doc["decoder"]["described"]
+        assert doc["decoder"]["hint"] == ""
+
+
+class Decoding(unittest.TestCase):
+    """
+    The decode endpoint, with the decoder itself patched out.
+
+    Nothing here runs the C# program: what is being tested is the endpoint's
+    contract, and the decoder has its own tests. The most important case is the
+    refusal -- `tracks.attach` is documented never to raise for want of
+    positions, and an endpoint that turned that into a 500 would make an honest
+    answer look like a server fault.
+    """
+
+    def setUp(self):
+        self._dir = TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+        (self.tmp / "broken.vrf").write_bytes(b"not a replay")
+        self.client = TestClient(
+            create_app(
+                Settings(
+                    demo_path=str(self.tmp),
+                    web_dir=self.tmp / "nowhere",
+                    use_cache=False,
+                ),
+            ),
+        )
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def test_an_unknown_id_is_a_404(self):
+        response = self.client.post("/api/replays/" + "0" * 16 + "/decode")
+        assert response.status_code == 404
+
+    def test_a_traversal_shaped_id_is_a_404_too(self):
+        assert self.client.post("/api/replays/..%2F..%2Fx/decode").status_code == 404
+
+    def _decoding(self, attach):
+        """
+        The endpoint with the two things it stands on replaced.
+
+        `open_replay` and `attach` are patched at the boundary of what is being
+        tested: this is about what the handler does with their answers, and
+        neither reading a container nor running a subprocess is its job.
+        """
+        replay_id = ids.id_for(self.tmp / "broken.vrf")
+        with (
+            mock.patch.object(app_mod.pipeline, "open_replay", side_effect=_supplier()),
+            mock.patch.object(app_mod.tracks, "attach", side_effect=attach),
+            mock.patch.object(app_mod.names, "resolve", side_effect=lambda r, _c: r),
+        ):
+            return self.client.post(f"/api/replays/{replay_id}/decode")
+
+    def test_a_build_with_no_transform_is_a_200_carrying_the_refusal(self):
+        """
+        The rule the whole decoding layer stands on.
+
+        `tracks.attach` never raises for want of positions -- it writes the
+        reason into `position_source` -- and an endpoint that turned that into
+        a 500 would make an honest answer look like a server fault. An 11.11
+        capture is not an error; it is a capture nobody can decode.
+        """
+        refusal = "no payload transform for ++Ares-Core+release-11.11"
+
+        def refuse(replay, _path, _options=None):
+            replay.position_source = refusal
+            return replay
+
+        response = self._decoding(refuse)
+        assert response.status_code == 200
+        doc = response.json()
+        schema.ReplayDoc.model_validate(doc)
+        assert doc["position_source"] == refusal
+        assert doc["has_positions"] is False
+
+    def test_a_successful_decode_returns_the_whole_replay_not_just_tracks(self):
+        """
+        A decode changes the roster too, so the response has to carry it.
+
+        Each pawn states its own agent codename and every cast names the agent
+        that made it, so a client that refreshed only the map would still show
+        ten players called by their actor id.
+        """
+
+        def decode(replay, _path, _options=None):
+            replay.positions = {
+                1: Track(actor_id=1, samples=(Position(t_ms=0, actor_id=1, x=1.0, y=2.0, z=3.0),)),
+            }
+            replay.position_source = "decoded 1 position"
+            replay.players = [Player(actor_id=1, team="A", label="A1", codename="Hunter")]
+            return replay
+
+        response = self._decoding(decode)
+        assert response.status_code == 200
+        doc = response.json()
+        assert doc["has_positions"] is True
+        assert doc["players"][0]["codename"] == "Hunter"
+
+    def test_the_cached_entry_is_replaced_and_its_revision_moves(self):
+        library = self.client.app.state.library
+        replay_id = ids.id_for(self.tmp / "broken.vrf")
+
+        def decode(replay, _path, _options=None):
+            replay.position_source = "decoded"
+            return replay
+
+        with (
+            mock.patch.object(app_mod.pipeline, "open_replay", side_effect=_supplier()),
+            mock.patch.object(app_mod.tracks, "attach", side_effect=decode),
+            mock.patch.object(app_mod.names, "resolve", side_effect=lambda r, _c: r),
+        ):
+            library.open(replay_id)
+            before = library.entry(replay_id).revision
+            self.client.post(f"/api/replays/{replay_id}/decode")
+        assert library.entry(replay_id).revision == before + 1
+
+    def test_decodes_do_not_overlap(self):
+        """One at a time: the decoder is a CPU-bound subprocess."""
+        inside = []
+        peak = 0
+
+        def decode(replay, _path, _options=None):
+            nonlocal peak
+            inside.append(1)
+            peak = max(peak, len(inside))
+            time.sleep(0.05)
+            inside.pop()
+            replay.position_source = "decoded"
+            return replay
+
+        replay_id = ids.id_for(self.tmp / "broken.vrf")
+        with (
+            mock.patch.object(app_mod.pipeline, "open_replay", side_effect=_supplier()),
+            mock.patch.object(app_mod.tracks, "attach", side_effect=decode),
+            mock.patch.object(app_mod.names, "resolve", side_effect=lambda r, _c: r),
+        ):
+            threads = [
+                threading.Thread(
+                    target=lambda: self.client.post(f"/api/replays/{replay_id}/decode"),
+                )
+                for _ in range(4)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        assert peak == 1
+
+
+class Positions(unittest.TestCase):
+    """
+    The positions document, and the one builder that also writes the sidecar.
+    """
+
+    def setUp(self):
+        self._dir = TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def test_it_is_the_same_document_the_sidecar_would_hold(self):
+        """
+        One builder feeds the sidecar, the machine cache and this response.
+
+        Two builders would be two chances to disagree about what a track looks
+        like, and the disagreement would be invisible until something drew it.
+        """
+        replay = _replay()
+        replay.positions = {1: Track(actor_id=1, samples=(
+            Position(t_ms=0, actor_id=1, x=1.5, y=-2.5, z=64.0, yaw=90.0),
+            Position(t_ms=100, actor_id=1, x=2.5, y=-3.5, z=64.0, yaw=91.0),
+        ))}
+        replay.position_source = "a line about the decode"
+        sidecar = tracks.sidecar_of(replay)
+        document = positionfile.to_document(sidecar)
+
+        written = self.tmp / "m.positions.json"
+        positionfile.write(written, sidecar)
+        assert document == json.loads(written.read_text(encoding="utf-8"))
+        assert positionfile.read(written).positions == replay.positions
+
+    def test_a_replay_with_no_decode_says_so_rather_than_404ing(self):
+        """
+        Whether a decode happened is a fact about the replay, not a 404.
+
+        A 404 would say the replay does not exist, which is a different and
+        wrong claim.
+        """
+        replay = _replay()
+        replay.position_source = "positions not decoded (not requested)"
+        document = positionfile.to_document(tracks.sidecar_of(replay))
+        assert document["tracks"] == {}
+        assert document["position_source"] == replay.position_source
+
+    def test_ability_spawns_are_empty_and_that_is_deliberate(self):
+        """
+        The raw spawns do not survive a load, and none are invented here.
+
+        `_apply_sidecar` regroups spawns into casts on every load, precisely so
+        the grouping rules can improve without invalidating a cached decode --
+        which means a `Replay` no longer carries the archetype paths they were
+        read from. Filling this in from the casts would be inventing facts.
+        """
+        replay = _replay()
+        assert tracks.sidecar_of(replay).ability_spawns == {}
+
+
+class BackgroundPreparation(unittest.TestCase):
+    """
+    The queue that fills the cache, and the one thing it must not do.
+
+    It runs only when asked for, and it is paused for exactly the length of a
+    foreground decode -- not for as long as a viewer is open. The desktop app
+    could resume on a window closing; a browser tab that goes away tells the
+    server nothing, so tying the pause to a request is what keeps a closed tab
+    from leaving the queue stopped forever.
+    """
+
+    def setUp(self):
+        self._dir = TemporaryDirectory()
+        self.tmp = Path(self._dir.name)
+        (self.tmp / "broken.vrf").write_bytes(b"not a replay")
+
+    def tearDown(self):
+        self._dir.cleanup()
+
+    def _client(self, *, prewarm: bool):
+        return TestClient(
+            create_app(
+                Settings(
+                    demo_path=str(self.tmp),
+                    web_dir=self.tmp / "nowhere",
+                    use_cache=False,
+                    prewarm=prewarm,
+                ),
+            ),
+        )
+
+    def test_it_does_not_start_when_it_was_not_asked_for(self):
+        with self._client(prewarm=False) as client:
+            assert client.get("/api/jobs").json() == {"statuses": {}}
+
+    def test_an_unreadable_capture_is_never_queued(self):
+        """`Prewarmer` queues only playable cards; nothing here changes that."""
+        with self._client(prewarm=True) as client:
+            statuses = client.get("/api/jobs").json()["statuses"]
+        assert statuses == {}
+
+    def test_a_decode_pauses_and_resumes_the_queue_around_itself(self):
+        replay_id = ids.id_for(self.tmp / "broken.vrf")
+
+        def decode(replay, _path, _options=None):
+            replay.position_source = "decoded"
+            return replay
+
+        with self._client(prewarm=True) as client:
+            preparation = client.app.state.preparation
+            with (
+                mock.patch.object(preparation, "pause") as paused,
+                mock.patch.object(preparation, "resume") as resumed,
+                mock.patch.object(
+                    app_mod.pipeline, "open_replay", side_effect=_supplier(),
+                ),
+                mock.patch.object(app_mod.tracks, "attach", side_effect=decode),
+                mock.patch.object(app_mod.names, "resolve", side_effect=lambda r, _c: r),
+            ):
+                client.post(f"/api/replays/{replay_id}/decode")
+        assert paused.call_count == 1
+        assert resumed.call_count == 1
+
+    def test_it_resumes_even_when_the_decode_fails(self):
+        """A raise inside the decode must not leave the queue stopped."""
+        replay_id = ids.id_for(self.tmp / "broken.vrf")
+        with self._client(prewarm=True) as client:
+            preparation = client.app.state.preparation
+            with (
+                mock.patch.object(preparation, "resume") as resumed,
+                mock.patch.object(
+                    app_mod.pipeline,
+                    "open_replay",
+                    side_effect=OSError("no such capture"),
+                ),pytest.raises(OSError, match="no such capture"),
+            ):
+                client.post(f"/api/replays/{replay_id}/decode")
+        assert resumed.call_count == 1

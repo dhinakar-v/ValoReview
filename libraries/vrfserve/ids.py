@@ -47,6 +47,10 @@ class Registry:
         """Rebuild from a fresh scan, forgetting captures that have gone."""
         self._paths = {id_for(p): Path(p) for p in paths}
 
+    def id_for_path(self, path: str | Path) -> str:
+        """The id a capture would have, whether or not it is registered."""
+        return id_for(path)
+
     def path(self, replay_id: str) -> Path | None:
         """The capture with this id, or None.  Never derived from the string."""
         return self._paths.get(replay_id)

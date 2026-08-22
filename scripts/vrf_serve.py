@@ -31,7 +31,7 @@ from pathlib import Path
 # is the trap scripts/vrf_view.py documents at greater length.
 import uvicorn
 
-from vrfserve.app import Settings, create_app
+from vrfserve.app import Settings, create_app, decoder_doc
 from vrfview import art as art_mod
 
 DEFAULT_HOST = "127.0.0.1"
@@ -69,6 +69,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="serve no pictures; every claim the interface makes is unchanged",
     )
     parser.add_argument(
+        "--parser-exe",
+        default=None,
+        help="the built position decoder, overriding VRF_PARSER_EXE",
+    )
+    parser.add_argument(
+        "--no-prewarm",
+        action="store_true",
+        help="do not decode the library in the background",
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="re-read every capture rather than trusting the scan cache",
@@ -98,6 +108,8 @@ def build_settings(args: argparse.Namespace) -> Settings:
         demo_path=args.demo_path,
         art=art,
         use_cache=not args.no_cache,
+        parser_exe=args.parser_exe,
+        prewarm=not args.no_prewarm,
     )
 
 
@@ -116,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     library = app.state.library
     print(f"replays  {library.result.described}")
     print(f"art      {settings.art.described}")
+    print(f"decoder  {decoder_doc(settings.parser_exe)['described']}")
     if not settings.web_built:
         print(f"page     {app.state.settings.web_dir}: not built")
 

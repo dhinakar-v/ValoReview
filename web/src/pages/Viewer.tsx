@@ -12,11 +12,11 @@
  * it is captioned, so the two things that can be missing each get words.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
-import type { Player, Replay, Round } from "../api/types";
+import type { Decoder, Player, Replay, Round } from "../api/types";
 import { Provenance } from "../views/Provenance";
 import { Failed, Loading, Page, Sentence } from "../views/Shell";
 
@@ -180,28 +180,62 @@ function Casts({ replay }: { replay: Replay }) {
   );
 }
 
-function Scene({ replay }: { replay: Replay }) {
-  // Where the minimap goes. Two things can be absent and each says which.
-  if (!replay.has_positions) {
+function Scene({
+  replay,
+  decoder,
+}: {
+  replay: Replay;
+  decoder: Decoder | undefined;
+}) {
+  const client = useQueryClient();
+  const decode = useMutation({
+    mutationFn: () => api.decode(replay.id),
+    // Replace the whole datum, not just the tracks. A decode also gives every
+    // pawn its agent codename and every cast the agent that made it, so the
+    // roster and the cast table are stale afterwards too -- the desktop viewer
+    // has to rebuild its body and its transport bar by hand for this reason.
+    onSuccess: (fresh) => client.setQueryData(["replay", replay.id], fresh),
+  });
+
+  if (replay.has_positions) {
     return (
       <div className="panel">
         <h2>Map</h2>
         <Sentence>
-          No positions decoded for this capture.
+          Positions are decoded &mdash; the minimap and the 3D scene are not built yet.
           <br />
-          <span className="mono">{replay.position_source || "not requested"}</span>
+          <span className="mono">{replay.position_source}</span>
         </Sentence>
       </div>
     );
   }
+
   return (
     <div className="panel">
       <h2>Map</h2>
       <Sentence>
-        Positions are decoded &mdash; the minimap and the 3D scene are not built yet.
+        No positions decoded for this capture.
         <br />
-        <span className="mono">{replay.position_source}</span>
+        <span className="mono">{replay.position_source || "not requested"}</span>
       </Sentence>
+      {/*
+        A button only where one can work. Without a built decoder there is
+        nothing to press, so the sentence names the command instead -- offering
+        a control that cannot do anything is worse than explaining its absence.
+      */}
+      {decoder?.found ? (
+        <div className="toolbar" style={{ paddingTop: 12, justifyContent: "center" }}>
+          <button type="button" onClick={() => decode.mutate()} disabled={decode.isPending}>
+            {decode.isPending ? "DECODING…" : "DECODE POSITIONS"}
+          </button>
+          <span className="muted">about four seconds</span>
+        </div>
+      ) : (
+        <p className="muted" style={{ textAlign: "center", fontSize: 12 }}>
+          {decoder?.hint ?? "checking for a decoder…"}
+        </p>
+      )}
+      {decode.isError ? <Failed error={decode.error} /> : null}
     </div>
   );
 }
@@ -213,6 +247,7 @@ export function ViewerPage() {
     queryFn: () => api.replay(id),
     enabled: Boolean(id),
   });
+  const config = useQuery({ queryKey: ["config"], queryFn: api.config });
 
   const back = (
     <Link to="/">
@@ -255,7 +290,7 @@ export function ViewerPage() {
     >
       <div className="viewer-grid">
         <div>
-          <Scene replay={replay} />
+          <Scene replay={replay} decoder={config.data?.decoder} />
           <Roster replay={replay} />
           <Rounds replay={replay} />
           <Casts replay={replay} />

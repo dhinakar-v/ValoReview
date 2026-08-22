@@ -79,6 +79,12 @@ function show(library: Library = LIBRARY) {
             maps: 0,
             agents: 0,
           },
+          decoder: {
+            found: false,
+            path: "",
+            described: "the position decoder is not built",
+            hint: "the position decoder is not built; run build-decoder.bat",
+          },
           catalog_source: "",
           web_built: true,
           web_hint: "",

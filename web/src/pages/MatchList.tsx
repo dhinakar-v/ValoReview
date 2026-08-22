@@ -126,6 +126,16 @@ export function MatchListPage() {
         </div>
       ) : null}
       {config.data ? <div>{config.data.art.described}</div> : null}
+      {/*
+        Whether a decode is even possible, beside where the art came from. A
+        library full of playable captures and no built decoder is a confusing
+        state to discover one click later.
+      */}
+      {config.data ? (
+        <div className={config.data.decoder.found ? "" : "error"}>
+          {config.data.decoder.described}
+        </div>
+      ) : null}
     </>
   );
 
