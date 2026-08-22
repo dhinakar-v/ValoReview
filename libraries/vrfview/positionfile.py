@@ -88,10 +88,21 @@ def sidecar_path(dump_path: str | Path) -> Path:
     return path.with_name(path.stem + SUFFIX)
 
 
-def write(path: str | Path, sidecar: Sidecar) -> Path:
-    """Write one sidecar, and return where it went."""
-    out = Path(path)
-    doc = {
+def to_document(sidecar: Sidecar) -> dict:
+    """
+    One sidecar as the JSON document that represents it.
+
+    Separate from `write` because this document is not only a file any more.
+    It is the format positions travel in: to a sidecar beside a dump, to the
+    machine cache, and over HTTP to whatever is drawing them.  Having one
+    builder means those three can never disagree about what a track looks
+    like, and a test can assert an HTTP body is byte-identical to what `write`
+    would have produced for the same replay.
+
+    Six parallel arrays per actor rather than a record per sample: about a
+    third of the bytes, and the shape a typed array wants at the far end.
+    """
+    return {
         "format": FORMAT,
         "version": VERSION,
         "match_id": sidecar.match_id,
@@ -103,7 +114,7 @@ def write(path: str | Path, sidecar: Sidecar) -> Path:
         "position_source": sidecar.description,
         "codenames": {str(k): v for k, v in sorted(sidecar.codenames.items())},
         "tracks": {
-            str(actor_id): _columns(track)
+            str(actor_id): to_columns(track)
             for actor_id, track in sorted(sidecar.positions.items())
         },
         "ability_spawns": {
@@ -111,12 +122,17 @@ def write(path: str | Path, sidecar: Sidecar) -> Path:
             for actor_id, (path, t_ms) in sorted(sidecar.ability_spawns.items())
         },
         "ability_tracks": {
-            str(actor_id): _columns(track)
+            str(actor_id): to_columns(track)
             for actor_id, track in sorted(sidecar.ability_tracks.items())
         },
     }
+
+
+def write(path: str | Path, sidecar: Sidecar) -> Path:
+    """Write one sidecar, and return where it went."""
+    out = Path(path)
     with out.open("w", encoding="utf-8") as fh:
-        json.dump(doc, fh, ensure_ascii=False)
+        json.dump(to_document(sidecar), fh, ensure_ascii=False)
     return out
 
 
@@ -135,8 +151,7 @@ def read(path: str | Path) -> Sidecar:
         raise PositionFileError(msg)
     if doc.get("version") not in READABLE:
         msg = (
-            f"{src}: sidecar version {doc.get('version')!r}, "
-            f"expected one of {READABLE}"
+            f"{src}: sidecar version {doc.get('version')!r}, expected one of {READABLE}"
         )
         raise PositionFileError(msg)
 
@@ -181,7 +196,7 @@ def _spawn(src: Path, raw_id, entry) -> tuple[str, int]:
     return (str(entry[0]), int(entry[1]))
 
 
-def _columns(track: Track) -> dict[str, list]:
+def to_columns(track: Track) -> dict[str, list]:
     return {
         "t": [p.t_ms for p in track.samples],
         "x": [p.x for p in track.samples],

@@ -708,6 +708,9 @@ class TestHeadless(unittest.TestCase):
         # art resolves file paths and coordinates, never pixels; keeping it on
         # this list is what lets `dump` report art coverage with no Tk present.
         "art",
+        # The provenance account is data about the model, and the one page a
+        # non-Tk interface has to be able to render.
+        "provenance",
     )
 
     @staticmethod

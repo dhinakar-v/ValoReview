@@ -38,19 +38,15 @@ from __future__ import annotations
 
 import tkinter as tk
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
 from vrf_reader import VrfError
 from vrfhome import cards, prewarm, scan
 from vrfview import art as art_mod
-from vrfview import infer, loader, names, theme, tracks
+from vrfview import pipeline, theme
 from vrfview.images import ImageCache, Visuals
 from vrfview.viewer import Session, ViewerPage
-
-if TYPE_CHECKING:
-    from vrfview.model import Replay
 
 WINDOW_TITLE = "Valorant replay analyzer"
 
@@ -61,22 +57,10 @@ WINDOW_SIZE = "1360x860"
 MIN_SIZE = (1100, 700)
 
 
-def open_replay(path: str | Path, catalog=None) -> Replay:
-    """
-    Read, infer, attach anything already decoded, then name.
-
-    The order is the pipeline's and the reasons are unchanged -- `infer`
-    cross-checks its team split against the codenames, `names` needs them to
-    name anybody -- with one step added in the middle.  `tracks.attach_stored`
-    cannot decode; it only picks up a sidecar or a cache entry, so it is
-    milliseconds when there is something and nothing when there is not.  It
-    sits *before* `names` because a stored decode carries the codenames too,
-    and naming has to happen after they arrive or every agent stays a
-    `Hunter`.
-    """
-    replay = infer.annotate(loader.load(path))
-    tracks.attach_stored(replay, path)
-    return names.resolve(replay, catalog)
+# The load pipeline moved to vrfview.pipeline so it is not the toolkit's
+# property -- it is the same four steps in the same order, and this name is
+# kept because it is what the window calls.
+open_replay = pipeline.open_replay
 
 
 class ReplayApp(ctk.CTk):

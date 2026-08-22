@@ -95,10 +95,7 @@ LABEL_FONT = ("Arial", 8, "bold")
 NOTE_FONT = ("Arial", 9)
 MISSING_FONT = ("Arial", 11)
 
-SIGHT_CAPTION = (
-    "SIGHT (approx) — the radar silhouette, not collision. 2D only: it ignores "
-    "heaven, tunnels and anything you can see over."
-)
+SIGHT_CAPTION = sight.CAPTION
 
 NO_ART = "No radar image for {name}."
 

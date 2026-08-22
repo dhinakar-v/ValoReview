@@ -11,6 +11,8 @@ looking, and where the silhouette stops it.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from PIL import Image
 
@@ -220,3 +222,64 @@ class TestCache(unittest.TestCase):
         cache = sight.SightCache(self.FakeImages(None))
         assert cache.get("nope.png") is None
         assert cache.get(None) is None
+
+
+class FromPath(unittest.TestCase):
+    """
+    A mask can be built from a radar file without an image cache.
+
+    That existed only because the viewer had one; a server or a test would be
+    constructing an `ImageCache` purely to open a PNG, and the decision about
+    what counts as open belongs beside `ALPHA_FLOOR` rather than beside a
+    widget.
+    """
+
+    def test_it_reads_a_png_and_thresholds_its_alpha(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "minimap.png"
+            image = Image.new("RGBA", (8, 8), (255, 255, 255, 0))
+            for x in range(4):
+                for y in range(8):
+                    image.putpixel((x, y), (255, 255, 255, 255))
+            image.save(path)
+            built = sight.SightMap.from_path(path, size=8)
+            assert built is not None
+            assert built.open_fraction == 0.5
+            assert not built.blocked(0.25, 0.5)
+            assert built.blocked(0.75, 0.5)
+
+    def test_a_file_that_is_not_an_image_is_none_rather_than_a_traceback(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "minimap.png"
+            path.write_text("not a png", encoding="utf-8")
+            assert sight.SightMap.from_path(path) is None
+
+    def test_a_missing_file_is_none(self):
+        with TemporaryDirectory() as tmp:
+            assert sight.SightMap.from_path(Path(tmp) / "absent.png") is None
+
+    def test_no_path_at_all_is_none(self):
+        assert sight.SightMap.from_path(None) is None
+
+    def test_the_cache_reads_the_file_itself_when_given_no_supplier(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "minimap.png"
+            Image.new("RGBA", (8, 8), (255, 255, 255, 255)).save(path)
+            cache = sight.SightCache()
+            first = cache.get(path)
+            assert first is not None
+            # Kept, not rebuilt: the same object comes back.
+            assert cache.get(path) is first
+
+
+class Caption(unittest.TestCase):
+    def test_the_sentence_lives_with_the_raycaster(self):
+        """
+        Anything handed a mask is handed the sentence that says what it is.
+
+        The caption used to belong to the one view that drew a cone, which
+        meant a second view could draw one and quietly leave off what it was
+        a cone of.
+        """
+        assert "not collision" in sight.CAPTION
+        assert "2D only" in sight.CAPTION

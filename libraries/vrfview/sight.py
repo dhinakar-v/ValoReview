@@ -75,6 +75,15 @@ SEED_CELLS = 2
 # works; the direction is renormalised.  Matches minimap.FACING_PROBE_UU.
 PROBE_UU = 100.0
 
+# What a cone drawn from this mask is, in words.  It lives here rather than in
+# whichever view draws it because the claim belongs to the raycaster: anything
+# handed a `SightMap` is handed this sentence too, and cannot render a cone
+# while quietly leaving off what it is a cone of.
+CAPTION = (
+    "SIGHT (approx) — the radar silhouette, not collision. 2D only: it ignores "
+    "heaven, tunnels and anything you can see over."
+)
+
 
 @dataclass(frozen=True)
 class SightMap:
@@ -97,6 +106,27 @@ class SightMap:
         small = image.convert("RGBA").resize((size, size))
         alpha = small.getchannel("A").tobytes()
         return cls(size=size, cells=bytes(1 if a >= ALPHA_FLOOR else 0 for a in alpha))
+
+    @classmethod
+    def from_path(cls, path, size: int = GRID) -> SightMap | None:
+        """
+        Build from a radar file, or None if it cannot be read.
+
+        Here rather than in a caller because the alpha channel is the whole
+        occluder model: whatever opens the PNG decides what `blocked` means,
+        and that decision belongs beside `ALPHA_FLOOR`.  Pillow is imported in
+        the body so the module keeps importing with no image library present --
+        every other entry point on this class is pure arithmetic over `cells`.
+        """
+        if path is None:
+            return None
+        from PIL import Image  # noqa: PLC0415  (see the docstring)
+
+        try:
+            with Image.open(path) as image:
+                return cls.from_image(image, size)
+        except (OSError, ValueError):
+            return None
 
     @property
     def open_fraction(self) -> float:
@@ -217,7 +247,11 @@ class SightCache:
     second replay on the same map should not re-read the PNG.
     """
 
-    def __init__(self, images) -> None:
+    def __init__(self, images=None) -> None:
+        # An image supplier is optional: a Tk viewer already has one and its
+        # cache is worth sharing, and anything else -- a server, a test --
+        # would only be constructing one to open a file that `from_path`
+        # opens by itself.
         self.images = images
         self._maps: dict[str, SightMap | None] = {}
 
@@ -227,6 +261,11 @@ class SightCache:
             return None
         key = str(path)
         if key not in self._maps:
-            source = self.images.source(path)
-            self._maps[key] = None if source is None else SightMap.from_image(source)
+            self._maps[key] = self._build(path)
         return self._maps[key]
+
+    def _build(self, path) -> SightMap | None:
+        if self.images is None:
+            return SightMap.from_path(path)
+        source = self.images.source(path)
+        return None if source is None else SightMap.from_image(source)

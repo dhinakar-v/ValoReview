@@ -48,17 +48,17 @@ from typing import TYPE_CHECKING
 import customtkinter as ctk
 
 from vrf_reader import _fmt_ms
-from vrfview import abilitywindow, icons, mapref, names, theme, tracks
+from vrfview import abilitywindow, icons, mapref, names, provenance, theme, tracks
 from vrfview import art as art_mod
 from vrfview.clock import SPEEDS, PlaybackClock
 from vrfview.controls import STRIP_HEIGHT, Callbacks, TimelineStrip, TransportBar
-from vrfview.images import ImageCache, Visuals
 from vrfview.minimap import MinimapView, MissingArtView
 from vrfview.panels import TeamPanel
 from vrfview.state import state_at
 
 if TYPE_CHECKING:
     from vrfview.art import ArtCache
+    from vrfview.images import Visuals
     from vrfview.model import Replay
 
 FPS = 30
@@ -478,7 +478,9 @@ class ViewerPage(ctk.CTkFrame):
         self._decoding = False
         self.decode_button.configure(
             state="disabled" if self.replay.has_positions else "normal",
-            text="POSITIONS DECODED" if self.replay.has_positions else "DECODE POSITIONS",
+            text="POSITIONS DECODED"
+            if self.replay.has_positions
+            else "DECODE POSITIONS",
         )
         # A decode does not only produce positions: each pawn also states its
         # own agent codename, and every ability cast names the agent that made
@@ -518,127 +520,4 @@ class ViewerPage(ctk.CTkFrame):
 
 def provenance_text(replay: Replay, art: ArtCache | None = None) -> str:
     """Every claim the interface makes, and where each one came from."""
-    lines = [
-        "READ FROM THE FILE",
-        f"  replay            {replay.source}",
-        f"  match id          {replay.match_id or 'not recorded'}",
-        f"  recorded (UTC)    {replay.recorded_utc}",
-        f"  build             {replay.build}",
-        f"  duration          {_fmt_ms(replay.length_ms)}",
-        f"  map (internal)    {replay.map_path}",
-        f"  rounds            {len(replay.rounds)}, from roundStarted events",
-        (
-            f"  kills             {len(replay.kills)}, characterDeath: "
-            "args[1] killer, args[2] victim"
-        ),
-        f"  ultimates         {len(replay.ultimates)}, characterUltimateUsed",
-        (
-            f"  spike events      {len(replay.spike)}, timestamps only - the events "
-            "carry no actor id"
-        ),
-        (
-            f"  side swap         "
-            f"{_fmt_ms(replay.side_swap_ms) if replay.side_swap_ms else 'not recorded'}"
-        ),
-        f"  agent UUIDs       {len(replay.loadouts)} loadout slots, agent ids only",
-        "",
-        "DECODED FROM THE REPLICATION STREAM",
-        f"  positions         {replay.position_source or 'not requested'}",
-        f"  agent per actor   {_codename_summary(replay)}",
-        f"  ability casts     {_ability_summary(replay)}",
-    ]
-    lines += [
-        "",
-        "RESOLVED AGAINST RIOT'S CONTENT CATALOGUE",
-        f"  catalogue         {replay.catalog_source}",
-        f"  map name          {replay.map_name}, from the {replay.map_name_source}",
-        f"  agents (roster)   {', '.join(replay.roster) or 'unresolved'}",
-    ]
-    lines += [f"  {note}" for note in replay.catalog_notes]
-
-    cache = art if art is not None else art_mod.ArtCache()
-    lines += ["", "ART CACHE (pictures only; it names nothing and infers nothing)"]
-    lines += [
-        f"  {line}"
-        for line in art_mod.coverage(
-            cache,
-            replay.map_path,
-            [x.character_id for x in replay.loadouts],
-        )
-    ]
-    lines += ["  the map reference window plots Riot's callouts, never players"]
-    lines += ["", "INFERRED (marked * in the interface)"]
-    lines += [f"  {note}" for note in replay.notes]
-    lines += [
-        "",
-        "NOT IN THE FILE",
-        "  player names / Riot IDs   absent; they need val-match-v1, which a",
-        "                            personal development key cannot reach",
-        "  health, armour, credits   never replicated to a spectator recording;",
-        "                            the player rows show -- rather than a number",
-        "  attacker / defender       spike events carry no actor id, so which",
-        "                            side planted is not recoverable, and the two",
-        "                            colours mean team A and team B",
-        "  weapon held               in the property payload but not yet decoded",
-        "  where an ability landed   ability actors state what they are and when,",
-        "                            but not where: the spawn transform is not at",
-        "                            any fixed offset, and only the pawn kinds --",
-        "                            a drone, a turret -- ever send a movement",
-        "                            record.  A smoke has a time and no coordinate",
-        "  ability damage / radius   no ability carries a range, radius or damage",
-        "                            figure in the replay or in Riot's catalogue",
-    ]
-    return "\n".join(lines)
-
-
-def _ability_summary(replay: Replay) -> str:
-    if not replay.ability_casts:
-        return "not decoded; no ability actor was read"
-    with_track = sum(1 for c in replay.ability_casts if c.has_track)
-    slots = sorted({c.slot for c in replay.ability_casts})
-    return (
-        f"{len(replay.ability_casts)} casts across slots {', '.join(slots)}; "
-        f"{with_track} spawned a pawn with a decoded path"
-    )
-
-
-def _codename_summary(replay: Replay) -> str:
-    named = [p for p in replay.players if p.codename]
-    if not named:
-        return "not decoded; no pawn archetype was read"
-    return (
-        f"{len(named)} of {len(replay.players)} actors state their own agent "
-        f"({', '.join(sorted({p.identity for p in named}))})"
-    )
-
-
-def run(
-    replay: Replay,
-    art: ArtCache | None = None,
-    path: str | Path = "",
-    catalog=None,
-) -> int:
-    """
-    Open one replay in its own window and block until it closes.
-
-    `path` is where the replay was loaded from; without it the DECODE POSITIONS
-    button has nothing to read and says so rather than guessing at a filename.
-    """
-    ctk.set_appearance_mode("dark")
-    root = ctk.CTk()
-    root.title(f"vrfview - {replay.source} - {replay.map_name}")
-    root.geometry("1360x860")
-    root.minsize(1100, 700)
-    root.configure(fg_color=theme.APP_BG)
-
-    visuals = Visuals.make(art if art is not None else art_mod.ArtCache(), ImageCache())
-    session = Session(
-        replay=replay,
-        path=Path(path or replay.source),
-        visuals=visuals,
-        catalog=catalog,
-    )
-    page = ViewerPage(root, session, on_back=root.destroy)
-    page.pack(fill="both", expand=True)
-    root.mainloop()
-    return 0
+    return provenance.describe(replay, art)

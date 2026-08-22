@@ -144,6 +144,38 @@ class SidecarRoundTrip(unittest.TestCase):
         assert back.match_id == "match-1"
         assert back.hz == 10
 
+    def test_the_document_is_what_the_file_holds(self):
+        """
+        One builder feeds the sidecar, the machine cache and the wire.
+
+        Positions have to travel over HTTP as well as onto disk now, and two
+        builders would be two chances to disagree about what a track looks
+        like.  Asserting the in-memory document is byte-for-byte what `write`
+        put in the file is what lets a served body be checked against this
+        format rather than against a second description of it.
+        """
+        sidecar = positionfile.Sidecar(
+            positions={12: _track(12, 20)},
+            ability_tracks={99: _track(99, 4)},
+            ability_spawns={99: ("/Game/Characters/Killjoy/Turret", 4200)},
+            codenames={12: "Hunter"},
+            description="a line about the decode",
+            match_id="match-1",
+            build="++Ares-Core+release-12.10",
+            hz=10,
+        )
+        path = self.tmp / "m.positions.json"
+        positionfile.write(path, sidecar)
+        assert positionfile.to_document(sidecar) == json.loads(
+            path.read_text(encoding="utf-8"),
+        )
+
+    def test_the_document_reads_back_as_the_same_tracks(self):
+        sidecar = positionfile.Sidecar(positions={12: _track(12, 20)}, hz=10)
+        path = self.tmp / "m.positions.json"
+        path.write_text(json.dumps(positionfile.to_document(sidecar)), encoding="utf-8")
+        assert positionfile.read(path).positions == sidecar.positions
+
     def test_a_foreign_file_is_refused(self):
         path = self.tmp / "x.positions.json"
         path.write_text(json.dumps({"hello": 1}), encoding="utf-8")
