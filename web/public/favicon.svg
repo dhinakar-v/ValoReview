@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!--
+    The same mark as views/icons.tsx::Wordmark: a scrub ring carrying a
+    playhead, around a play triangle. Written twice on purpose, because a
+    browser tab icon is fetched as a file before any JavaScript or CSS runs, so
+    it can neither come from a component nor read a custom property. That is
+    why the red is a literal here and `currentColor` there; #ff4655 is
+    theme.py's BRAND, and both change together.
+
+    Square corners, no radius: every radius token in this interface resolves to
+    0, and a rounded tab icon would be the only curved thing the product owns.
+
+    NOTE: there is no double hyphen anywhere in this comment, and there must
+    never be one. An SVG is parsed as XML, where a doubled hyphen is illegal
+    inside a comment, and the whole file is then a fatal parse error rather
+    than a warning: the tab falls back to the browser's blank-page glyph and
+    nothing anywhere says why. The prose style used everywhere else in this
+    repository is exactly the thing that breaks here, which is how the previous
+    version of this file came to never render. It is also why CSS custom
+    properties are described in words above instead of being named.
+  -->
+  <rect width="24" height="24" fill="#0a0b0d"/>
+  <g fill="none" stroke="#ff4655" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.6A8.4 8.4 0 1 1 6.6 5.57"/>
+    <path d="M10.4 8.9 15.6 12 10.4 15.1Z" fill="#ff4655" stroke-width="1.4"/>
+    <circle cx="12" cy="3.6" r="2.1" fill="#ff4655" stroke-width="0"/>
+  </g>
+</svg>

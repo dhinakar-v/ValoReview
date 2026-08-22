@@ -1,0 +1,76 @@
+[project]
+name = "valoreview"
+version = "0.1.0"
+description = "Decode and replay Valorant .vrf replay files."
+readme = "README.md"
+# The LICENSE file has always been Apache-2.0 and the metadata has never said
+# so, which meant a wheel built from this tree carried no licence at all and
+# the README's badge was the only place the claim was made.
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+# The decoding pipeline is stdlib and stays that way; the interface on top of
+# it is not.  customtkinter was the widget set the original brief specified and
+# went with the desktop app.  Pillow outlived it, which the comment here used
+# to predict and is now simply the case: `vrfview/sight.py` reads the radar
+# PNG's alpha channel to build the sight mask, and nothing else in the tree
+# draws a pixel.
+#
+# fastapi and uvicorn are the web interface.  The rule here has always been to
+# add a dependency only when the standard library genuinely lacks the thing,
+# and http.server genuinely lacks it: no routing, no streaming responses, no
+# request validation, and one thread per request.  Honouring the rule means
+# adding these two rather than hand-rolling an ASGI stack.  pydantic is listed
+# beside them because libraries/vrfserve/schema.py imports it directly: it
+# arrives with fastapi today, but a first-party import should be a declared
+# dependency, or the day fastapi swaps its validation backend the OpenAPI
+# document stops being generated and nothing says why.  starlette is not
+# listed, because nothing here imports it -- it is only ever named as a string
+# in an import ban.
+#
+# python-dotenv is deliberately NOT here: libraries/envfile.py already
+# implements the exact contract vrfconfig needs, so adding it would have meant
+# two readers of one .env in one process.  vrfconfig.py says so at greater
+# length.
+dependencies = [
+    "fastapi>=0.115.0",
+    "Pillow>=11.0.0",
+    "pydantic>=2.9.0",
+    "uvicorn>=0.30.0",
+]
+
+# The two library modules carry a CLI as well; scripts/ holds the pure CLIs,
+# which runners/ invokes by path.
+[project.scripts]
+vrf-reader = "vrf_reader:main"
+vrf-to-json = "vrf_to_json:main"
+
+[dependency-groups]
+# httpx2 is not the server's dependency, it is the test client's: Starlette's
+# TestClient drives the ASGI app through it in-process, so the API tests need
+# no port, no uvicorn and no network.
+dev = [
+    "httpx2>=0.28.0",
+    "pytest>=9.1.1",
+    "ruff>=0.16.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# libraries/ is the source root, not a package: its contents (two loose modules
+# and two packages) map onto the install root, so `import vrf_reader` and
+# `import vrfnet` keep working from anywhere.
+only-include = ["libraries"]
+sources = ["libraries"]
+
+[tool.pytest.ini_options]
+# scripts/ is not installed by the wheel -- only libraries/ is -- so the CLIs
+# are unimportable from a test without this. tests/ itself is reached via the
+# rootdir, which pytest adds because tests/ is a package.
+pythonpath = ["scripts"]
+
+[tool.uv]
+package = true

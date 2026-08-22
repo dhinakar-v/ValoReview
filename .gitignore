@@ -216,3 +216,40 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Valorant Replay Demo Folder
+Demos/
+# fetch_assets.py output
+assets/
+# Oodle runtime drop-in. The DLL is Epic's; it is never redistributed here.
+vendor/*
+!vendor/README.md
+
+
+# C# decoder build output (csharp/VrfPositions). The sources are committed; the
+# binaries are not, and they are rebuilt by runners/build-decoder.bat.
+csharp/**/bin/
+csharp/**/obj/
+
+# Everything regenerable: decoded position sidecars, the resolved Oodle path,
+# the match-list scan, and the decoder's scratch. libraries/vrfcache.py anchors
+# it to the project root, so deleting this directory is a complete reset.
+.cache/
+
+# Playwright's own output: the browser tests render real pages, so these are
+# screenshots, traces and an HTML report rather than anything to keep. The
+# specs are committed; what they produce is not.
+web/e2e/results/
+web/e2e/report/
+
+# UI reference frames and feedback screenshots. They are local working
+# material -- reference captures of the game's own interface and annotated
+# screenshots of this one -- so the folder and the notes beside it are kept
+# out of the tree along with the .md that indexes them.
+#
+# Anchored with a leading slash, and that is load-bearing: a bare `images/`
+# matches at every depth, so it silently swallowed docs/images/ as well -- the
+# README's own screenshots, which are committed on purpose. A `!docs/images/`
+# negation cannot fix that, because git does not descend into an excluded
+# directory and so never reaches the rule that would un-exclude it.
+/images/

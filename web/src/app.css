@@ -1,0 +1,2505 @@
+/*
+ * Layout, type and state.  Three files feed this one and each answers to a
+ * different owner:
+ *
+ *   tokens.css            hand-written -- space, radius, type, elevation,
+ *                         motion, stacking.  Nothing there is a colour.
+ *   theme.generated.css   written by scripts/make_theme.py from
+ *                         libraries/vrfview/theme.py.  Every colour, and the
+ *                         argument for the ones that carry one.
+ *   fonts.css             the four bundled woff2 files.
+ *
+ * The rule those files state holds here: no hex value in this stylesheet.  A
+ * colour that is not in the palette is a colour the desktop app and the
+ * canvases cannot see, and the canvases read the palette back out at runtime
+ * through views/images.ts::palette().
+ */
+
+@import "./tokens.css";
+@import "./theme.generated.css";
+@import "./fonts.css";
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * The one line that makes the parts of this page the browser draws itself
+ * match the parts we draw.
+ *
+ * Scrollbars, `<select>` popups, the caret and the focus ring inside a form
+ * control are all painted by the platform, and on Windows the platform paints
+ * them light unless it is told the page is dark.  So the map filter opened a
+ * white list over a near-black page and both scroll rails were pale bars.
+ * There is no colour here: it names which of its own two themes the browser
+ * should use, which is why it is not in the generated palette.
+ */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+/*
+ * A tap on a control should look like a press, not like a selection.  Mobile
+ * WebKit and Chromium paint a translucent block over whatever was touched,
+ * which lands on top of the button styling above; the hover and active states
+ * already say the same thing without a rectangle.
+ */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--app-bg);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+.display {
+  font-family: var(--font-display);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  line-height: var(--leading-tight);
+  margin: 0;
+  /* Headings here are map names and panel titles -- two or three words that
+     wrap to a single orphan often enough to notice.  Balancing is cheap at
+     this length and the browser gives up on its own past a few lines. */
+  text-wrap: balance;
+}
+
+code,
+.mono,
+.numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.spacer {
+  flex: 1;
+}
+
+/*
+ * A focus ring, which this interface did not have at all.  :focus-visible
+ * rather than :focus so a mouse press does not leave a ring behind, and it is
+ * on the accent rather than a team colour -- a team colour means a team.
+ */
+:where(a, button, select, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * No 300ms wait before a press registers.  The transport steps one event per
+ * click and the layer switches are pressed in sequence, so a double-tap-to-zoom
+ * delay reads as the control having missed the press.
+ */
+:where(a, button, select, input, [role="tab"], [role="button"]) {
+  touch-action: manipulation;
+}
+
+/*
+ * Visible only to a screen reader.  `display: none` and `visibility: hidden`
+ * both take an element back out of the accessibility tree, which is the
+ * opposite of what a label like this is for; clipping a 1px box leaves it in.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * The skip link, which is the same trick as `.sr-only` until it is focused.
+ * Above the bar in the stacking order, because it is drawn over it.
+ */
+.skip-link {
+  position: absolute;
+  left: var(--space-4);
+  top: var(--space-4);
+  z-index: var(--z-tooltip);
+  transform: translateY(-200%);
+  background: var(--card-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* The landing point of that link.  `tabIndex={-1}` means it is only ever
+   focused from script, so a ring around the whole page body would be
+   reporting something the user did not do.  A tab panel is *not* in this
+   rule: it carries `tabIndex={0}`, you reach it by tabbing off the strip,
+   and it keeps the ring above like anything else you can tab to. */
+main.page-body:focus-visible {
+  outline: none;
+}
+
+/* -- controls ---------------------------------------------------------- */
+
+button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: inherit;
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  white-space: nowrap;
+  /*
+   * Colour on the fast curve, movement on the spring.  A press that only
+   * swapped a fill gave no evidence the control had been *pressed* -- which is
+   * the one piece of feedback a transport bar stepping one event per click
+   * actually needs, because the result of the press is a canvas repaint the
+   * eye does not associate with the button.
+   */
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-slow) var(--ease-spring);
+}
+
+button:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--line-strong);
+}
+
+button:active:not(:disabled) {
+  background: var(--field-bg);
+  transform: scale(0.975);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The one active affordance the old page had, kept and given a fill so a
+   pressed toggle reads as pressed at a glance rather than on inspection. */
+button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 18%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--text-primary);
+}
+
+button[aria-pressed="true"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 26%, var(--card-bg));
+}
+
+/*
+ * The one control on a page that is filled rather than outlined.  There are
+ * two: DECODE POSITIONS, and PLAY.  Everything else is a bordered rectangle,
+ * which is what makes these two findable without reading them -- the fill does
+ * that job now that nothing here is rounded or raised.
+ */
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--app-bg);
+  font-weight: var(--weight-semibold);
+  padding-left: var(--space-5);
+  letter-spacing: var(--track-wide);
+}
+
+button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 82%, white);
+  border-color: color-mix(in srgb, var(--accent) 82%, white);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 48%, transparent),
+    0 8px 26px color-mix(in srgb, var(--accent) 44%, transparent);
+}
+
+/*
+ * The trailing cap: a nested circle carrying the mark, flush with the pill's
+ * right inner padding rather than a glyph floating beside the words.  It moves
+ * on hover so the button has somewhere to travel internally -- the press
+ * scales the whole control, this leans in the direction the action goes.
+ *
+ * `aria-hidden` is set by `Icon` in icons.tsx, centrally, so the accessible
+ * name is still exactly the label and `findByText("DECODE POSITIONS")` still
+ * matches the label's own text node.  See views/ui.tsx.
+ */
+button.primary .cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: var(--space-2);
+  margin-right: calc(-1 * var(--space-2));
+  background: color-mix(in srgb, var(--app-bg) 16%, transparent);
+  transition:
+    transform var(--dur-slow) var(--ease-spring),
+    background var(--dur-slow) var(--ease-spring);
+}
+
+button.primary:hover:not(:disabled) .cap {
+  transform: translate(3px, -1px) scale(1.06);
+  background: color-mix(in srgb, var(--app-bg) 26%, transparent);
+}
+
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+button.danger {
+  color: var(--accent-b);
+  border-color: color-mix(in srgb, var(--accent-b) 40%, var(--border));
+}
+
+button.sm {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+}
+
+button.icon-only {
+  padding: var(--space-2);
+}
+
+select,
+input[type="text"],
+input[type="search"] {
+  font: inherit;
+  color: inherit;
+  background: var(--field-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+select:hover,
+input:hover {
+  border-color: var(--line-strong);
+}
+
+/* `color-scheme: dark` gets the popup itself; the rows inside it still
+   inherit from the page on some platforms and end up dark-on-dark. */
+option {
+  background-color: var(--field-bg);
+  color: var(--text-primary);
+}
+
+/* A segmented control: one track, N options, the pressed one lifted out. */
+.seg {
+  display: inline-flex;
+  background: var(--field-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  gap: var(--space-1);
+}
+
+.seg button {
+  background: transparent;
+  border-color: transparent;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.seg button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+/* The fill and the edge say pressed; the drop shadow this used to carry was
+   the last one left on something that is not floating. */
+.seg button[aria-pressed="true"] {
+  background: var(--card-hover);
+  border-color: var(--line-strong);
+  color: var(--text-primary);
+}
+
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--field-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding-left: var(--space-3);
+  color: var(--text-muted);
+}
+
+.field:focus-within {
+  border-color: var(--accent);
+}
+
+.field select,
+.field input {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+}
+
+.field select:focus-visible,
+.field input:focus-visible {
+  outline: none;
+}
+
+/*
+ * The map filter, as this interface's own control.
+ *
+ * The list is a sibling of the button inside one positioned wrapper, the way
+ * `.menu-panel` is: it is anchored to the control and nothing here needs to
+ * escape an overflow.  `--shadow-2` is allowed because a popover genuinely
+ * floats, which is the whole of the exception `review.spec.ts` enforces.
+ */
+.select-field {
+  position: relative;
+  padding-left: var(--space-3);
+}
+
+.select-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 148px;
+  background: transparent;
+  border: none;
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.select-button > span {
+  flex: 1;
+}
+
+.select-button svg {
+  transform: rotate(90deg);
+  color: var(--text-faint);
+}
+
+.select-button[aria-expanded="true"] svg {
+  transform: rotate(-90deg);
+  color: var(--text-primary);
+}
+
+.select-list {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  right: 0;
+  z-index: var(--z-overlay);
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--card-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-2);
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* Kept in the tree and hidden by `display`, so the list has no size when it is
+   shut. `aria-expanded` on the button is what a reader goes by. */
+.select-list.is-shut {
+  display: none;
+}
+
+.select-option {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+/* The active option is the one the arrows are on, which is not necessarily the
+   chosen one -- that is the whole point of `aria-activedescendant`. */
+.select-option.is-active {
+  background: var(--card-hover);
+  color: var(--text-primary);
+}
+
+.select-option[aria-selected="true"] {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+/* -- app frame --------------------------------------------------------- */
+
+.app-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* The containing block for the skip link, which is absolutely positioned so
+     that it takes no space in the column until it is focused. */
+  position: relative;
+}
+
+/*
+ * A flush strip, not a floating pill.
+ *
+ * It used to be a rounded, blurred, shadowed bar inset from the window edge --
+ * which put a band of page background above it and a gap either side, and on
+ * the viewer that band was three-quarters of an inch of nothing above a map
+ * that wanted the room.  A 1px bottom border does the same separating job.
+ *
+ * The `backdrop-filter` went with the rounding.  It was affordable while the
+ * bar sat over a static page; it is not worth its repaint over a canvas
+ * running a `requestAnimationFrame` loop, and there is nothing behind an
+ * opaque bar to blur.
+ */
+.app-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--bar-h);
+  flex: 0 0 var(--bar-h);
+  width: 100%;
+  padding: 0 var(--space-5);
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  z-index: var(--z-sticky);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.brand svg {
+  display: block;
+  /*
+     --brand, not --accent: the mark is fixed by what the product is named
+     after, where --accent is the interface's own and may move with it.  See
+     theme.py's BRAND.
+  */
+  color: var(--brand);
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  line-height: var(--leading-tight);
+}
+
+.brand-sub {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+.crumbs .sep {
+  color: var(--text-faint);
+}
+
+.crumbs .here {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* A status light, and the sentence behind it is in the title attribute. */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-round);
+  background: var(--text-faint);
+  flex: none;
+}
+
+.dot.ok {
+  background: var(--accent-ok);
+}
+
+.dot.warn {
+  background: var(--accent-warn);
+}
+
+.dot.bad {
+  background: var(--accent-b);
+}
+
+/* -- page shell -------------------------------------------------------- */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: 0 var(--space-6);
+}
+
+/*
+ * One vertical rhythm for the whole page, instead of space accumulating.
+ *
+ * The heading padded its own bottom, the toolbar sat loose above the card
+ * list, and the pager sat loose below it -- three separate gaps that nobody
+ * had chosen together, which is what the UI review reported twice: dead space
+ * under `REPLAYS` and again above `page 1 of 3`.  The head no longer pads
+ * downward and `.page-body` owns the spacing between its children.
+ */
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-6) 0 var(--space-4);
+  flex: none;
+}
+
+.page-head h1 {
+  font-size: var(--text-2xl);
+}
+
+.page-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+  overflow-y: auto;
+  padding-bottom: var(--space-6);
+  scrollbar-color: var(--line-strong) transparent;
+  /* Two regions on this page scroll inside themselves, and reaching the end of
+     one of them should stop rather than start scrolling whatever is behind it
+     -- a table hitting its end and dragging the page under it is how the row
+     you were reading gets lost. */
+  overscroll-behavior: contain;
+}
+
+.page-foot {
+  border-top: 1px solid var(--border);
+  padding: var(--space-4) 0 var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.faint {
+  color: var(--text-faint);
+}
+
+.error {
+  color: var(--accent-b);
+}
+
+.ok {
+  color: var(--accent-ok);
+}
+
+/* Bare tone utilities, defined outside the `.dot`/`.chip` compounds that also
+   take ok/warn/bad. A tone that only existed inside a compound silently fell
+   back to the body colour wherever it was used on its own. */
+.warn {
+  color: var(--accent-warn);
+}
+
+.bad {
+  color: var(--accent-b);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/*
+ * A sentence in the place a picture would go.  Never a stand-in drawing: a
+ * diagram where a map belongs reads as a map however it is captioned.  The
+ * mark above it is allowed, because a picture of nothing being there is a
+ * different claim from a picture of the thing.
+ */
+.sentence {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7) var(--space-6);
+  color: var(--text-muted);
+  text-align: center;
+  line-height: var(--leading-normal);
+  margin: 0;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-7) var(--space-6);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.empty > .sentence {
+  border: none;
+  padding: 0;
+}
+
+.empty-mark {
+  color: var(--text-faint);
+}
+
+/* -- panel ------------------------------------------------------------- */
+
+/*
+ * A panel is an enclosure, and an enclosure is a border and a surface step.
+ *
+ * It used to carry `--bezel` -- four stacked shadow rings that stood it off the
+ * page -- and its margin had to clear that ring, because a box-shadow occupies
+ * no layout space and two panels a bare `--space-5` apart had their trays
+ * overlapping.  Both are gone, so the margin is just a margin.
+ */
+.panel {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.panel h2 {
+  font-size: var(--text-md);
+  letter-spacing: var(--track-wider);
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.panel-head h2 {
+  margin-bottom: 0;
+}
+
+.panel.dense {
+  padding: var(--space-4);
+}
+
+/* -- chips ------------------------------------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--app-bg);
+  white-space: nowrap;
+}
+
+.chip.a {
+  color: var(--accent-a);
+  border-color: color-mix(in srgb, var(--accent-a) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-a) 12%, var(--app-bg));
+}
+
+.chip.ok {
+  color: var(--accent-ok);
+  border-color: color-mix(in srgb, var(--accent-ok) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-ok) 12%, var(--app-bg));
+}
+
+.chip.warn {
+  color: var(--accent-warn);
+  border-color: color-mix(in srgb, var(--accent-warn) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-warn) 12%, var(--app-bg));
+}
+
+.chip.bad {
+  color: var(--accent-b);
+  border-color: color-mix(in srgb, var(--accent-b) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-b) 12%, var(--app-bg));
+}
+
+/* -- tabs -------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-4);
+}
+
+.tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-md);
+}
+
+.tab:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  border-bottom-color: var(--line-strong);
+  color: var(--text-primary);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+  background: transparent;
+}
+
+.tab-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+/* -- match list -------------------------------------------------------- */
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.card {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-5);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+  /*
+   * Transform is in the transition list and `background` is not a layout
+   * property, so a hovered row costs a composite and never a reflow -- which
+   * matters on a page that can hold a hundred of these.
+   */
+  transition:
+    background var(--dur-base) var(--ease),
+    transform var(--dur-slow) var(--ease-spring),
+    box-shadow var(--dur-slow) var(--ease-spring);
+}
+
+/*
+ * An edge only where there is something to say.
+ *
+ * Every card carried a 3px left edge, green when playable and red when not --
+ * and `/api/library` filters to playable, so in practice every card on the
+ * page had the green one.  An edge every row shares distinguishes nothing, and
+ * the green was the only green in an interface whose two accents are the team
+ * colours, so it fought every thumbnail it sat beside.
+ *
+ * What survives is the case that is actually a distinction: a capture that
+ * could not be read gets a red edge, and everything else gets none.
+ */
+.card.unreadable::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent-b);
+}
+
+/*
+ * A row that can be opened lifts; one that cannot does not, which is the same
+ * claim the left edge makes and the reason `.card.unreadable` is a `div`.
+ */
+a.card:hover {
+  background: var(--card-hover);
+  border-color: var(--accent);
+}
+
+.card-thumb {
+  width: 200px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  background: var(--tooltip-bg);
+  border: 1px solid var(--border);
+}
+
+.card-thumb.absent {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+}
+
+.card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.card-map {
+  font-size: var(--text-xl);
+}
+
+/*
+ * Four labelled facts that wrap rather than one run-on line that clips.
+ *
+ * `nowrap` with an ellipsis meant the round count was the first thing to go in
+ * a narrow column -- the UI review caught it mid-word, `21 round...` -- and
+ * every quantity was the same weight, so which number was which was a guess.
+ */
+.card-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+
+.card-line .fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.card-line .fact b {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-line .unit {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.card-line.mono {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.card-badges {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+/* -- viewer ------------------------------------------------------------ */
+
+table.rows {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-md);
+}
+
+table.rows th {
+  text-align: left;
+  font-weight: var(--weight-semibold);
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--track-wider);
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--card-bg);
+}
+
+table.rows td {
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+table.rows tbody tr:hover td {
+  background: var(--card-hover);
+}
+
+table.rows tr:last-child td {
+  border-bottom: none;
+}
+
+.scroll-y {
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.team-a {
+  color: var(--team-a);
+}
+
+.team-b {
+  color: var(--team-b);
+}
+
+.team-unknown {
+  color: var(--team-unknown);
+}
+
+/* Two mirrored columns, which is the brief's own roster layout.  The team
+   colour is an edge rather than the text colour, so a name stays legible. */
+.team-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-5);
+}
+
+.team-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.team-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.player-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--app-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--team-unknown);
+  border-radius: var(--radius-md);
+}
+
+.player-row.is-a {
+  border-left-color: var(--team-a);
+}
+
+.player-row.is-b {
+  border-left-color: var(--team-b);
+}
+
+.player-portrait {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-round);
+  background: var(--field-bg);
+  display: block;
+}
+
+.player-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+}
+
+.player-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.footnote {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  line-height: var(--leading-normal);
+  margin: var(--space-4) 0 0;
+}
+/* -- the viewer, edge to edge ------------------------------------------ */
+
+/*
+ * The viewer is not a document, so it does not get a document's chrome.
+ *
+ * A capture is one object -- a map -- and every pixel of frame around it is a
+ * pixel the map does not get.  So `/replay/:id` puts the frame into an
+ * immersive mode: a 40px bar, then the arena filling everything left, and
+ * nothing scrolls anywhere on the page.  The match list keeps the ordinary
+ * bounded column, because a list of a hundred captures is a document.
+ *
+ * `overflow: hidden` here is what makes the rest of this section safe to size
+ * in `1fr`: with a scroll container in the chain, a `1fr` row would resolve
+ * against content height and the canvas would grow without bound.
+ */
+.app-frame.is-immersive {
+  height: 100%;
+  overflow: hidden;
+}
+
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--viewer-bar-h);
+  flex: 0 0 var(--viewer-bar-h);
+  padding: 0 var(--space-4);
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.viewer-back {
+  display: inline-flex;
+}
+
+.viewer-title {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+}
+
+.viewer-sub {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+main.viewer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  outline: none;
+}
+
+/*
+ * The stage stops being a panel and becomes the page.
+ *
+ * `.panel.stage` keeps its class names because `e2e/gallery.spec.ts` locates
+ * the outer node by them, but inside the viewer every panel property is undone:
+ * no margin, no border, no padding, no surface of its own.  Four rows, and the
+ * only flexible one is the arena.
+ */
+.viewer > .panel.stage {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--app-bg);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
+.stage-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 38px;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--card-bg);
+}
+
+.stage-head h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+/*
+ * The arena: a roster, the map, a roster.
+ *
+ * Three columns and no gap between them -- the borders do the separating, and
+ * a gap here would be a stripe of page background running down each side of the
+ * map, which is the dead space this layout exists to remove.  The gutters are
+ * fixed rather than fractional so the map takes every pixel a wider window
+ * offers instead of the rosters growing with it.
+ */
+.arena {
+  display: grid;
+  grid-template-columns: var(--roster-w) minmax(0, 1fr) var(--roster-w);
+  min-height: 0;
+}
+
+/* -- the map ------------------------------------------------------------ */
+
+.stage-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--canvas-bg);
+}
+
+/*
+ * The glow behind the map.
+ *
+ * 57 to 72 per cent of every radar PNG is fully transparent, so the canvas
+ * background *is* the map's negative space and a flat one reads as a hole.
+ * The reference frames put a soft warm vignette there instead.
+ *
+ * It is deliberately a dark maroon rather than a saturated red: this sits
+ * directly behind a canvas whose pixels `e2e/minimap.spec.ts` counts against
+ * `--team-a` and `--team-b` within 36 RGB, and a glow near either would be
+ * counted as a marker.
+ */
+.stage-canvas::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 62% 62% at 50% 46%,
+    color-mix(in srgb, var(--team-a) 9%, var(--canvas-bg)),
+    var(--canvas-bg) 72%
+  );
+  pointer-events: none;
+}
+
+.minimap,
+.scene3d {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.minimap {
+  cursor: crosshair;
+}
+
+.stage-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  color: var(--text-muted);
+}
+
+/* -- what floats over the map ------------------------------------------ */
+
+/*
+ * Three overlays and no more, each `--space-4` from the canvas edge and from
+ * its neighbours.  They are the only overlapping elements in the interface;
+ * everything else in the arena is a grid cell, because an overlay that can
+ * cover the thing being read is worth having only where there is nothing under
+ * it worth reading.
+ */
+.clock-pill {
+  position: absolute;
+  top: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: color-mix(in srgb, var(--card-bg) 88%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  z-index: var(--z-stage);
+  pointer-events: none;
+}
+
+.pill-round {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  color: var(--text-faint);
+}
+
+.pill-time {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--track-wide);
+}
+
+.pill-spike {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  padding: 1px var(--space-2);
+  border: 1px solid currentcolor;
+}
+
+.pill-spike.is-planted {
+  color: var(--spike-armed);
+}
+
+.pill-spike.is-defused {
+  color: var(--spike-safe);
+}
+
+.pill-spike.is-exploded {
+  color: var(--spike-boom);
+}
+
+/* The kill feed, top right, exactly where the reference puts it. */
+.killfeed {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  z-index: var(--z-stage);
+  pointer-events: none;
+}
+
+.kill-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  font-size: var(--text-sm);
+}
+
+.kill-portrait {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-round);
+  background: var(--field-bg);
+}
+
+.kill-name {
+  font-weight: var(--weight-semibold);
+}
+
+.kill-name.is-victim {
+  color: var(--text-muted);
+  font-weight: var(--weight-normal);
+}
+
+/*
+ * No filter.  Riot's `killStreamIcon` is already white -- measured, mean RGB
+ * 255 over its opaque pixels -- and the `invert(1)` this used to carry turned
+ * every silhouette black on a black page: in the DOM, in the layout, and
+ * visible to nobody.  The same was true of the roster weapon and the ability
+ * icons at 197 and 247.
+ */
+.kill-weapon {
+  height: 14px;
+  max-width: 64px;
+  object-fit: contain;
+}
+
+.kill-glyph {
+  color: var(--text-muted);
+  display: inline-flex;
+}
+
+/* The hover card, anchored to whatever raised it. */
+.marker-tip {
+  position: absolute;
+  z-index: var(--z-tooltip);
+  width: 212px;
+  background: var(--tooltip-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-2);
+  font-size: var(--text-sm);
+  pointer-events: none;
+}
+
+/* Raised by a roster card rather than a marker, so there is no coordinate to
+   anchor to and it parks in a corner instead of guessing one. */
+.marker-tip.is-parked {
+  left: var(--space-4);
+  bottom: var(--space-4);
+}
+
+.tip-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.tip-portrait {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-round);
+  background: var(--field-bg);
+}
+
+.tip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-semibold);
+}
+
+.tip-side {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  padding: 1px var(--space-2);
+}
+
+.tip-rows {
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tip-rows > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.tip-rows dt {
+  color: var(--text-muted);
+}
+
+.tip-rows dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.tip-weapon {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.tip-weapon img {
+  height: 16px;
+  max-width: 76px;
+  object-fit: contain;
+}
+
+.tip-read {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+/* -- the rosters -------------------------------------------------------- */
+
+/*
+ * Two sides, mirrored, exactly as `vrfview/panels.py` draws them.
+ *
+ * The mirror is one `flex-direction: row-reverse` per row rather than a second
+ * set of rules: the right-hand card is the left-hand card read the other way
+ * round, and writing it twice is how the two drift.
+ *
+ * The colours come from the **side**, not the team, and `--side` is set once
+ * here so a header, a card accent and a name in the kill feed cannot disagree.
+ */
+.roster {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--card-bg);
+  border-right: 1px solid var(--border);
+}
+
+.roster.is-mirrored {
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
+.side-atk {
+  --side: var(--team-a);
+}
+
+.side-def {
+  --side: var(--team-b);
+}
+
+.roster-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 38px;
+  flex: none;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.roster.is-mirrored .roster-head {
+  flex-direction: row-reverse;
+}
+
+.roster-side {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-wider);
+  color: var(--side, var(--text-muted));
+  background: color-mix(in srgb, var(--side, var(--border)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--side, var(--border)) 45%, transparent);
+  padding: 2px var(--space-2);
+}
+
+.roster-filter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-faint);
+  background: none;
+  border: 1px solid transparent;
+}
+
+.roster-filter:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+/* Pressed means the side is hidden, so the control has to read as *off*
+   rather than as selected -- a filter that looks active while it is removing
+   five markers is the wrong way round. */
+.roster-filter.is-off {
+  color: var(--accent-warn);
+  border-color: var(--accent-warn);
+}
+
+.roster-score {
+  margin-left: auto;
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--side, var(--text-primary));
+}
+
+.roster.is-mirrored .roster-score {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+/*
+ * The cards fill the column rather than sitting in the middle of it.
+ *
+ * The reference floats its roster over the map, so five cards centred in a tall
+ * panel look right there -- the space around them is map.  Here the roster is a
+ * solid column beside the map, and the same treatment left three hundred
+ * pixels of empty card-coloured panel above and below.  So they stretch, and
+ * the portrait stretches with them: a taller card is a bigger face, which is
+ * the one thing on it worth being bigger.
+ *
+ * `min-height` rather than `height` keeps the whole thing legible on a short
+ * window; below that the narrow layout takes over anyway.
+ */
+.roster-cards {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.player-card {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 0;
+  min-height: var(--card-h);
+  position: relative;
+  overflow: hidden;
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.player-card:last-child {
+  border-bottom: 1px solid var(--border);
+}
+
+.roster.is-mirrored .player-card {
+  flex-direction: row-reverse;
+}
+
+.player-card.is-lit {
+  background: var(--card-hover);
+}
+
+/*
+ * Dead desaturates the whole card rather than blanking its fields.  A greyed
+ * card reads as *this player is out*; an empty one reads as *this player is
+ * missing*, which is a different and wrong claim.
+ */
+.player-card.is-dead {
+  filter: grayscale(1);
+  opacity: 0.42;
+}
+
+.card-portrait {
+  width: 62px;
+  height: 100%;
+  flex: none;
+  object-fit: cover;
+  background: var(--field-bg);
+}
+
+.card-portrait.is-absent {
+  display: block;
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.card-top,
+.card-name,
+.card-bottom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.roster.is-mirrored .card-top,
+.roster.is-mirrored .card-name,
+.roster.is-mirrored .card-bottom {
+  flex-direction: row-reverse;
+}
+
+/*
+ * Tabular figures, and this is the one place they carry their weight: five
+ * cards deep, health and credits have to land in the same column or the panel
+ * reads as five unrelated rows.
+ */
+.card-credits,
+.card-armor,
+.card-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+}
+
+.card-credits {
+  color: var(--text-muted);
+}
+
+.card-armor {
+  color: var(--text-muted);
+  min-width: 22px;
+  justify-content: center;
+  border: 1px solid var(--border);
+  padding: 0 3px;
+}
+
+.card-health {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  min-width: 26px;
+  justify-content: flex-end;
+}
+
+.roster.is-mirrored .card-health {
+  justify-content: flex-start;
+}
+
+.card-label {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wide);
+  color: var(--side, var(--text-faint));
+  font-weight: var(--weight-semibold);
+}
+
+.card-agent {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-abilities {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.roster.is-mirrored .card-abilities {
+  flex-direction: row-reverse;
+}
+
+.ability-icon {
+  width: 17px;
+  height: 17px;
+  object-fit: contain;
+  opacity: 0.8;
+}
+
+/*
+ * A slot, so a used charge can be marked without moving anything.
+ *
+ * The icon is never removed: removing it would state exhaustion, and the model
+ * groups every use of a slot in a round into one record, so it knows a slot was
+ * used and never how many are left.  Both states occupy the same box -- a card
+ * that changes length four times a round is worse than the fault being fixed.
+ */
+.ability-slot {
+  position: relative;
+  display: inline-flex;
+  line-height: 0;
+}
+
+/*
+ * Dim and desaturate read as "unavailable"; the rule underneath is what reads
+ * as "spent", and at seventeen pixels it is the only mark that survives -- a
+ * strikethrough across low-contrast line art is invisible.
+ */
+.ability-slot.is-used .ability-icon {
+  opacity: 0.45;
+  filter: grayscale(0.8);
+}
+
+.ability-slot.is-used::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -3px 0;
+  height: 2px;
+  background: var(--text-faint);
+}
+
+.ability-charges {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  font-size: 9px;
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--card-bg);
+  padding: 0 1px;
+}
+
+.card-weapon {
+  height: 18px;
+  max-width: 78px;
+  object-fit: contain;
+}
+
+.card-weapon.is-text {
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+/* A team accent, not a health bar: it stays full width at 1 HP. */
+.card-accent {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--side, var(--border));
+}
+
+/* -- the round strip ---------------------------------------------------- */
+
+.round-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4) 0;
+}
+
+.round-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/*
+ * Halftime, as a division of the strip rather than a stray glyph.
+ *
+ * It was a 12px arrow squeezed between two numbers, where it read as a third
+ * kind of round.  A rule with a word beside it is the one thing in a row of
+ * numbers that cannot be mistaken for one.  Not a `.round-chip`: the specs
+ * index those by position to pick a round.
+ */
+.round-swap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--line-strong);
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wide);
+}
+
+/*
+ * A chip carries its result in its body, not in a hairline under it.
+ *
+ * This was a bare number over a 2px rule -- about fifty square pixels of
+ * colour on a 26px control, which is why the strip read as a debug row rather
+ * than as a match history.  The tint fills the chip instead, so nineteen
+ * rounds are legible in one glance, and the rule stays as the second, stronger
+ * signal.
+ *
+ * `is-open` is a round `infer` could not award -- a defuse or a detonation,
+ * where the spike event carries no actor id -- and it stays visibly weaker
+ * than either team rather than picking one.  Resolving it here would put a
+ * claim on screen the model deliberately refused to make.
+ *
+ * The colour is by **team**, not by side: a match history is about who won,
+ * and a team's results should be one colour across the halftime swap even
+ * though every marker on the canvas flips at it.  That is the one place in
+ * this interface where team colouring is the right answer, and saying so here
+ * is what stops it being "fixed" to `sideColour`.
+ */
+.round-chip {
+  min-width: 26px;
+  padding: 2px var(--space-2) 3px;
+  background: color-mix(in srgb, var(--team-unknown) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--team-unknown) 40%, transparent);
+  border-bottom-width: 3px;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.round-chip.is-a {
+  background: color-mix(in srgb, var(--team-a) 18%, transparent);
+  border-color: color-mix(in srgb, var(--team-a) 45%, transparent);
+  border-bottom-color: var(--team-a);
+}
+
+.round-chip.is-b {
+  background: color-mix(in srgb, var(--team-b) 18%, transparent);
+  border-color: color-mix(in srgb, var(--team-b) 45%, transparent);
+  border-bottom-color: var(--team-b);
+}
+
+.round-chip.is-open {
+  background: color-mix(in srgb, var(--team-unknown) 8%, transparent);
+  border-color: color-mix(in srgb, var(--team-unknown) 25%, transparent);
+  color: var(--text-muted);
+}
+
+.round-chip:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+}
+
+/*
+ * Selected, without throwing away the result.
+ *
+ * `.is-active` used to fill the chip with `--accent` and invert the text,
+ * which destroyed the one fact the chip carries on precisely the round being
+ * looked at -- and put a third hue between the two team colours.  A full white
+ * border and a deeper tint say "this one" at radius 0 and cost no new token.
+ */
+.round-chip.is-active {
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.round-chip.is-active.is-a {
+  background: color-mix(in srgb, var(--team-a) 34%, transparent);
+}
+
+.round-chip.is-active.is-b {
+  background: color-mix(in srgb, var(--team-b) 34%, transparent);
+}
+
+.round-chip.is-active.is-open {
+  background: color-mix(in srgb, var(--team-unknown) 22%, transparent);
+}
+
+/* The focused chip was indistinguishable from the hovered one, on a strip that
+   is nineteen keyboard-reachable buttons in a row. */
+.round-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* -- the transport ------------------------------------------------------ */
+
+.transport {
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
+  padding-bottom: var(--space-2);
+}
+
+.transport-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+}
+
+.strip {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  cursor: pointer;
+}
+
+.clock-readout {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/*
+ * The caption block, and it is not decoration.
+ *
+ * Every claim a layer makes is written under the view making it: the sight
+ * sentence arrives from the server beside the cells it describes, and the
+ * simulated notice says which of the numbers on screen were generated.  Both
+ * are always in the DOM when they apply.
+ */
+.captions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--space-4) var(--space-2);
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
+}
+
+.captions p {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  color: var(--text-faint);
+}
+
+/* -- menus -------------------------------------------------------------- */
+
+.menu {
+  position: relative;
+  display: inline-flex;
+}
+
+.menu-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wide);
+}
+
+.menu-button.is-open {
+  background: var(--field-bg);
+  border-color: var(--line-strong);
+  color: var(--text-primary);
+}
+
+.menu-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: var(--z-overlay);
+  min-width: 216px;
+  padding: var(--space-3);
+  background: var(--card-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.menu-panel.at-start {
+  right: auto;
+  left: 0;
+}
+
+/* Opening upward, for the layers menu now that it sits in the playback bar at
+   the bottom of a viewer that does not scroll. */
+.menu-panel.drops-up {
+  top: auto;
+  bottom: calc(100% + var(--space-2));
+}
+
+.menu-title {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: var(--space-2) var(--space-1) var(--space-1);
+}
+
+.menu-title:first-child {
+  padding-top: 0;
+}
+
+/*
+ * A real checkbox, drawn.
+ *
+ * The input is clipped rather than hidden -- `display: none` and
+ * `visibility: hidden` both take an element out of the accessibility tree --
+ * so what a reader announces is a checkbox with a state and a group size,
+ * which nine `aria-pressed` buttons are not.
+ */
+.check-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-wide);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.check-row:hover {
+  background: var(--card-hover);
+  color: var(--text-primary);
+}
+
+.check-row svg {
+  pointer-events: none;
+}
+
+/*
+ * The input covers the whole row rather than being clipped to a pixel.
+ *
+ * `opacity: 0` and not `clip-path`, `display: none` or `visibility: hidden`:
+ * the first keeps the element in the accessibility tree *and* hittable, and
+ * the other three each lose one of those.  A pixel-clipped input is announced
+ * correctly and is then a one-pixel click target sitting under the box drawn
+ * for it, so every programmatic press lands on the wrong element -- which a
+ * person never notices, because they press the label.
+ */
+.check-row input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.check-box {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  /* Decorative, and `aria-hidden`: the label owns the click and the input owns
+     the state. Without this the drawn box sits over the clipped input and
+     swallows a press aimed at it -- which a person never notices, because they
+     press the label, and which fails every automated click. */
+  pointer-events: none;
+  border: 1px solid var(--line-strong);
+  background: var(--app-bg);
+  position: relative;
+}
+
+.check-row input:checked + .check-box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.check-row input:checked + .check-box::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--app-bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.check-row input:focus-visible + .check-box {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.check-label {
+  flex: 1;
+}
+
+.check-row.is-a {
+  border-color: color-mix(in srgb, var(--team-a) 55%, transparent);
+  color: var(--team-a);
+}
+
+.check-row.is-b {
+  border-color: color-mix(in srgb, var(--team-b) 55%, transparent);
+  color: var(--team-b);
+}
+
+/*
+ * The four event tones, which are the rail's own tick colours.
+ *
+ * The rail is a 24px canvas and cannot carry a legend, so this menu is the
+ * legend: a row's glyph is the shape and its colour is the colour, and reading
+ * the strip stops being a matter of hovering each tick.
+ */
+.check-row.is-kill {
+  color: var(--text-primary);
+}
+
+.check-row.is-cast {
+  color: var(--accent);
+}
+
+.check-row.is-ult {
+  color: var(--ult);
+}
+
+.check-row.is-spike {
+  color: var(--spike-armed);
+}
+
+/*
+ * A switch that cannot be used here, and the sentence saying why.
+ *
+ * The row used to be dropped from the list entirely, which reads as a feature
+ * that does not exist rather than as one that is unavailable.  The reason sits
+ * *outside* the `<label>` -- see `ui.CheckRow` -- so it never becomes part of
+ * the checkbox's accessible name.
+ */
+.check-row.is-disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.check-row.is-disabled:hover {
+  background: none;
+}
+
+.check-why {
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) + 14px + var(--space-3));
+  max-width: 30ch;
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  color: var(--text-faint);
+}
+
+/* -- modal -------------------------------------------------------------- */
+
+/*
+ * The scrim dims *and blurs*, which is the reference's own treatment and is
+ * worth the repaint here where it is not on the bar: a modal is open by choice
+ * and the page under it is deliberately unreadable for as long as it is.
+ */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: color-mix(in srgb, black 62%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.modal {
+  width: min(1040px, 92vw);
+  height: min(860px, 88vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--card-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-3);
+  outline: none;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.modal-head h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.round-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.round-step-label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  min-width: 74px;
+  text-align: center;
+}
+
+/* -- the round timeline ------------------------------------------------- */
+
+.timeline-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+}
+
+.event-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--line-strong) transparent;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.event-row button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: var(--app-bg);
+  border: 1px solid var(--border);
+  /* The acting side, as an edge. `--side` is set by the row's own class. */
+  border-left: 3px solid var(--side, var(--team-unknown));
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.event-row button:hover {
+  background: var(--card-hover);
+}
+
+/* First blood is a second row at the same instant rather than a flag on the
+   first, so a first-kill filter can surface the moment on its own. */
+.event-row.is-first button {
+  background: color-mix(in srgb, var(--team-a) 12%, var(--app-bg));
+}
+
+.ev-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 34px;
+}
+
+.ev-glyph {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.ev-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.ev-name {
+  font-weight: var(--weight-semibold);
+  color: var(--side, var(--text-primary));
+}
+
+.ev-name.side-atk {
+  color: var(--team-a);
+}
+
+.ev-name.side-def {
+  color: var(--team-b);
+}
+
+.ev-verb,
+.ev-arrow {
+  color: var(--text-muted);
+}
+
+.ev-weapon {
+  height: 13px;
+  max-width: 58px;
+  object-fit: contain;
+}
+
+.ev-ability {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.ev-tag {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  color: var(--team-a);
+  border: 1px solid var(--team-a);
+  padding: 0 var(--space-2);
+}
+
+.event-empty {
+  padding: var(--space-5);
+}
+
+.event-filters {
+  border-left: 1px solid var(--border);
+  padding: var(--space-3);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* -- narrow ------------------------------------------------------------- */
+
+/*
+ * Below 1000px there is not room for two gutters and a map worth looking at,
+ * so the arena becomes one column with the map first.  A roster above the
+ * thing it annotates is worse than one below it, and the page is allowed to
+ * scroll here because nothing else fits.
+ */
+@media (max-width: 1000px) {
+  .app-frame.is-immersive {
+    overflow: auto;
+  }
+
+  .arena {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stage-canvas {
+    order: -1;
+    aspect-ratio: 1 / 1;
+  }
+
+  .roster,
+  .roster.is-mirrored {
+    border: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .roster.is-mirrored .player-card,
+  .roster.is-mirrored .roster-head,
+  .roster.is-mirrored .card-top,
+  .roster.is-mirrored .card-name,
+  .roster.is-mirrored .card-bottom,
+  .roster.is-mirrored .card-abilities {
+    flex-direction: row;
+  }
+
+  .roster.is-mirrored .roster-score {
+    margin-left: auto;
+    margin-right: 0;
+  }
+
+  .timeline-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .event-filters {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+/* -- keyboard hints ---------------------------------------------------- */
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  background: var(--field-bg);
+}
+
+.shortcuts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  align-items: center;
+}
+
+/* -- entry ------------------------------------------------------------- */
+
+/*
+ * A card arrives rather than appearing.
+ *
+ * Two rules make this safe on a page that also runs two canvases:
+ *
+ *   * only `transform` and `opacity` are animated, so a reveal is a composite
+ *     and never a reflow -- a hundred rows re-laying out on scroll would be
+ *     felt immediately on the same thread the minimap draws on;
+ *   * the hidden state is applied by script, not by the stylesheet.  A card is
+ *     visible by default and `MatchList` marks it `data-enter` only once it
+ *     has confirmed an `IntersectionObserver` exists.  A stylesheet that hid
+ *     rows up front would leave them hidden forever anywhere the observer does
+ *     not run -- which includes jsdom, where three tests read this list.
+ *
+ * `--dur-entry` is zeroed under `prefers-reduced-motion` along with every
+ * other duration, so this collapses to an instant state change rather than
+ * needing a second rule to switch it off.
+ */
+[data-enter="pending"] {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+[data-enter] {
+  transition:
+    opacity var(--dur-entry) var(--ease-spring),
+    transform var(--dur-entry) var(--ease-spring);
+  transition-delay: var(--enter-delay, 0ms);
+}
+
+[data-enter="in"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* -- spinner ----------------------------------------------------------- */
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

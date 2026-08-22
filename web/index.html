@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      No font <link> here on purpose. The four woff2 files are bundled and
+      referenced from src/fonts.css, so this page renders the same with no
+      network at all -- which is the state a local replay analyzer is usually
+      in. See fonts.css for the argument.
+
+      The favicon lives in public/, which Vite copies to the root of dist/.
+      Deliberately not under /assets: the Python server owns that prefix for
+      Riot's art and mounts it first, so anything of ours there is shadowed.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#0a0b0d" />
+    <meta
+      name="description"
+      content="ValoReview reads Valorant .vrf replay captures: decoded player positions on the radar, round and ability timelines, and an account of where every claim came from."
+    />
+    <!--
+      The product name, and the second of its two copies: src/views/brand.ts
+      holds the one the interface renders.  This one is static HTML read before
+      any script runs, so it cannot import that -- the same reason
+      public/favicon.svg duplicates the Wordmark.  Change both.
+    -->
+    <title>ValoReview</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
