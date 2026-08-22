@@ -21,7 +21,9 @@ import { Link, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import type { Transform } from "../api/types";
-import { Failed, Loading, Page, Sentence } from "../views/Shell";
+import { glyphs } from "../views/icons";
+import { Failed, Loading, Page } from "../views/Shell";
+import { Button, Chip, EmptyState, Toolbar } from "../views/ui";
 
 /**
  * One world coordinate as a fraction of the radar image, both 0..1.
@@ -49,9 +51,7 @@ export function MapReferencePage() {
   });
 
   const back = (
-    <button type="button" onClick={() => window.history.back()}>
-      BACK
-    </button>
+    <Button label="BACK" icon={glyphs.back} onClick={() => window.history.back()} />
   );
 
   if (query.isPending) {
@@ -70,6 +70,12 @@ export function MapReferencePage() {
   }
 
   const art = query.data;
+  const actions = (
+    <Toolbar>
+      <Chip icon={glyphs.mapPin}>{art.callouts.length} callouts</Chip>
+      {back}
+    </Toolbar>
+  );
   const footer = (
     <>
       <div>
@@ -83,21 +89,21 @@ export function MapReferencePage() {
   );
 
   return (
-    <Page title={art.name || key} actions={back} footer={footer}>
+    <Page title={art.name || key} actions={actions} footer={footer}>
       {!art.minimap_url ? (
-        <Sentence>
+        <EmptyState icon={glyphs.noArt}>
           No radar image for {art.name || key}.
           <br />
           <Link to="/" className="mono">
             runners\fetch-assets.bat fetch
           </Link>{" "}
           downloads one.
-        </Sentence>
+        </EmptyState>
       ) : !art.transform.usable ? (
-        <Sentence>
+        <EmptyState icon={glyphs.mapPin}>
           {art.name} has a radar image but no coordinate transform, so its callouts
           cannot be placed on it.
-        </Sentence>
+        </EmptyState>
       ) : (
         <div
           style={{
@@ -110,25 +116,24 @@ export function MapReferencePage() {
           <img
             src={art.minimap_url}
             alt={`${art.name} radar`}
+            // Every published minimap.png is 1024 square -- checked across the
+            // asset cache, not assumed -- so this is the file's own size and
+            // not a stand-in ratio.  The callout plates are positioned in
+            // percentages of this box, so it has to exist before the load.
+            width={1024}
+            height={1024}
             style={{ width: "100%", height: "100%", display: "block" }}
           />
           {art.callouts.map((callout) => {
             const [u, v] = applyTransform(art.transform, callout.world_x, callout.world_y);
             return (
+              // A plate behind the word rather than four stacked text shadows
+              // against a hard-coded black: the radar is light in places and
+              // dark in others, and a shadow only works over one of them.
               <span
                 key={`${callout.name}-${callout.world_x}-${callout.world_y}`}
-                className="mono"
-                style={{
-                  position: "absolute",
-                  left: `${u * 100}%`,
-                  top: `${v * 100}%`,
-                  transform: "translate(-50%, -50%)",
-                  fontSize: 10,
-                  color: "var(--text-primary)",
-                  textShadow: "0 0 4px #000, 0 0 2px #000",
-                  pointerEvents: "none",
-                  whiteSpace: "nowrap",
-                }}
+                className="callout"
+                style={{ left: `${u * 100}%`, top: `${v * 100}%` }}
               >
                 {callout.name}
               </span>

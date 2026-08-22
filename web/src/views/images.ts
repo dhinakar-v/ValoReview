@@ -62,19 +62,29 @@ export function useImages(urls: Array<string | null | undefined>): Map<string, H
  * `libraries/vrfview/theme.py`, and there is to be no hex value anywhere else.
  * A canvas cannot use a custom property directly, so this resolves them once
  * against a live element.
+ *
+ * The second argument to `read` is the only exception, and it is a hazard
+ * worth naming: a fallback fires silently when a property is missing, so a
+ * renamed token does not break the canvas -- it quietly draws in last
+ * season's colours.  Keep these equal to the generated file.
  */
 export function palette(element: HTMLElement): Record<string, string> {
   const style = getComputedStyle(element);
   const read = (name: string, fallback: string) =>
     style.getPropertyValue(name).trim() || fallback;
   return {
-    a: read("--team-a", "#4d9eff"),
-    b: read("--team-b", "#ff4655"),
+    a: read("--team-a", "#4ea3ff"),
+    b: read("--team-b", "#ff6b5a"),
     unknown: read("--team-unknown", "#8a90a2"),
-    text: read("--text-primary", "#ece8e1"),
-    muted: read("--text-muted", "#7b7b7b"),
-    background: read("--app-bg", "#0d0d0d"),
-    border: read("--border", "#2a2a2a"),
+    text: read("--text-primary", "#e8eaed"),
+    muted: read("--text-muted", "#a2a9b4"),
+    faint: read("--text-faint", "#6b7280"),
+    background: read("--app-bg", "#0a0b0d"),
+    canvas: read("--canvas-bg", "#08090b"),
+    border: read("--border", "#262b34"),
+    line: read("--line-strong", "#333a45"),
+    panel: read("--panel", "#101216"),
+    accent: read("--accent", "#7c8cff"),
     ult: read("--ult", "#ffd166"),
   };
 }

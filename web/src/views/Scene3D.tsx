@@ -103,6 +103,14 @@ function signedPitch(degrees: number): number {
 /** Just off the ground, so a flat wedge does not fight the plane for pixels. */
 const SIGHT_LIFT = 0.0015;
 
+/*
+ * Not a palette colour.  A texture drawn at `#ffffff` is the texture drawn
+ * unmodified -- it is the identity tint, the way `1` is for a multiply -- and
+ * moving it into `theme.py` would invite somebody to change it, which would
+ * silently recolour Riot's own radar and every agent portrait on it.
+ */
+const WHITE = "#ffffff";
+
 interface SceneProps {
   model: ReplayModel;
   art: MapArt;
@@ -123,7 +131,7 @@ export function Scene3D(props: SceneProps) {
       <ambientLight intensity={1.6} />
       <directionalLight position={[1, 2, 1]} intensity={1.2} />
       <OrbitControls target={[0.5, 0, 0.5]} maxDistance={6} minDistance={0.2} />
-      <Ground radar={props.radar} />
+      <Ground radar={props.radar} colours={colours} />
       <Trails {...props} colours={colours} />
       <Actors {...props} colours={colours} />
       <SightWedge {...props} colours={colours} />
@@ -140,7 +148,13 @@ export function Scene3D(props: SceneProps) {
  * `DoubleSide` because a ground plane seen from below should still be a ground
  * plane, and because it makes the winding order stop mattering.
  */
-function Ground({ radar }: { radar: HTMLImageElement | undefined }) {
+function Ground({
+  radar,
+  colours,
+}: {
+  radar: HTMLImageElement | undefined;
+  colours: Record<string, string>;
+}) {
   const geometry = useMemo(() => {
     const buffer = new THREE.BufferGeometry();
     // (u, v) -> (x, y, z) = (u, 0, v). Four corners, two triangles.
@@ -169,9 +183,16 @@ function Ground({ radar }: { radar: HTMLImageElement | undefined }) {
 
   return (
     <mesh geometry={geometry}>
+      {/*
+        White where there is a radar to show unmodified, and the panel colour
+        where there is not.  That second value used to be the literal
+        `#1b1e27`, which is `--panel` written a second time -- exactly the
+        duplication `palette()` exists to prevent, and it would have survived
+        a palette change silently.
+      */}
       <meshBasicMaterial
         map={texture ?? undefined}
-        color={texture ? "#ffffff" : "#1b1e27"}
+        color={texture ? WHITE : colours.panel!}
         transparent
         side={THREE.DoubleSide}
       />
@@ -260,7 +281,7 @@ function Actors({
       found.sprite.material.map = texture;
       // The team colour tinted the placeholder; with a portrait in place it
       // would tint the portrait instead.
-      found.sprite.material.color.set("#ffffff");
+      found.sprite.material.color.set(WHITE);
       found.sprite.material.needsUpdate = true;
     }
   }, [built, icons, model]);
@@ -543,7 +564,12 @@ function Callouts({ art }: { art: MapArt }) {
               fontSize: 9,
               fontFamily: "monospace",
               color: "var(--text-primary)",
-              textShadow: "0 0 4px #000, 0 0 2px #000",
+              // A plate rather than stacked shadows against a hard-coded
+              // black: the radar is light in places and dark in others.
+              background: "color-mix(in srgb, var(--app-bg) 78%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",
+              borderRadius: "var(--radius-sm)",
+              padding: "1px 4px",
             }}
           >
             {callout.name}

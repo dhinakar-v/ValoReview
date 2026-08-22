@@ -30,7 +30,16 @@ export function Page({
         <div className="spacer" />
         {actions}
       </header>
-      <main className="page-body">{children}</main>
+      {/*
+        `id` and `tabIndex` exist for the skip link in `AppFrame`.  A skip link
+        that only moves the *scroll* leaves the focus back up in the bar, so
+        the next Tab press returns to the first thing it was meant to skip --
+        which is the failure mode that makes people decide skip links do not
+        work.  -1 keeps it out of the tab order otherwise.
+      */}
+      <main className="page-body" id="main" tabIndex={-1}>
+        {children}
+      </main>
       {footer ? <footer className="page-foot">{footer}</footer> : null}
     </div>
   );
@@ -54,6 +63,11 @@ export function Failed({ error }: { error: unknown }) {
  * Deliberately not a fallback drawing of any kind.  A diagram where a map
  * belongs reads as a map however it is captioned, so the two things that can be
  * absent -- the decode and the radar image -- each get words instead.
+ *
+ * `ui.EmptyState` wraps this and puts a mark above it.  That mark is allowed
+ * where a drawing is not, and the difference is the whole argument: a
+ * crossed-out picture frame reads as *there is no picture*, which is the claim
+ * being made, whereas a schematic of the map reads as the map.
  */
 export function Sentence({ children }: { children: ReactNode }) {
   return <p className="sentence">{children}</p>;

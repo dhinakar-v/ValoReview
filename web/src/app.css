@@ -1,19 +1,41 @@
 /*
- * Layout and type. Colours come from theme.generated.css, which is written
- * from libraries/vrfview/theme.py -- do not add a hex value here.
+ * Layout, type and state.  Three files feed this one and each answers to a
+ * different owner:
  *
- * The typefaces are the brief's: Tungsten (falling back to Impact) for
- * headings, DIN Next (falling back to Arial) for body, and a monospace stack
- * for anything that has to line up. Neither of the first two is bundled --
- * this is a local app and shipping ~200KB of webfont for a heading is a poor
- * trade -- so the fallbacks are what most machines will actually render, and
- * the stacks are written so that looks deliberate rather than broken.
+ *   tokens.css            hand-written -- space, radius, type, elevation,
+ *                         motion, stacking.  Nothing there is a colour.
+ *   theme.generated.css   written by scripts/make_theme.py from
+ *                         libraries/vrfview/theme.py.  Every colour, and the
+ *                         argument for the ones that carry one.
+ *   fonts.css             the four bundled woff2 files.
+ *
+ * The rule those files state holds here: no hex value in this stylesheet.  A
+ * colour that is not in the palette is a colour the desktop app and the
+ * canvases cannot see, and the canvases read the palette back out at runtime
+ * through views/images.ts::palette().
  */
 
+@import "./tokens.css";
 @import "./theme.generated.css";
+@import "./fonts.css";
 
 * {
   box-sizing: border-box;
+}
+
+/*
+ * The one line that makes the parts of this page the browser draws itself
+ * match the parts we draw.
+ *
+ * Scrollbars, `<select>` popups, the caret and the focus ring inside a form
+ * control are all painted by the platform, and on Windows the platform paints
+ * them light unless it is told the page is dark.  So the map filter opened a
+ * white list over a near-black page and both scroll rails were pale bars.
+ * There is no colour here: it names which of its own two themes the browser
+ * should use, which is why it is not in the generated palette.
+ */
+:root {
+  color-scheme: dark;
 }
 
 html,
@@ -23,30 +45,46 @@ body,
   margin: 0;
 }
 
+/*
+ * A tap on a control should look like a press, not like a selection.  Mobile
+ * WebKit and Chromium paint a translucent block over whatever was touched,
+ * which lands on top of the button styling above; the hover and active states
+ * already say the same thing without a rectangle.
+ */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
 body {
   background: var(--app-bg);
   color: var(--text-primary);
-  font-family: "DIN Next", "DIN Next LT Pro", Arial, Helvetica, sans-serif;
-  font-size: 14px;
-  line-height: 1.45;
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 h1,
 h2,
 h3,
 .display {
-  font-family: Tungsten, Impact, "Haettenschweiler", "Arial Narrow Bold", sans-serif;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-family: var(--font-display);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-wide);
   text-transform: uppercase;
+  line-height: var(--leading-tight);
   margin: 0;
+  /* Headings here are map names and panel titles -- two or three words that
+     wrap to a single orphan often enough to notice.  Balancing is cheap at
+     this length and the browser gives up on its own past a few lines. */
+  text-wrap: balance;
 }
 
 code,
 .mono,
 .numeric {
-  font-family: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
@@ -55,72 +93,408 @@ a {
   text-decoration: none;
 }
 
+.spacer {
+  flex: 1;
+}
+
+/*
+ * A focus ring, which this interface did not have at all.  :focus-visible
+ * rather than :focus so a mouse press does not leave a ring behind, and it is
+ * on the accent rather than a team colour -- a team colour means a team.
+ */
+:where(a, button, select, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/*
+ * No 300ms wait before a press registers.  The transport steps one event per
+ * click and the layer switches are pressed in sequence, so a double-tap-to-zoom
+ * delay reads as the control having missed the press.
+ */
+:where(a, button, select, input, [role="tab"], [role="button"]) {
+  touch-action: manipulation;
+}
+
+/*
+ * Visible only to a screen reader.  `display: none` and `visibility: hidden`
+ * both take an element back out of the accessibility tree, which is the
+ * opposite of what a label like this is for; clipping a 1px box leaves it in.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * The skip link, which is the same trick as `.sr-only` until it is focused.
+ * Above the bar in the stacking order, because it is drawn over it.
+ */
+.skip-link {
+  position: absolute;
+  left: var(--space-4);
+  top: var(--space-4);
+  z-index: var(--z-tooltip);
+  transform: translateY(-200%);
+  background: var(--card-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* The landing point of that link.  `tabIndex={-1}` means it is only ever
+   focused from script, so a ring around the whole page body would be
+   reporting something the user did not do.  A tab panel is *not* in this
+   rule: it carries `tabIndex={0}`, you reach it by tabbing off the strip,
+   and it keeps the ring above like anything else you can tab to. */
+main.page-body:focus-visible {
+  outline: none;
+}
+
+/* -- controls ---------------------------------------------------------- */
+
 button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font: inherit;
-  color: inherit;
-  background: transparent;
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
   cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 button:hover:not(:disabled) {
   background: var(--card-hover);
+  border-color: var(--line-strong);
+}
+
+button:active:not(:disabled) {
+  background: var(--field-bg);
 }
 
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
 }
 
+/* The one active affordance the old page had, kept and given a fill so a
+   pressed toggle reads as pressed at a glance rather than on inspection. */
 button[aria-pressed="true"] {
-  border-color: var(--accent-a);
-  color: var(--accent-a);
+  background: color-mix(in srgb, var(--accent) 18%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--text-primary);
 }
 
-/* -- shell ------------------------------------------------------------- */
+button[aria-pressed="true"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 26%, var(--card-bg));
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--app-bg);
+  font-weight: var(--weight-semibold);
+}
+
+button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 82%, white);
+  border-color: color-mix(in srgb, var(--accent) 82%, white);
+}
+
+button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+button.ghost:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+button.danger {
+  color: var(--accent-b);
+  border-color: color-mix(in srgb, var(--accent-b) 40%, var(--border));
+}
+
+button.sm {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+}
+
+button.icon-only {
+  padding: var(--space-2);
+}
+
+select,
+input[type="text"],
+input[type="search"] {
+  font: inherit;
+  color: inherit;
+  background: var(--field-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+select:hover,
+input:hover {
+  border-color: var(--line-strong);
+}
+
+/* `color-scheme: dark` gets the popup itself; the rows inside it still
+   inherit from the page on some platforms and end up dark-on-dark. */
+option {
+  background-color: var(--field-bg);
+  color: var(--text-primary);
+}
+
+/* A segmented control: one track, N options, the pressed one lifted out. */
+.seg {
+  display: inline-flex;
+  background: var(--field-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  gap: var(--space-1);
+}
+
+.seg button {
+  background: transparent;
+  border-color: transparent;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.seg button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border-color: transparent;
+  color: var(--text-primary);
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--card-hover);
+  border-color: var(--line-strong);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-1);
+}
+
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--field-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding-left: var(--space-3);
+  color: var(--text-muted);
+}
+
+.field:focus-within {
+  border-color: var(--accent);
+}
+
+.field select,
+.field input {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+}
+
+.field select:focus-visible,
+.field input:focus-visible {
+  outline: none;
+}
+
+/* -- app frame --------------------------------------------------------- */
+
+.app-frame {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* The containing block for the skip link, which is absolutely positioned so
+     that it takes no space in the column until it is focused. */
+  position: relative;
+}
+
+.app-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--bar-h);
+  flex: 0 0 var(--bar-h);
+  padding: 0 var(--space-6);
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  z-index: var(--z-sticky);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.brand svg {
+  display: block;
+  color: var(--accent);
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  line-height: var(--leading-tight);
+}
+
+.brand-sub {
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+.crumbs .sep {
+  color: var(--text-faint);
+}
+
+.crumbs .here {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* A status light, and the sentence behind it is in the title attribute. */
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--text-faint);
+  flex: none;
+}
+
+.dot.ok {
+  background: var(--accent-ok);
+}
+
+.dot.warn {
+  background: var(--accent-warn);
+}
+
+.dot.bad {
+  background: var(--accent-b);
+}
+
+/* -- page shell -------------------------------------------------------- */
 
 .page {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  max-width: 1360px;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: var(--page-max);
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--space-6);
 }
 
 .page-head {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
-  padding: 20px 0 12px;
-  border-bottom: 1px solid var(--border);
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-6) 0 var(--space-4);
 }
 
 .page-head h1 {
-  font-size: 26px;
-}
-
-.page-head .spacer {
-  flex: 1;
+  font-size: var(--text-2xl);
 }
 
 .page-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 0;
+  padding-bottom: var(--space-6);
+  scrollbar-color: var(--line-strong) transparent;
+  /* Three regions on this page scroll inside themselves, and reaching the end
+     of one of them should stop rather than start scrolling whatever is behind
+     it -- the rail hitting its end and dragging the page under it is how a
+     provenance section gets lost mid-read. */
+  overscroll-behavior: contain;
 }
 
 .page-foot {
   border-top: 1px solid var(--border);
-  padding: 12px 0 20px;
+  padding: var(--space-4) 0 var(--space-5);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .muted {
   color: var(--text-muted);
+}
+
+.faint {
+  color: var(--text-faint);
 }
 
 .error {
@@ -131,31 +505,213 @@ button[aria-pressed="true"] {
   color: var(--accent-ok);
 }
 
-/* A sentence in the place a picture would go. Never a stand-in drawing. */
-.sentence {
-  border: 1px dashed var(--border);
-  border-radius: 4px;
-  padding: 28px 24px;
-  color: var(--text-muted);
-  text-align: center;
-  line-height: 1.6;
+/* `StatTile` takes ok/warn/bad and only one of them was defined outside a
+   `.dot`/`.chip` compound, so the match list's UNREADABLE count -- given
+   `tone="bad"` precisely so a non-zero one stands out -- rendered in the
+   same colour as a zero. */
+.warn {
+  color: var(--accent-warn);
+}
+
+.bad {
+  color: var(--accent-b);
 }
 
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-3);
   flex-wrap: wrap;
-  padding-bottom: 12px;
 }
 
-select {
-  font: inherit;
-  color: inherit;
+/*
+ * A sentence in the place a picture would go.  Never a stand-in drawing: a
+ * diagram where a map belongs reads as a map however it is captioned.  The
+ * mark above it is allowed, because a picture of nothing being there is a
+ * different claim from a picture of the thing.
+ */
+.sentence {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7) var(--space-6);
+  color: var(--text-muted);
+  text-align: center;
+  line-height: var(--leading-normal);
+  margin: 0;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-7) var(--space-6);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.empty > .sentence {
+  border: none;
+  padding: 0;
+}
+
+.empty-mark {
+  color: var(--text-faint);
+}
+
+/* -- panel ------------------------------------------------------------- */
+
+.panel {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 6px 8px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.panel h2 {
+  font-size: var(--text-md);
+  letter-spacing: var(--track-wider);
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.panel-head h2 {
+  margin-bottom: 0;
+}
+
+.panel.dense {
+  padding: var(--space-4);
+}
+
+/* -- chips ------------------------------------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--app-bg);
+  white-space: nowrap;
+}
+
+.chip.a {
+  color: var(--accent-a);
+  border-color: color-mix(in srgb, var(--accent-a) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-a) 12%, var(--app-bg));
+}
+
+.chip.ok {
+  color: var(--accent-ok);
+  border-color: color-mix(in srgb, var(--accent-ok) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-ok) 12%, var(--app-bg));
+}
+
+.chip.warn {
+  color: var(--accent-warn);
+  border-color: color-mix(in srgb, var(--accent-warn) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-warn) 12%, var(--app-bg));
+}
+
+.chip.bad {
+  color: var(--accent-b);
+  border-color: color-mix(in srgb, var(--accent-b) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-b) 12%, var(--app-bg));
+}
+
+/* -- stat tiles -------------------------------------------------------- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.stat {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.stat-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-tight);
+}
+
+.stat-note {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+/* -- tabs -------------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-4);
+}
+
+.tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-md);
+}
+
+.tab:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  border-bottom-color: var(--line-strong);
+  color: var(--text-primary);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+  background: transparent;
+}
+
+.tab-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
 }
 
 /* -- match list -------------------------------------------------------- */
@@ -163,141 +719,183 @@ select {
 .cards {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .card {
   display: grid;
-  grid-template-columns: 182px 1fr auto;
+  grid-template-columns: 200px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 18px;
+  gap: var(--space-5);
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
   text-align: left;
   width: 100%;
+  position: relative;
+  overflow: hidden;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
-.card:hover:not(:disabled) {
+/* A status edge rather than another chip: whether a capture can be opened is
+   the one thing worth reading before anything else on the row. */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--border);
+}
+
+.card.playable::before {
+  background: var(--accent-ok);
+}
+
+.card.unreadable::before {
+  background: var(--accent-b);
+}
+
+a.card:hover {
   background: var(--card-hover);
+  border-color: var(--line-strong);
 }
 
 .card-thumb {
-  width: 182px;
-  height: 40px;
+  width: 200px;
+  height: 52px;
   object-fit: cover;
-  border-radius: 2px;
+  border-radius: var(--radius-md);
   background: var(--tooltip-bg);
+  border: 1px solid var(--border);
 }
 
 .card-thumb.absent {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
 }
 
 .card-facts {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
 .card-map {
-  font-size: 17px;
+  font-size: var(--text-xl);
 }
 
 .card-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.card-line.mono {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
 }
 
 .card-badges {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 4px;
-}
-
-.chip {
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  padding: 2px 7px;
-  font-size: 10px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.chip.a {
-  color: var(--accent-a);
-  border-color: var(--accent-a);
-}
-
-.chip.ok {
-  color: var(--accent-ok);
-  border-color: var(--accent-ok);
-}
-
-.chip.bad {
-  color: var(--accent-b);
-  border-color: var(--accent-b);
+  gap: var(--space-2);
 }
 
 /* -- viewer ------------------------------------------------------------ */
 
 .viewer-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--rail-w));
+  gap: var(--space-6);
   align-items: start;
 }
 
-.panel {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 14px 16px;
-  margin-bottom: 16px;
+/*
+ * The provenance rail scrolls inside itself.
+ *
+ * It is the longest thing on the page by some margin -- every claim the viewer
+ * makes, with its source -- and letting it set the page height meant the
+ * tables under the map were a thousand pixels further down than they needed to
+ * be.  Sticky plus its own overflow keeps it beside the map instead of below
+ * everything.
+ */
+.rail {
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - var(--bar-h) - var(--space-8));
+  overflow-y: auto;
+  scrollbar-color: var(--line-strong) transparent;
+  overscroll-behavior: contain;
 }
 
-.panel h2 {
-  font-size: 15px;
-  margin-bottom: 10px;
-  color: var(--text-muted);
+.rail .panel {
+  margin-bottom: 0;
+}
+
+@media (max-width: 1100px) {
+  .viewer-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
 }
 
 table.rows {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 table.rows th {
   text-align: left;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-2xs);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 4px 8px 6px 0;
+  letter-spacing: var(--track-wider);
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
   border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--card-bg);
 }
 
 table.rows td {
-  padding: 5px 8px 5px 0;
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+table.rows tbody tr:hover td {
+  background: var(--card-hover);
 }
 
 table.rows tr:last-child td {
   border-bottom: none;
+}
+
+.scroll-y {
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .team-a {
@@ -312,37 +910,120 @@ table.rows tr:last-child td {
   color: var(--team-unknown);
 }
 
+/* Two mirrored columns, which is the brief's own roster layout.  The team
+   colour is an edge rather than the text colour, so a name stays legible. */
+.team-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-5);
+}
+
+.team-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.team-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.player-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--app-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--team-unknown);
+  border-radius: var(--radius-md);
+}
+
+.player-row.is-a {
+  border-left-color: var(--team-a);
+}
+
+.player-row.is-b {
+  border-left-color: var(--team-b);
+}
+
+.player-portrait {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: var(--field-bg);
+  display: block;
+}
+
+.player-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+}
+
+.player-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.footnote {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  line-height: var(--leading-normal);
+  margin: var(--space-4) 0 0;
+}
+
 /* -- provenance -------------------------------------------------------- */
 
 .provenance section {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-5);
+}
+
+.provenance section:last-child {
+  margin-bottom: 0;
 }
 
 .provenance h3 {
-  font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--accent-a);
-  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wider);
+  color: var(--accent);
+  margin-bottom: var(--space-2);
   text-transform: none;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
 }
 
 .provenance dl {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 2px 14px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
   margin: 0;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .provenance dt {
-  color: var(--text-muted);
+  color: var(--text-faint);
   white-space: nowrap;
 }
 
 .provenance dd {
   margin: 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .provenance .bare {
@@ -351,28 +1032,41 @@ table.rows tr:last-child td {
   white-space: pre-wrap;
 }
 
-/*
- * The map stage: a square canvas, a timeline strip under it, and the captions
- * under that. Nothing here is a colour -- those all come from
- * theme.generated.css, which is written from libraries/vrfview/theme.py.
- */
+/* -- map stage --------------------------------------------------------- */
 
 .stage-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.stage-head h2 {
+  font-size: var(--text-xl);
+  color: var(--text-primary);
+  margin-bottom: 0;
 }
 
 .stage-canvas {
   position: relative;
-  width: 100%;
-  /* Square, because the radar is. The canvas fits the largest square inside
-     whatever it is given and centres it, which is the desktop viewer's rule. */
+  /*
+   * Square, because the radar is.  The canvas fits the largest square inside
+   * whatever it is given and centres it, which is the desktop viewer's rule.
+   *
+   * Bounded by the viewport height rather than only by the column width: a
+   * square as wide as a 1440px layout is a square taller than the screen, and
+   * it put the transport bar below the fold -- so the map was unusable until
+   * you scrolled, on the one page where the map is the point.  The 380px is
+   * everything above and below it: the app bar, the page head, the panel's
+   * own padding, the stage head, the strip, its legend and the transport.
+   */
+  width: min(100%, max(320px, calc(100vh - 380px)));
+  margin-inline: auto;
   aspect-ratio: 1 / 1;
   background: var(--canvas-bg);
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -387,49 +1081,147 @@ table.rows tr:last-child td {
   cursor: crosshair;
 }
 
+.stage-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  color: var(--text-muted);
+}
+
 .strip {
   display: block;
   width: 100%;
   cursor: pointer;
-  border-bottom: 1px solid var(--border);
 }
 
 .transport {
-  margin-top: 10px;
+  margin-top: var(--space-4);
+  background: var(--app-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 .transport-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding-top: 8px;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
 
-.transport-bar button {
-  padding: 4px 9px;
-  font-size: 12px;
-}
-
 .clock-readout {
-  margin-left: 8px;
-  font-size: 12px;
-  color: var(--text-muted);
+  margin-left: var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 .rule {
   width: 1px;
   align-self: stretch;
   background: var(--border);
-  margin: 0 4px;
+  margin: 0 var(--space-2);
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3) 0;
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--text-faint);
+  flex-wrap: wrap;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.legend i {
+  width: 9px;
+  height: 2px;
+  background: currentcolor;
+  display: block;
 }
 
 .captions {
-  margin-top: 10px;
-  font-size: 11px;
-  line-height: 1.5;
+  margin-top: var(--space-4);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .captions p {
-  margin: 0 0 4px;
+  margin: 0;
+  display: flex;
+  gap: var(--space-3);
+}
+
+/* -- map reference ----------------------------------------------------- */
+
+.callout {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wide);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--app-bg) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--text-primary);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* -- keyboard hints ---------------------------------------------------- */
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  background: var(--field-bg);
+}
+
+.shortcuts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  align-items: center;
+}
+
+/* -- spinner ----------------------------------------------------------- */
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
 }

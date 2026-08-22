@@ -67,6 +67,20 @@ const PAWN_TRAIL_MS = 20000;
 /** And how far back a player's, which is a new layer rather than a port. */
 const PLAYER_TRAIL_MS = 8000;
 
+/*
+ * The canvas type stack, named once.
+ *
+ * A canvas cannot inherit a font, so this is the one place in the interface
+ * where the bundled faces have to be repeated as a string.  Inter is the
+ * page's UI face and is loaded by the time anything is drawn -- and the tail
+ * is the same fallback the stylesheet uses, so a checkout with the woff2 files
+ * stripped renders the labels in the same face as the page around them.
+ */
+const LABEL_FONT = '"Inter", "Segoe UI", system-ui, sans-serif';
+
+/** A dark keyline under a label, because the radar is bright in places. */
+const LABEL_OUTLINE = 3;
+
 export interface MinimapProps {
   model: ReplayModel;
   art: MapArt;
@@ -144,6 +158,9 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
       context.strokeStyle = colours.border!;
       context.lineWidth = 1;
       context.strokeRect(box.left + 0.5, box.top + 0.5, box.side - 1, box.side - 1);
+      // Nothing else: the radar's own alpha channel is 57-72% transparent, so
+      // the canvas background *is* the map's negative space and a fill here
+      // would be a shape this project has no data for.
 
       const world = (x: number, y: number): [number, number] => {
         const [u, v] = applyTransform(art.transform, x, y);
@@ -189,10 +206,19 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
           drawDead(context, x, y, colour);
         }
 
-        context.fillStyle = alive ? colours.text! : colours.muted!;
-        context.font = "bold 10px system-ui, sans-serif";
+        // Outline then fill.  A white label over Ascent's pale mid is
+        // unreadable without one, and a drop shadow costs a composite per
+        // player per frame where a stroke costs nothing.
+        const label = player.label || player.team;
+        const labelY = y - AVATAR_PX / 2 - 7;
+        context.font = `600 10px ${LABEL_FONT}`;
         context.textAlign = "center";
-        context.fillText(player.label || player.team, x, y - AVATAR_PX / 2 - 7);
+        context.lineJoin = "round";
+        context.lineWidth = LABEL_OUTLINE;
+        context.strokeStyle = colours.canvas!;
+        context.strokeText(label, x, labelY);
+        context.fillStyle = alive ? colours.text! : colours.muted!;
+        context.fillText(label, x, labelY);
         hits.push({ x, y, player });
       }
       hitsRef.current = hits;
@@ -542,7 +568,7 @@ function label(
   y: number,
 ): void {
   context.fillStyle = colour;
-  context.font = "bold 9px system-ui, sans-serif";
+  context.font = `600 9px ${LABEL_FONT}`;
   context.textAlign = "center";
   context.fillText(text, x, y);
 }

@@ -15,10 +15,18 @@
  * None of them is a placeholder drawing.  A diagram in the place a map goes
  * reads as a map however it is captioned, which is why the schematic was
  * removed from the desktop viewer and why nothing like it comes back here.
+ * The mark above each sentence is a picture of *absence* -- a crossed-out
+ * frame, a file with a question on it -- which is the claim being made rather
+ * than a stand-in for the thing that is not there.
  *
  * The 2D view is the default and is not a stepping stone to the 3D one.  It is
  * the readable one; the scene beside it exists to show the one thing a top-down
  * projection cannot, which is who is standing above whom.
+ *
+ * Every control label in this file is addressed by name from
+ * `MapStage.test.tsx` and all three Playwright specs -- 2D, 3D, UTILITY,
+ * TRAILS, SIGHT, CALLOUTS, DECODE POSITIONS.  The icons beside them are
+ * `aria-hidden`, so the accessible names are still exactly those words.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,10 +35,13 @@ import { Suspense, lazy, useMemo } from "react";
 import { api, ApiError } from "../api/client";
 import type { Decoder, Replay } from "../api/types";
 import { buildModel } from "../model/replay";
+import { Icon, Spinner, glyphs } from "./icons";
 import { MinimapCanvas } from "./MinimapCanvas";
 import { SCENE_CAPTION } from "./sceneCaption";
-import { Failed, Sentence } from "./Shell";
+import { Failed } from "./Shell";
+import { play } from "./sound";
 import { Transport } from "./Transport";
+import { Button, Chip, EmptyState, Panel, Segmented, Toggle, Toolbar } from "./ui";
 import { useImages } from "./images";
 import { usePlayback, usePlaybackDriver } from "./playback";
 
@@ -83,7 +94,11 @@ export function MapStage({
     // pawn its agent codename and every cast the agent that made it, so the
     // roster and the cast table are stale afterwards too -- the desktop viewer
     // has to rebuild its body and its transport bar by hand for this reason.
-    onSuccess: (fresh) => client.setQueryData(["replay", replay.id], fresh),
+    onSuccess: (fresh) => {
+      client.setQueryData(["replay", replay.id], fresh);
+      play("confirm");
+    },
+    onError: () => play("deny"),
   });
 
   const model = useMemo(
@@ -97,13 +112,12 @@ export function MapStage({
 
   if (!replay.has_positions) {
     return (
-      <div className="panel stage">
-        <h2>Map</h2>
-        <Sentence>
+      <Panel title="Map" icon={glyphs.map} className="stage">
+        <EmptyState icon={glyphs.noFile}>
           No positions decoded for this capture.
           <br />
           <span className="mono">{replay.position_source || "not requested"}</span>
-        </Sentence>
+        </EmptyState>
         {/*
           A button only where one can work, and there are two ways it cannot.
           A build with no payload transform will refuse whatever is pressed --
@@ -112,28 +126,38 @@ export function MapStage({
           no decoder has nothing to press at all. Each gets its own sentence,
           because they are fixed by different things.
         */}
-        {!replay.positions_available ? (
-          <p className="muted" style={{ textAlign: "center", fontSize: 12 }}>
-            {replay.positions_note} ({replay.build})
-          </p>
-        ) : decoder?.found ? (
-          <div className="toolbar" style={{ paddingTop: 12, justifyContent: "center" }}>
-            <button
-              type="button"
-              onClick={() => decode.mutate()}
-              disabled={decode.isPending}
-            >
-              {decode.isPending ? "DECODING…" : "DECODE POSITIONS"}
-            </button>
-            <span className="muted">about four seconds</span>
-          </div>
-        ) : (
-          <p className="muted" style={{ textAlign: "center", fontSize: 12 }}>
-            {decoder?.hint ?? "checking for a decoder…"}
-          </p>
-        )}
-        {decode.isError ? <Failed error={decode.error} /> : null}
-      </div>
+        {/*
+          A decode takes about four seconds and says nothing while it runs
+          except by changing this button's own words, so the region is live:
+          without it the only report of either outcome is a repaint, and the
+          failure is a sentence that appears in silence.  `polite` rather than
+          `assertive` -- it is the result of something the user just pressed,
+          not an interruption.
+        */}
+        <div aria-live="polite" aria-busy={decode.isPending}>
+          {!replay.positions_available ? (
+            <p className="footnote" style={{ textAlign: "center" }}>
+              {replay.positions_note} ({replay.build})
+            </p>
+          ) : decoder?.found ? (
+            <div className="toolbar" style={{ paddingTop: 12, justifyContent: "center" }}>
+              <Button
+                label={decode.isPending ? "DECODING…" : "DECODE POSITIONS"}
+                icon={glyphs.decode}
+                variant="primary"
+                busy={decode.isPending}
+                onClick={() => decode.mutate()}
+              />
+              <span className="muted">about four seconds</span>
+            </div>
+          ) : (
+            <p className="footnote" style={{ textAlign: "center" }}>
+              {decoder?.hint ?? "checking for a decoder…"}
+            </p>
+          )}
+          {decode.isError ? <Failed error={decode.error} /> : null}
+        </div>
+      </Panel>
     );
   }
 
@@ -143,49 +167,47 @@ export function MapStage({
   // `--no-art`, sitting on "reading" rather than saying what is missing.
   if (!replay.map_key) {
     return (
-      <div className="panel stage">
-        <h2>Map</h2>
-        <Sentence>
+      <Panel title="Map" icon={glyphs.map} className="stage">
+        <EmptyState icon={glyphs.noArt}>
           No art entry for {replay.map_name || replay.map_path}, so there is no
           radar image to draw the decoded positions on.
           <br />
           <span className="mono">runners\fetch-assets.bat fetch</span> downloads one.
-        </Sentence>
-      </div>
+        </EmptyState>
+      </Panel>
     );
   }
 
   if (art.isPending || positions.isPending) {
     return (
-      <div className="panel stage">
-        <h2>Map</h2>
-        <p className="muted">Reading the decoded tracks…</p>
-      </div>
+      <Panel title="Map" icon={glyphs.map} className="stage">
+        <p className="muted">
+          <Spinner /> Reading the decoded tracks…
+        </p>
+      </Panel>
     );
   }
 
   if (!art.data || !radarUrl) {
     return (
-      <div className="panel stage">
-        <h2>Map</h2>
-        <Sentence>
+      <Panel title="Map" icon={glyphs.map} className="stage">
+        <EmptyState icon={glyphs.noArt}>
           No radar image for {replay.map_name || replay.map_path}.
           <br />
           <span className="mono">runners\fetch-assets.bat fetch</span> downloads one.
-        </Sentence>
-      </div>
+        </EmptyState>
+      </Panel>
     );
   }
 
   if (!art.data.transform.usable) {
     return (
-      <div className="panel stage">
-        <h2>Map</h2>
-        <Sentence>
+      <Panel title="Map" icon={glyphs.map} className="stage">
+        <EmptyState icon={glyphs.mapPin}>
           {art.data.name} has a radar image but no coordinate transform, so nothing
           decoded out of this capture can be placed on it.
-        </Sentence>
-      </div>
+        </EmptyState>
+      </Panel>
     );
   }
 
@@ -196,9 +218,10 @@ export function MapStage({
   return (
     <div className="panel stage">
       <div className="stage-head">
-        <h2>
-          {art.data.name} <span className="muted">&middot; positions decoded</span>
-        </h2>
+        <h2>{art.data.name}</h2>
+        <Chip tone="ok" icon={glyphs.ok}>
+          positions decoded
+        </Chip>
         <div className="spacer" />
         <Layers hasMask={maskDoc !== null} is3d={mode === "3d"} />
       </div>
@@ -207,13 +230,28 @@ export function MapStage({
         {mode === "2d" ? (
           <MinimapCanvas model={model} art={art.data} radar={radar} mask={maskDoc} />
         ) : (
-          <Suspense fallback={<p className="muted">Loading the renderer…</p>}>
+          <Suspense
+            fallback={
+              <p className="stage-loading">
+                <Spinner /> Loading the renderer…
+              </p>
+            }
+          >
             <Scene3D model={model} art={art.data} radar={radar} mask={maskDoc} />
           </Suspense>
         )}
       </div>
 
-      <Transport replay={replay} clock={clock} />
+      {/*
+        The same two conditions the toolbar above uses to decide whether to
+        draw SIGHT and CALLOUTS at all.  A key is a faster way to press a
+        control, so it exists exactly where the control does.
+      */}
+      <Transport
+        replay={replay}
+        clock={clock}
+        layers={{ sight: maskDoc !== null, callouts: mode === "3d" }}
+      />
 
       <Captions
         is3d={mode === "3d"}
@@ -228,61 +266,53 @@ export function MapStage({
 function Layers({ hasMask, is3d }: { hasMask: boolean; is3d: boolean }) {
   const state = usePlayback();
   return (
-    <div className="toolbar" style={{ padding: 0 }}>
-      <button
-        type="button"
-        aria-pressed={!is3d}
-        onClick={() => usePlayback.setState({ mode: "2d" })}
-      >
-        2D
-      </button>
-      <button
-        type="button"
-        aria-pressed={is3d}
-        onClick={() => usePlayback.setState({ mode: "3d" })}
-      >
-        3D
-      </button>
+    <Toolbar>
+      <Segmented
+        label="Which view"
+        options={["2D", "3D"] as const}
+        value={is3d ? "3D" : "2D"}
+        onChange={(next) => usePlayback.setState({ mode: next === "3D" ? "3d" : "2d" })}
+        format={(option) => ({
+          label: option,
+          icon: option === "2D" ? glyphs.view2d : glyphs.view3d,
+        })}
+      />
       <span className="rule" />
-      <button
-        type="button"
-        aria-pressed={state.showAbilities}
-        onClick={() => usePlayback.setState({ showAbilities: !state.showAbilities })}
-      >
-        UTILITY
-      </button>
-      <button
-        type="button"
-        aria-pressed={state.showTrails}
-        onClick={() => usePlayback.setState({ showTrails: !state.showTrails })}
-      >
-        TRAILS
-      </button>
+      <Toggle
+        label="UTILITY"
+        icon={glyphs.utility}
+        pressed={state.showAbilities}
+        onChange={() => usePlayback.setState({ showAbilities: !state.showAbilities })}
+      />
+      <Toggle
+        label="TRAILS"
+        icon={glyphs.trails}
+        pressed={state.showTrails}
+        onChange={() => usePlayback.setState({ showTrails: !state.showTrails })}
+      />
       {/*
         The sight toggle exists only where there is a mask to raycast against.
         A control that cannot do anything is worse than an explanation of its
         absence, and the caption below says which.
       */}
       {hasMask ? (
-        <button
-          type="button"
-          aria-pressed={state.showSight}
-          onClick={() => usePlayback.setState({ showSight: !state.showSight })}
-        >
-          SIGHT
-        </button>
+        <Toggle
+          label="SIGHT"
+          icon={glyphs.sight}
+          pressed={state.showSight}
+          onChange={() => usePlayback.setState({ showSight: !state.showSight })}
+        />
       ) : null}
       {is3d ? (
-        <button
-          type="button"
-          aria-pressed={state.showCallouts}
-          onClick={() => usePlayback.setState({ showCallouts: !state.showCallouts })}
+        <Toggle
+          label="CALLOUTS"
+          icon={glyphs.callouts}
+          pressed={state.showCallouts}
+          onChange={() => usePlayback.setState({ showCallouts: !state.showCallouts })}
           title="Riot's own callouts, to check the scene against the minimap"
-        >
-          CALLOUTS
-        </button>
+        />
       ) : null}
-    </div>
+    </Toolbar>
   );
 }
 
@@ -292,6 +322,10 @@ function Layers({ hasMask, is3d }: { hasMask: boolean; is3d: boolean }) {
  * The sight caption is the server's own text and is rendered verbatim; the 3D
  * caption is this file's, and both are here for the same reason -- each view
  * states something weaker than it looks, and the picture cannot say so itself.
+ *
+ * The mark beside each is `aria-hidden`, because two of these sentences are
+ * matched exactly by tests and a glyph that joined the text node would change
+ * what they are.
  */
 function Captions({
   is3d,
@@ -307,10 +341,28 @@ function Captions({
   const showSight = usePlayback((state) => state.showSight);
   return (
     <div className="captions">
-      {is3d ? <p className="muted">{SCENE_CAPTION}</p> : null}
-      {showSight && sightCaption ? <p className="muted">{sightCaption}</p> : null}
-      {maskUnavailable ? <p className="muted">{maskUnavailable}</p> : null}
-      <p className="mono muted">{positionSource}</p>
+      {is3d ? (
+        <p>
+          <Icon glyph={glyphs.view3d} size={12} />
+          <span>{SCENE_CAPTION}</span>
+        </p>
+      ) : null}
+      {showSight && sightCaption ? (
+        <p>
+          <Icon glyph={glyphs.sight} size={12} />
+          <span>{sightCaption}</span>
+        </p>
+      ) : null}
+      {maskUnavailable ? (
+        <p>
+          <Icon glyph={glyphs.noArt} size={12} />
+          <span>{maskUnavailable}</span>
+        </p>
+      ) : null}
+      <p className="mono">
+        <Icon glyph={glyphs.decode} size={12} />
+        <span>{positionSource}</span>
+      </p>
     </div>
   );
 }
