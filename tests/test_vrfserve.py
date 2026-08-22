@@ -549,10 +549,15 @@ class Decoding(unittest.TestCase):
 
         def decode(replay, _path, _options=None):
             replay.positions = {
-                1: Track(actor_id=1, samples=(Position(t_ms=0, actor_id=1, x=1.0, y=2.0, z=3.0),)),
+                1: Track(
+                    actor_id=1,
+                    samples=(Position(t_ms=0, actor_id=1, x=1.0, y=2.0, z=3.0),),
+                ),
             }
             replay.position_source = "decoded 1 position"
-            replay.players = [Player(actor_id=1, team="A", label="A1", codename="Hunter")]
+            replay.players = [
+                Player(actor_id=1, team="A", label="A1", codename="Hunter"),
+            ]
             return replay
 
         response = self._decoding(decode)
@@ -632,10 +637,15 @@ class Positions(unittest.TestCase):
         like, and the disagreement would be invisible until something drew it.
         """
         replay = _replay()
-        replay.positions = {1: Track(actor_id=1, samples=(
-            Position(t_ms=0, actor_id=1, x=1.5, y=-2.5, z=64.0, yaw=90.0),
-            Position(t_ms=100, actor_id=1, x=2.5, y=-3.5, z=64.0, yaw=91.0),
-        ))}
+        replay.positions = {
+            1: Track(
+                actor_id=1,
+                samples=(
+                    Position(t_ms=0, actor_id=1, x=1.5, y=-2.5, z=64.0, yaw=90.0),
+                    Position(t_ms=100, actor_id=1, x=2.5, y=-3.5, z=64.0, yaw=91.0),
+                ),
+            ),
+        }
         replay.position_source = "a line about the decode"
         sidecar = tracks.sidecar_of(replay)
         document = positionfile.to_document(sidecar)
@@ -725,10 +735,14 @@ class BackgroundPreparation(unittest.TestCase):
                 mock.patch.object(preparation, "pause") as paused,
                 mock.patch.object(preparation, "resume") as resumed,
                 mock.patch.object(
-                    app_mod.pipeline, "open_replay", side_effect=_supplier(),
+                    app_mod.pipeline,
+                    "open_replay",
+                    side_effect=_supplier(),
                 ),
                 mock.patch.object(app_mod.tracks, "attach", side_effect=decode),
-                mock.patch.object(app_mod.names, "resolve", side_effect=lambda r, _c: r),
+                mock.patch.object(
+                    app_mod.names, "resolve", side_effect=lambda r, _c: r,
+                ),
             ):
                 client.post(f"/api/replays/{replay_id}/decode")
         assert paused.call_count == 1
@@ -745,7 +759,8 @@ class BackgroundPreparation(unittest.TestCase):
                     app_mod.pipeline,
                     "open_replay",
                     side_effect=OSError("no such capture"),
-                ),pytest.raises(OSError, match="no such capture"),
+                ),
+                pytest.raises(OSError, match="no such capture"),
             ):
                 client.post(f"/api/replays/{replay_id}/decode")
         assert resumed.call_count == 1
