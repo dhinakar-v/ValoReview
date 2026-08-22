@@ -350,3 +350,86 @@ table.rows tr:last-child td {
   color: var(--text-muted);
   white-space: pre-wrap;
 }
+
+/*
+ * The map stage: a square canvas, a timeline strip under it, and the captions
+ * under that. Nothing here is a colour -- those all come from
+ * theme.generated.css, which is written from libraries/vrfview/theme.py.
+ */
+
+.stage-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.stage-canvas {
+  position: relative;
+  width: 100%;
+  /* Square, because the radar is. The canvas fits the largest square inside
+     whatever it is given and centres it, which is the desktop viewer's rule. */
+  aspect-ratio: 1 / 1;
+  background: var(--canvas-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.minimap,
+.scene3d {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.minimap {
+  cursor: crosshair;
+}
+
+.strip {
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.transport {
+  margin-top: 10px;
+}
+
+.transport-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  flex-wrap: wrap;
+}
+
+.transport-bar button {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.clock-readout {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rule {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.captions {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.captions p {
+  margin: 0 0 4px;
+}

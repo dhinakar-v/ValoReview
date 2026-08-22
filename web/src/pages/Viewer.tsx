@@ -1,24 +1,24 @@
 /**
  * Page two: one replay.
  *
- * This is the Phase 2 shape -- everything the file states, everything inferred
- * from it, and the provenance panel -- with no map yet.  The minimap, the 3D
- * scene, the timeline and playback arrive on top of the same document; nothing
- * here is scaffolding to be thrown away.
+ * Everything the file states, everything inferred from it, everything looked
+ * up -- and, where a capture has been decoded, the map it happened on.  The
+ * map is `MapStage`, which owns the two views, the layers and the transport;
+ * this page owns the tables around it and the provenance panel beside it.
  *
- * Where the map will go, there is a sentence.  That is not a placeholder: it is
- * what goes there permanently whenever a capture has no decode or its map has
- * no radar image.  A drawing in the place a map belongs reads as a map however
- * it is captioned, so the two things that can be missing each get words.
+ * The split is deliberate.  A snapshot is recomputed sixty times a second and
+ * the roster is not, so the playhead lives in a store the canvas reads inside
+ * its own animation frame rather than in state this page would re-render from.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
-import type { Decoder, Player, Replay, Round } from "../api/types";
+import type { Player, Replay, Round } from "../api/types";
+import { MapStage } from "../views/MapStage";
 import { Provenance } from "../views/Provenance";
-import { Failed, Loading, Page, Sentence } from "../views/Shell";
+import { Failed, Loading, Page } from "../views/Shell";
 
 function teamClass(team: string): string {
   if (team === "A") return "team-a";
@@ -180,66 +180,6 @@ function Casts({ replay }: { replay: Replay }) {
   );
 }
 
-function Scene({
-  replay,
-  decoder,
-}: {
-  replay: Replay;
-  decoder: Decoder | undefined;
-}) {
-  const client = useQueryClient();
-  const decode = useMutation({
-    mutationFn: () => api.decode(replay.id),
-    // Replace the whole datum, not just the tracks. A decode also gives every
-    // pawn its agent codename and every cast the agent that made it, so the
-    // roster and the cast table are stale afterwards too -- the desktop viewer
-    // has to rebuild its body and its transport bar by hand for this reason.
-    onSuccess: (fresh) => client.setQueryData(["replay", replay.id], fresh),
-  });
-
-  if (replay.has_positions) {
-    return (
-      <div className="panel">
-        <h2>Map</h2>
-        <Sentence>
-          Positions are decoded &mdash; the minimap and the 3D scene are not built yet.
-          <br />
-          <span className="mono">{replay.position_source}</span>
-        </Sentence>
-      </div>
-    );
-  }
-
-  return (
-    <div className="panel">
-      <h2>Map</h2>
-      <Sentence>
-        No positions decoded for this capture.
-        <br />
-        <span className="mono">{replay.position_source || "not requested"}</span>
-      </Sentence>
-      {/*
-        A button only where one can work. Without a built decoder there is
-        nothing to press, so the sentence names the command instead -- offering
-        a control that cannot do anything is worse than explaining its absence.
-      */}
-      {decoder?.found ? (
-        <div className="toolbar" style={{ paddingTop: 12, justifyContent: "center" }}>
-          <button type="button" onClick={() => decode.mutate()} disabled={decode.isPending}>
-            {decode.isPending ? "DECODING…" : "DECODE POSITIONS"}
-          </button>
-          <span className="muted">about four seconds</span>
-        </div>
-      ) : (
-        <p className="muted" style={{ textAlign: "center", fontSize: 12 }}>
-          {decoder?.hint ?? "checking for a decoder…"}
-        </p>
-      )}
-      {decode.isError ? <Failed error={decode.error} /> : null}
-    </div>
-  );
-}
-
 export function ViewerPage() {
   const { id = "" } = useParams();
   const query = useQuery({
@@ -290,7 +230,7 @@ export function ViewerPage() {
     >
       <div className="viewer-grid">
         <div>
-          <Scene replay={replay} decoder={config.data?.decoder} />
+          <MapStage replay={replay} decoder={config.data?.decoder} />
           <Roster replay={replay} />
           <Rounds replay={replay} />
           <Casts replay={replay} />

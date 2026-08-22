@@ -11,7 +11,16 @@
  * scan" with "Request failed" throws that away at the last step.
  */
 
-import type { Config, Library, LibraryQuery, MapArt, MapSummary, Replay } from "./types";
+import type { PositionsDoc } from "../model/replay";
+import type {
+  Config,
+  Library,
+  LibraryQuery,
+  MapArt,
+  MapSummary,
+  Replay,
+  SightMaskDoc,
+} from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -59,8 +68,17 @@ export const api = {
   config: () => get<Config>("/api/config"),
   library: (query: LibraryQuery = {}) => get<Library>(`/api/library${queryString(query)}`),
   replay: (id: string) => get<Replay>(`/api/replays/${encodeURIComponent(id)}`),
+  // Separate from `replay` because the samples are three orders of magnitude
+  // larger and because a replay is worth showing before they arrive.
+  positions: (id: string) =>
+    get<PositionsDoc>(`/api/replays/${encodeURIComponent(id)}/positions`),
   maps: () => get<MapSummary[]>("/api/maps"),
   map: (key: string) => get<MapArt>(`/api/maps/${encodeURIComponent(key)}`),
+  // The playable silhouette a sight cone is raycast against, thresholded in
+  // Python, with the sentence that says what it is travelling beside it. A map
+  // with no radar image on disk 404s: the layer is unavailable, not empty.
+  sight: (key: string) =>
+    get<SightMaskDoc>(`/api/maps/${encodeURIComponent(key)}/sight`),
   closeReplay: (id: string) =>
     fetch(`/api/replays/${encodeURIComponent(id)}`, { method: "DELETE" }),
   decode: async (id: string): Promise<Replay> => {

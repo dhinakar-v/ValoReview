@@ -167,6 +167,17 @@ export interface SpikeEvent {
   round_no: number;
 }
 
+export interface Placement {
+  actor_id: number;
+  kind: string;
+  name: string;
+  display: string;
+  /** Unreal units, the same frame as a Position: it goes through the transform. */
+  x: number;
+  y: number;
+  z: number;
+}
+
 export interface AbilityCast {
   t_ms: number;
   round_no: number;
@@ -187,6 +198,32 @@ export interface AbilityCast {
   /** Measured path length. Null, never zero, where no pawn moved. */
   travel_uu: number | null;
   travel_note: string | null;
+  /** Every non-moving actor this cast spawned, at the point it appeared. */
+  placements: Placement[];
+  /**
+   * Which of them says where the cast ended up. Null for a cast whose pawn has
+   * a track -- the track outranks a spawn point -- and for one decoded before
+   * the spawn transform was read, which is every v1 and v2 sidecar.
+   */
+  landed: Placement | null;
+}
+
+export interface SightMaskDoc {
+  map_key: string;
+  size: number;
+  /** Base64, one byte per cell, row-major, 1 open. Thresholded in Python. */
+  cells: string;
+  open_fraction: number;
+  /**
+   * What a cone drawn from this is, in words. It travels with the cells so
+   * nothing can render a wedge without having been handed the sentence.
+   */
+  caption: string;
+  max_range_uu: number;
+  fov_degrees: number;
+  ray_step_degrees: number;
+  seed_cells: number;
+  probe_uu: number;
 }
 
 export interface ProvenanceEntry {
@@ -224,6 +261,13 @@ export interface Replay {
   score: number[];
   has_positions: boolean;
   has_abilities: boolean;
+  /**
+   * Whether a decode could work at all on this build -- a different question
+   * from whether one has happened. It gates the DECODE button: a control that
+   * can only ever refuse is worse than an explanation of its absence.
+   */
+  positions_available: boolean;
+  positions_note: string;
   /** Prose from the decoder. Shown verbatim; it never raises for want of positions. */
   position_source: string;
   catalog_source: string;
