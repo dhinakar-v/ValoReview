@@ -71,12 +71,19 @@ const PLAYER_TRAIL_MS = 8000;
  * The canvas type stack, named once.
  *
  * A canvas cannot inherit a font, so this is the one place in the interface
- * where the bundled faces have to be repeated as a string.  Inter is the
- * page's UI face and is loaded by the time anything is drawn -- and the tail
- * is the same fallback the stylesheet uses, so a checkout with the woff2 files
- * stripped renders the labels in the same face as the page around them.
+ * where the bundled faces have to be repeated as a string.  Plus Jakarta Sans
+ * is the page's UI face and is loaded by the time anything is drawn -- and the
+ * tail is the same fallback the stylesheet uses, so a checkout with the woff2
+ * files stripped renders the labels in the same face as the page around them.
+ *
+ * This string and `--font-ui` in tokens.css are the same decision written
+ * twice, which is the one duplication this interface cannot design away: the
+ * 2D canvas is the thing the Playwright suite photographs, and a label drawn
+ * in a different face from the page around it is exactly the kind of drift
+ * nobody notices until a screenshot is compared with one from last month.
+ * Change one, change the other.
  */
-const LABEL_FONT = '"Inter", "Segoe UI", system-ui, sans-serif';
+const LABEL_FONT = '"Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif';
 
 /** A dark keyline under a label, because the radar is bright in places. */
 const LABEL_OUTLINE = 3;
@@ -177,8 +184,23 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
       if (state.showTrails) {
         drawPlayerTrails(context, { model, snap, world, colours });
       }
+      /*
+        The players claim their own icons before any utility name is placed.
+        Abilities draw underneath players by z-order, so without this a cast
+        name lands on a face and is then painted over -- present in the pixels,
+        readable by nobody.  Reserving first is what makes the rejection below
+        prefer the label that can still be read.
+      */
+      const names = labelSpace();
+      for (const player of model.replay.players) {
+        const position = positionOf(snap, player.actor_id);
+        if (position !== null) {
+          const [px, py] = world(position.x, position.y);
+          reserve(names, px, py, AVATAR_PX / 2);
+        }
+      }
       if (state.showAbilities) {
-        drawAbilities(context, { model, snap, world, colours });
+        drawAbilities(context, { model, snap, world, colours, space: names });
       }
 
       const hits: Hit[] = [];
@@ -347,9 +369,11 @@ function drawAbilities(
     snap: Snapshot;
     world: (x: number, y: number) => [number, number];
     colours: Record<string, string>;
+    /** Boxes already claimed -- the players, who outrank every label here. */
+    space: LabelBox[];
   },
 ): void {
-  const { model, snap, world, colours } = args;
+  const { model, snap, world, colours, space } = args;
   const byCodename = new Map<string, string>();
   for (const player of model.replay.players) {
     if (player.codename) {
@@ -378,7 +402,14 @@ function drawAbilities(
       context.lineWidth = 1;
       context.fillRect(x - PAWN_HALF, y - PAWN_HALF, PAWN_HALF * 2, PAWN_HALF * 2);
       context.strokeRect(x - PAWN_HALF, y - PAWN_HALF, PAWN_HALF * 2, PAWN_HALF * 2);
-      label(context, colours.muted!, `${cast.slot} ${cast.internal_name}`, x, y + PAWN_HALF + 10);
+      label(
+        context,
+        colours.muted!,
+        `${cast.slot} ${cast.internal_name}`,
+        x,
+        y + PAWN_HALF + 10,
+        space,
+      );
     }
 
     // A cast with no pawn: one coordinate, no path, and no arc anywhere. The
@@ -395,7 +426,14 @@ function drawAbilities(
     context.lineWidth = 2;
     context.strokeRect(-PLACED_HALF, -PLACED_HALF, PLACED_HALF * 2, PLACED_HALF * 2);
     context.restore();
-    label(context, colours.muted!, `${cast.slot} ${cast.internal_name}`, x, y + PLACED_HALF + 12);
+    label(
+      context,
+      colours.muted!,
+      `${cast.slot} ${cast.internal_name}`,
+      x,
+      y + PLACED_HALF + 12,
+      space,
+    );
   }
 }
 
@@ -560,15 +598,71 @@ function drawDead(context: CanvasRenderingContext2D, x: number, y: number, colou
   context.restore();
 }
 
+/**
+ * The boxes already spoken for on this frame.
+ *
+ * Utility labels were drawn unconditionally, one per pawn and one per landed
+ * cast, so a round where several pieces of utility land near each other put
+ * four or five names through the same twenty pixels -- legible in none of
+ * them.  The committed gallery screenshot has one such smear beside B site,
+ * which is what makes this a defect rather than a preference: the layer's job
+ * is saying what is there, and a smear says nothing.
+ *
+ * Greedy rejection is the whole algorithm.  There is no cleverer placement
+ * here on purpose: moving a label away from the thing it names is a worse lie
+ * than omitting it, because a name six pixels off is still read as belonging
+ * to whatever it is now nearest.  So a label either sits where its own marker
+ * is or is not drawn, and the marker -- the square, the diamond -- is always
+ * drawn regardless.  What is on the map never depends on whether its name fit.
+ */
+type LabelBox = { left: number; right: number; top: number; bottom: number };
+
+function overlaps(a: LabelBox, b: LabelBox): boolean {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
+export function labelSpace(): LabelBox[] {
+  return [];
+}
+
+/** Reserve a box without drawing anything -- how a player claims their icon. */
+export function reserve(space: LabelBox[], x: number, y: number, half: number): void {
+  space.push({ left: x - half, right: x + half, top: y - half, bottom: y + half });
+}
+
+/**
+ * Draw a label unless something is already there.  Returns whether it landed,
+ * which nothing needs yet and which makes the rejection visible to a test.
+ */
 function label(
   context: CanvasRenderingContext2D,
   colour: string,
   text: string,
   x: number,
   y: number,
-): void {
+  space?: LabelBox[],
+): boolean {
   context.fillStyle = colour;
   context.font = `600 9px ${LABEL_FONT}`;
   context.textAlign = "center";
+
+  if (space) {
+    // `measureText` reads the font set above, so the order matters.  A 9px
+    // line box plus two pixels of air is what stops two rows of names from
+    // touching where their columns happen not to.
+    const width = context.measureText(text).width;
+    const box: LabelBox = {
+      left: x - width / 2 - 1,
+      right: x + width / 2 + 1,
+      top: y - 9,
+      bottom: y + 2,
+    };
+    if (space.some((taken) => overlaps(box, taken))) {
+      return false;
+    }
+    space.push(box);
+  }
+
   context.fillText(text, x, y);
+  return true;
 }

@@ -214,47 +214,59 @@ export function MapStage({
     mask.isError && mask.error instanceof ApiError ? mask.error.message : null;
 
   return (
-    <div className="panel stage">
-      <div className="stage-head">
-        <h2>{art.data.name}</h2>
-        <Chip tone="ok" icon={glyphs.ok}>
-          positions decoded
-        </Chip>
-        <div className="spacer" />
-        <Layers hasMask={maskDoc !== null} is3d={mode === "3d"} />
+    /*
+      The one bezel in this interface built from two elements rather than
+      from stacked shadow rings, and the reason is a test.
+      `e2e/gallery.spec.ts` locates `.panel.stage` and calls
+      `stage.screenshot()`; Playwright captures an element's *bounding box*,
+      which excludes box-shadow -- so the tray every other panel gets from
+      `--bezel` would be cropped straight out of the committed gallery
+      images.  `.tray` is therefore a real padded element, and `.panel.stage`
+      stays on the outer node so the locator keeps meaning what it meant.
+    */
+    <div className="panel stage tray">
+      <div className="stage-core">
+        <div className="stage-head">
+          <h2>{art.data.name}</h2>
+          <Chip tone="ok" icon={glyphs.ok}>
+            positions decoded
+          </Chip>
+          <div className="spacer" />
+          <Layers hasMask={maskDoc !== null} is3d={mode === "3d"} />
+        </div>
+
+        <div className="stage-canvas">
+          {mode === "2d" ? (
+            <MinimapCanvas model={model} art={art.data} radar={radar} mask={maskDoc} />
+          ) : (
+            <Suspense
+              fallback={
+                <p className="stage-loading">
+                  <Spinner /> Loading the renderer…
+                </p>
+              }
+            >
+              <Scene3D model={model} art={art.data} radar={radar} mask={maskDoc} />
+            </Suspense>
+          )}
+        </div>
+
+        {/*
+          The same two conditions the toolbar above uses to decide whether to
+          draw SIGHT and CALLOUTS at all.  A key is a faster way to press a
+          control, so it exists exactly where the control does.
+        */}
+        <Transport
+          replay={replay}
+          clock={clock}
+          layers={{ sight: maskDoc !== null, callouts: mode === "3d" }}
+        />
+
+        <Captions
+          sightCaption={maskDoc?.caption ?? null}
+          maskUnavailable={maskUnavailable}
+        />
       </div>
-
-      <div className="stage-canvas">
-        {mode === "2d" ? (
-          <MinimapCanvas model={model} art={art.data} radar={radar} mask={maskDoc} />
-        ) : (
-          <Suspense
-            fallback={
-              <p className="stage-loading">
-                <Spinner /> Loading the renderer…
-              </p>
-            }
-          >
-            <Scene3D model={model} art={art.data} radar={radar} mask={maskDoc} />
-          </Suspense>
-        )}
-      </div>
-
-      {/*
-        The same two conditions the toolbar above uses to decide whether to
-        draw SIGHT and CALLOUTS at all.  A key is a faster way to press a
-        control, so it exists exactly where the control does.
-      */}
-      <Transport
-        replay={replay}
-        clock={clock}
-        layers={{ sight: maskDoc !== null, callouts: mode === "3d" }}
-      />
-
-      <Captions
-        sightCaption={maskDoc?.caption ?? null}
-        maskUnavailable={maskUnavailable}
-      />
     </div>
   );
 }

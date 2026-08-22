@@ -13,9 +13,9 @@
  * Fonts <link> would render the fallbacks offline and then reflow the whole
  * page when it did have a connection.
  *
- * Four files, 124KB, latin subset.  Inter and JetBrains Mono are the variable
- * builds, so one file each covers every weight; Barlow Condensed is static and
- * needs one per weight.  Licences are in fonts/OFL.txt and THIRD_PARTY.md.
+ * Four files, 103KB, latin subset.  Plus Jakarta Sans and JetBrains Mono are
+ * the variable builds, so one file each covers every weight; Barlow Condensed
+ * is static and needs one per weight.  Licences: fonts/OFL.txt, THIRD_PARTY.md.
  *
  * The relative url()s matter: Vite fingerprints these into dist/static/, which
  * is where the bundle goes and deliberately not /assets, which the Python
@@ -46,13 +46,25 @@
     U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* UI: everything that is a sentence or a label.  One variable file, 100..900. */
+/* UI: everything that is a sentence or a label.  One variable file, 200..800.
+
+   This was Inter, which is a good face and the wrong one to have reached for:
+   it is the default every interface of the last decade already picked, so a
+   tool set in it reads as unstyled rather than as neutral.  Plus Jakarta Sans
+   is the same shape of decision -- a humanist grotesk, variable, latin subset,
+   one file -- with a slightly narrower lowercase and a taller x-height, which
+   is what keeps the 11px and 12px labels this interface is full of legible at
+   the density they are set.  It is also 27KB against Inter's 48KB.
+
+   Same licence family (OFL) and the same bundling argument as everything else
+   here: the file is committed, not linked, because this page is served by a
+   local process against files on a disk and has to render with no network. */
 @font-face {
-  font-family: "Inter";
+  font-family: "Plus Jakarta Sans";
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 200 800;
   font-display: swap;
-  src: url("./fonts/Inter.woff2") format("woff2");
+  src: url("./fonts/PlusJakartaSans.woff2") format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
     U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
     U+2212, U+2215, U+FEFF, U+FFFD;

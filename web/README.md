@@ -119,9 +119,17 @@ quietly draws in last season's colours.
 
 ## Typefaces, and why they are bundled now
 
-Three families, four `woff2` files, 124KB, latin subset, in `src/fonts/`.
-Barlow Condensed 600/700 for headings, Inter for everything that is a sentence
-or a label, JetBrains Mono for anything that has to line up in a column.
+Three families, four `woff2` files, 103KB, latin subset, in `src/fonts/`.
+Barlow Condensed 600/700 for headings, Plus Jakarta Sans for everything that is
+a sentence or a label, JetBrains Mono for anything that has to line up in a
+column.
+
+The UI face was Inter, which is a good face and the wrong one to have reached
+for: it is the default a decade of interfaces already picked, so a tool set in
+it reads as unstyled rather than as neutral. Plus Jakarta Sans is the same shape
+of decision with a taller x-height, which is what keeps the 11px and 12px labels
+this interface is full of legible at the density they are set -- and it is 27KB
+against Inter's 48KB.
 
 They used to be stacks with no files behind them -- Tungsten falling back to
 Impact, DIN Next falling back to Arial -- on the argument that shipping a
@@ -134,8 +142,8 @@ Bundled rather than linked, for the same reason nothing else here reaches the
 network: this page is served by a local Python process against files on a disk
 and is expected to work offline. A Google Fonts `<link>` would render the
 fallbacks with no connection and then reflow the page when there was one.
-Inter and JetBrains Mono are the variable builds, so one file each covers every
-weight. All three are SIL OFL 1.1 -- `src/fonts/OFL.txt` and `THIRD_PARTY.md`.
+Plus Jakarta Sans and JetBrains Mono are the variable builds, so one file each
+covers every weight. All three are SIL OFL 1.1 -- `src/fonts/OFL.txt` and `THIRD_PARTY.md`.
 
 The old stacks survive as the fallback tail, so a checkout with the font files
 stripped still looks deliberate rather than broken.

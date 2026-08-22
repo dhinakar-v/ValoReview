@@ -56,6 +56,35 @@ describe("an icon never renames the control it sits in", () => {
     expect(screen.getByText("3D")).toBeTruthy();
   });
 
+  it("leaves a primary button's name alone when it grows a trailing cap", () => {
+    // The cap is a second, nested glyph after the label -- the one shape of
+    // change that renames a control without any file that mentions it being
+    // edited.  `MapStage.test.tsx` finds this exact button by its text.
+    const { container } = render(
+      <Button label="DECODE POSITIONS" icon={glyphs.decode} variant="primary" />,
+    );
+    expect(screen.getByRole("button", { name: "DECODE POSITIONS" })).toBeTruthy();
+    expect(screen.getByText("DECODE POSITIONS")).toBeTruthy();
+    expect(container.querySelector(".cap")).not.toBeNull();
+    // Both glyphs -- the leading icon and the cap's mark -- stay out of the
+    // accessibility tree, or the name above would have picked them up.
+    const marks = container.querySelectorAll("svg");
+    expect(marks.length).toBe(2);
+    marks.forEach((mark) => expect(mark.getAttribute("aria-hidden")).toBe("true"));
+  });
+
+  it("drops the cap while the button is busy, so it never sits beside a spinner", () => {
+    const { container } = render(
+      <Button label="DECODING…" icon={glyphs.decode} variant="primary" busy />,
+    );
+    expect(container.querySelector(".cap")).toBeNull();
+  });
+
+  it("gives the cap to the primary variant only", () => {
+    const { container } = render(<Button label="BACK" icon={glyphs.back} />);
+    expect(container.querySelector(".cap")).toBeNull();
+  });
+
   it("hides the glyph from the accessibility tree", () => {
     const { container } = render(<Button label="RESCAN" icon={glyphs.rescan} />);
     const svg = container.querySelector("svg");

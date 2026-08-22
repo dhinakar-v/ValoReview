@@ -25,6 +25,7 @@
 
 import {
   ArrowLeft,
+  ArrowUpRight,
   Box,
   ChevronLeft,
   ChevronRight,
@@ -84,7 +85,7 @@ export function Icon({
   return (
     <Glyph
       size={size}
-      strokeWidth={1.75}
+      strokeWidth={1.25}
       aria-hidden="true"
       focusable={false}
       className={className}
@@ -114,6 +115,11 @@ export const glyphs = {
   trails: Route,
   sight: Eye,
   callouts: Tag,
+
+  // The mark inside a primary button's trailing cap.  A direction rather
+  // than a repeat of the button's own icon: the cap says the press leads
+  // somewhere, the leading glyph says what the press is.
+  capArrow: ArrowUpRight,
 
   // navigation and library
   back: ArrowLeft,

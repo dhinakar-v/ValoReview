@@ -132,7 +132,7 @@ licence requires.
 
 | File | Family | Copyright |
 |---|---|---|
-| `Inter.woff2` | Inter (variable, 100..900) | Copyright (c) 2016 The Inter Project Authors, https://github.com/rsms/inter |
+| `PlusJakartaSans.woff2` | Plus Jakarta Sans (variable, 200..800) | Copyright (c) 2020 The Plus Jakarta Sans Project Authors, https://github.com/tokotype/PlusJakartaSans |
 | `BarlowCondensed-600.woff2`, `BarlowCondensed-700.woff2` | Barlow Condensed | Copyright (c) 2017 The Barlow Project Authors, https://github.com/jpt/barlow |
 | `JetBrainsMono.woff2` | JetBrains Mono (variable, 100..800) | Copyright (c) 2020 The JetBrains Mono Project Authors, https://github.com/JetBrains/JetBrainsMono |
 

@@ -31,18 +31,34 @@
   --space-8: 48px;
 
   /* -- radius ---------------------------------------------------------- */
+  /* The first four are controls -- a button, a field, a chip.  The last two
+     are enclosures, and they are larger than a control's on purpose: a panel
+     that shares its radius with the buttons inside it reads as one more
+     button.  `--radius-core` is the inner face of a bezel and `--radius-tray`
+     is its outer, and the two are concentric by construction -- see the ring
+     block in app.css, where the tray is a shadow spread rather than a second
+     element and CSS adds the spread to the radius for us. */
   --radius-sm: 3px;
   --radius-md: 6px;
   --radius-lg: 10px;
+  --radius-core: 15px;
+  --radius-tray: 24px;
   --radius-pill: 999px;
+
+  /* -- bezel ------------------------------------------------------------ */
+  /* How far a tray ring extends past the border box.  A box-shadow occupies
+     no layout space, so any gap between two bezelled elements has to clear
+     twice this or the rings overlap.  It is a token because three different
+     gaps depend on it and a fourth will. */
+  --ring: 9px;
 
   /* -- type ------------------------------------------------------------ */
   /* The fallback tails are the old stacks, so a checkout with the woff2
      files stripped still looks deliberate rather than broken. */
   --font-display: "Barlow Condensed", Tungsten, Impact, "Arial Narrow Bold",
     sans-serif;
-  --font-ui: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui,
-    Arial, sans-serif;
+  --font-ui: "Plus Jakarta Sans", "Segoe UI Variable Text", "Segoe UI",
+    system-ui, Arial, sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "SF Mono", Menlo,
     monospace;
 
@@ -76,11 +92,51 @@
   --shadow-2: 0 4px 12px color-mix(in srgb, black 45%, transparent);
   --shadow-3: 0 12px 32px color-mix(in srgb, black 55%, transparent);
 
+  /*
+   * The bezel: an enclosure that looks machined rather than outlined.
+   *
+   * Every panel, card and canvas in this interface used to be one
+   * `1px solid var(--border)` on a flat fill -- seventeen of them, all
+   * identical -- so nothing was ever *above* anything and the page read flat
+   * however carefully the surface ramp was tuned.  This is the fix, and it is
+   * four rings and a highlight rather than a second element:
+   *
+   *   inset      a light top edge, the way a raised face catches a room
+   *   1px        the core's own hairline
+   *   8px        the tray -- a lighter band standing the core off the page
+   *   --ring     the tray's outer hairline
+   *   shadow-3   the drop, which is what makes the whole thing sit *on* rather
+   *              than *in* the page
+   *
+   * A wrapper element would be the textbook construction and is not needed:
+   * an outer shadow's corner radius is `border-radius + spread`, so stacked
+   * rings are concentric for free.  That is what keeps this a stylesheet
+   * change -- no component in this repository grew a div for it.
+   *
+   * `white` here is the same argument as `black` above: these express depth,
+   * not a colour the palette gets to decide, and this interface is committed
+   * dark (`color-scheme: dark`, and theme.py has no light variant).
+   */
+  --bezel:
+    inset 0 1px 0 color-mix(in srgb, white 5.5%, transparent),
+    0 0 0 1px color-mix(in srgb, white 4.5%, transparent),
+    0 0 0 8px color-mix(in srgb, white 2.8%, transparent),
+    0 0 0 var(--ring) color-mix(in srgb, white 7.5%, transparent),
+    var(--shadow-3);
+
   /* -- motion ---------------------------------------------------------- */
+  /* Two curves, and the difference between them is what is moving.  `--ease`
+     is for a state that changes -- a hover fill, a border -- and is fast
+     enough not to sit between a press and its result.  `--ease-spring`
+     overshoots slightly and is for something that *travels*: an element
+     arriving on the page, a cap sliding inside a button.  Using the fast one
+     for travel is what made every control feel like a checkbox. */
   --dur-fast: 90ms;
   --dur-base: 160ms;
   --dur-slow: 280ms;
+  --dur-entry: 700ms;
   --ease: cubic-bezier(0.2, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
 
   /* -- layout ---------------------------------------------------------- */
   --page-max: 1440px;
@@ -104,5 +160,6 @@
     --dur-fast: 0ms;
     --dur-base: 0ms;
     --dur-slow: 0ms;
+    --dur-entry: 0ms;
   }
 }

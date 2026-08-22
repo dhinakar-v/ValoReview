@@ -23,7 +23,7 @@
 import type { ComponentType, KeyboardEvent, ReactNode, SVGProps } from "react";
 import { useRef } from "react";
 
-import { Icon, ICON_ALONE, Spinner } from "./icons";
+import { Icon, ICON_ALONE, Spinner, glyphs } from "./icons";
 import { Sentence } from "./Shell";
 import { play, playToggle } from "./sound";
 
@@ -76,6 +76,20 @@ export function Button({
     >
       {busy ? <Spinner /> : icon ? <Icon glyph={icon} /> : null}
       <span>{label}</span>
+      {/*
+        The trailing cap, on the primary variant only -- a nested circle
+        carrying the mark rather than a glyph floating beside the words.  It is
+        after the label and `aria-hidden` through `Icon`, so the accessible
+        name is still exactly `label` and `findByText(label)` still matches the
+        span above: `findByText` reads an element's *direct* text children, and
+        this adds a sibling rather than joining that node.
+        `views/ui.test.tsx` is the standing check.
+      */}
+      {variant === "primary" && !busy ? (
+        <span className="cap">
+          <Icon glyph={glyphs.capArrow} size={13} />
+        </span>
+      ) : null}
     </button>
   );
 }

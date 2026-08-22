@@ -23,7 +23,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
-import type { Player, Replay, Round } from "../api/types";
+import type { Decoder, Player, Replay, Round } from "../api/types";
 import { glyphs } from "../views/icons";
 import { MapStage } from "../views/MapStage";
 import { Failed, Loading, Page } from "../views/Shell";
@@ -78,7 +78,8 @@ function TeamColumn({ team, players }: { team: string; players: Player[] }) {
   );
 }
 
-function Roster({ replay }: { replay: Replay }) {
+/** The teams, always in this order, and the order carries no claim. */
+function split(replay: Replay): Array<[string, Player[]]> {
   const teams: Array<[string, Player[]]> = [
     ["A", replay.players.filter((p) => p.team === "A")],
     ["B", replay.players.filter((p) => p.team === "B")],
@@ -87,6 +88,87 @@ function Roster({ replay }: { replay: Replay }) {
   if (unknown.length > 0) {
     teams.push(["?", unknown]);
   }
+  return teams;
+}
+
+/**
+ * The footnote both roster layouts carry, written once.
+ *
+ * It travels with the roster rather than with the page, because what it
+ * qualifies is the A/B split itself -- and the split is drawn in two different
+ * places depending on how wide the window is.
+ */
+function RosterNote() {
+  return (
+    <p className="footnote">
+      Teams are A and B, inferred by two-colouring the kill graph. Which side
+      attacked is not recoverable: spike events carry no actor id. Health, armour
+      and credits are never replicated to a spectator recording, so they are not
+      shown at all rather than shown as zero.
+    </p>
+  );
+}
+
+/**
+ * The roster as it appears beside the map: one team per gutter.
+ *
+ * This is the desktop viewer's own layout -- `vrfview/panels.py` draws two
+ * mirrored team columns flanking the centre canvas -- which the first web port
+ * kept the *idea* of and lost the *placement* of, stacking both columns under
+ * a square map that is bounded by viewport height.  That left roughly a third
+ * of a wide window empty on either side of the one object worth looking at,
+ * while the names belonging to the markers sat below the fold.
+ *
+ * A is left and B is right purely by label.  Neither team ranks above the
+ * other -- `infer` two-colours a graph, it does not decide who was attacking --
+ * so nothing here may sort by score, and the third column, where it exists, is
+ * the explicit unknown rather than a spillover.
+ */
+function StageWithRoster({
+  replay,
+  decoder,
+}: {
+  replay: Replay;
+  decoder: Decoder | undefined;
+}) {
+  const teams = split(replay);
+  const a = teams.find(([team]) => team === "A");
+  const b = teams.find(([team]) => team === "B");
+  const rest = teams.filter(([team]) => team !== "A" && team !== "B");
+  return (
+    <div className="viewer-grid">
+      {a ? (
+        <aside className="gutter" aria-label="Team A">
+          <TeamColumn team={a[0]} players={a[1]} />
+        </aside>
+      ) : null}
+      <div className="viewer-stage">
+        <MapStage replay={replay} decoder={decoder} />
+      </div>
+      {b ? (
+        <aside className="gutter" aria-label="Team B">
+          <TeamColumn team={b[0]} players={b[1]} />
+        </aside>
+      ) : null}
+      {/*
+        The explicit unknown, which `infer` leaves rather than assigning
+        somebody to a team it could not two-colour.  It spans the whole row
+        instead of taking a gutter, because it is not a third team.
+      */}
+      {rest.map(([team, players]) => (
+        <aside className="gutter span" key={team} aria-label="Players with no inferred team">
+          <TeamColumn team={team} players={players} />
+        </aside>
+      ))}
+      <div className="viewer-note">
+        <RosterNote />
+      </div>
+    </div>
+  );
+}
+
+/** The roster as its own panel, for a window too narrow to flank anything. */
+function Roster({ replay }: { replay: Replay }) {
   return (
     <Panel
       title="Players"
@@ -94,16 +176,11 @@ function Roster({ replay }: { replay: Replay }) {
       actions={<Chip>{replay.players.length} in the file</Chip>}
     >
       <div className="team-panels">
-        {teams.map(([team, players]) => (
+        {split(replay).map(([team, players]) => (
           <TeamColumn key={team} team={team} players={players} />
         ))}
       </div>
-      <p className="footnote">
-        Teams are A and B, inferred by two-colouring the kill graph. Which side
-        attacked is not recoverable: spike events carry no actor id. Health, armour
-        and credits are never replicated to a spectator recording, so they are not
-        shown at all rather than shown as zero.
-      </p>
+      <RosterNote />
     </Panel>
   );
 }
@@ -281,8 +358,23 @@ export function ViewerPage() {
       actions={actions}
       footer={<span className="mono">{replay.source}</span>}
     >
-      <MapStage replay={replay} decoder={config.data?.decoder} />
-      <Roster replay={replay} />
+      {/*
+        Two roster layouts, and which one appears is decided by whether there
+        is a map to flank.  With positions the teams take the gutters either
+        side of the stage, which is the desktop viewer's arrangement and puts a
+        player's name on the same screen row as their marker.  Without them the
+        stage is a sentence in a short panel, and columns flanking a paragraph
+        would be a layout pretending there is something to look at -- so the
+        roster goes back to being a panel of its own.
+      */}
+      {replay.has_positions ? (
+        <StageWithRoster replay={replay} decoder={config.data?.decoder} />
+      ) : (
+        <>
+          <MapStage replay={replay} decoder={config.data?.decoder} />
+          <Roster replay={replay} />
+        </>
+      )}
       <Timeline replay={replay} />
     </Page>
   );

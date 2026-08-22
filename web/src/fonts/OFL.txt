@@ -2,14 +2,14 @@ The three typefaces bundled in this directory are all licensed under the SIL
 Open Font License, Version 1.1.  The licence is reproduced once, in full, below;
 the copyright lines differ per family and are listed first.
 
-    Inter               Copyright (c) 2016 The Inter Project Authors
-                        https://github.com/rsms/inter
+    Plus Jakarta Sans   Copyright (c) 2020 The Plus Jakarta Sans Project Authors
+                        https://github.com/tokotype/PlusJakartaSans
     Barlow Condensed    Copyright (c) 2017 The Barlow Project Authors
                         https://github.com/jpt/barlow
     JetBrains Mono      Copyright (c) 2020 The JetBrains Mono Project Authors
                         https://github.com/JetBrains/JetBrainsMono
 
-Inter and JetBrains Mono are the variable builds -- one file each, spanning
+Plus Jakarta Sans and JetBrains Mono are the variable builds -- one file each, spanning
 every weight this interface uses.  Barlow Condensed is static, so semibold and
 bold are two files.  All four are the latin subset Google Fonts serves.
 

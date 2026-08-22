@@ -13,7 +13,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { api } from "../api/client";
@@ -54,7 +54,55 @@ function prewarmTone(state: string): "ok" | "warn" | "bad" | "neutral" {
   return "neutral";
 }
 
-function CardRow({ card }: { card: Card }) {
+/**
+ * Reveal a row as it comes into view, and do nothing at all where it cannot.
+ *
+ * The order here is the whole point.  A row renders visible; this hook then
+ * checks that `IntersectionObserver` exists and that the element is real, and
+ * only *then* marks it pending -- so anywhere the observer is missing (jsdom,
+ * which runs three tests over this list) every card simply stays visible.  A
+ * stylesheet that hid rows up front would have hidden them permanently there,
+ * and `findAllByText("Haven")` would race an animation that never starts.
+ *
+ * `IntersectionObserver` and not a scroll listener: this page is one route
+ * away from a viewer running a canvas at 60fps, and a scroll handler that
+ * reflows a hundred rows is the kind of cost that shows up as jank somewhere
+ * else entirely.
+ */
+function useReveal(index: number) {
+  const ref = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (node === null || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+    // Anything already on screen at mount is in view by the time the observer
+    // first fires, so this reads as a stagger on load and as a single reveal
+    // on scroll -- which is the behaviour wanted in both cases.
+    node.style.setProperty("--enter-delay", `${Math.min(index, 8) * 45}ms`);
+    node.dataset.enter = "pending";
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            (entry.target as HTMLElement).dataset.enter = "in";
+            observer.unobserve(entry.target);
+          }
+        }
+      },
+      { rootMargin: "0px 0px -40px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [index]);
+
+  return ref;
+}
+
+function CardRow({ card, index }: { card: Card; index: number }) {
+  const reveal = useReveal(index);
   const body = (
     <>
       <Thumbnail card={card} />
@@ -83,10 +131,18 @@ function CardRow({ card }: { card: Card }) {
   // An unreadable capture is still shown -- carrying its error -- but there is
   // nothing behind it to open.
   if (!card.readable) {
-    return <div className={edge}>{body}</div>;
+    return (
+      <div className={edge} ref={reveal as React.Ref<HTMLDivElement>}>
+        {body}
+      </div>
+    );
   }
   return (
-    <Link className={edge} to={`/replay/${card.id}`}>
+    <Link
+      className={edge}
+      to={`/replay/${card.id}`}
+      ref={reveal as React.Ref<HTMLAnchorElement>}
+    >
       {body}
     </Link>
   );
@@ -151,8 +207,8 @@ export function MatchListPage() {
         </EmptyState>
       ) : (
         <div className="cards">
-          {library.cards.map((card) => (
-            <CardRow key={card.id} card={card} />
+          {library.cards.map((card, index) => (
+            <CardRow key={card.id} card={card} index={index} />
           ))}
         </div>
       )}

@@ -184,10 +184,18 @@ button {
   padding: var(--space-2) var(--space-4);
   cursor: pointer;
   white-space: nowrap;
+  /*
+   * Colour on the fast curve, movement on the spring.  A press that only
+   * swapped a fill gave no evidence the control had been *pressed* -- which is
+   * the one piece of feedback a transport bar stepping one event per click
+   * actually needs, because the result of the press is a canvas repaint the
+   * eye does not associate with the button.
+   */
   transition:
     background var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease);
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-slow) var(--ease-spring);
 }
 
 button:hover:not(:disabled) {
@@ -197,6 +205,7 @@ button:hover:not(:disabled) {
 
 button:active:not(:disabled) {
   background: var(--field-bg);
+  transform: scale(0.975);
 }
 
 button:disabled {
@@ -216,16 +225,60 @@ button[aria-pressed="true"]:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 26%, var(--card-bg));
 }
 
+/*
+ * The one control on a page that gets a pill and a lit edge.  There are two:
+ * DECODE POSITIONS, and PLAY.  Everything else is a rectangle, which is what
+ * makes these two findable without reading them.
+ */
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--app-bg);
   font-weight: var(--weight-semibold);
+  border-radius: var(--radius-pill);
+  padding-left: var(--space-5);
+  letter-spacing: var(--track-wide);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 42%, transparent),
+    0 4px 16px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 button.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 82%, white);
   border-color: color-mix(in srgb, var(--accent) 82%, white);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 48%, transparent),
+    0 8px 26px color-mix(in srgb, var(--accent) 44%, transparent);
+}
+
+/*
+ * The trailing cap: a nested circle carrying the mark, flush with the pill's
+ * right inner padding rather than a glyph floating beside the words.  It moves
+ * on hover so the button has somewhere to travel internally -- the press
+ * scales the whole control, this leans in the direction the action goes.
+ *
+ * `aria-hidden` is set by `Icon` in icons.tsx, centrally, so the accessible
+ * name is still exactly the label and `findByText("DECODE POSITIONS")` still
+ * matches the label's own text node.  See views/ui.tsx.
+ */
+button.primary .cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: var(--space-2);
+  margin-right: calc(-1 * var(--space-2));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--app-bg) 16%, transparent);
+  transition:
+    transform var(--dur-slow) var(--ease-spring),
+    background var(--dur-slow) var(--ease-spring);
+}
+
+button.primary:hover:not(:disabled) .cap {
+  transform: translate(3px, -1px) scale(1.06);
+  background: color-mix(in srgb, var(--app-bg) 26%, transparent);
 }
 
 button.ghost {
@@ -347,15 +400,39 @@ option {
   position: relative;
 }
 
+/*
+ * A floating bar rather than a strip glued to the top edge.
+ *
+ * `backdrop-filter` is affordable here and nowhere else on this page: the bar
+ * is a fixed-height element that never scrolls its own content, while the
+ * stage runs a canvas at 60fps and the transport strip runs a second
+ * `requestAnimationFrame` loop beside it.  A blur over either of those would
+ * repaint continuously against live pixels.
+ *
+ * `flex: none` on a taller box than `--bar-h` because the margin is now part
+ * of the row: the column below still gets the same space it did.
+ */
 .app-bar {
   display: flex;
   align-items: center;
   gap: var(--space-4);
   height: var(--bar-h);
   flex: 0 0 var(--bar-h);
-  padding: 0 var(--space-6);
-  background: var(--card-bg);
-  border-bottom: 1px solid var(--border);
+  /* Same width and centring as `.page`, so the bar and the content below it
+     share an edge instead of the bar running the full width of a wide screen
+     while everything under it stops at `--page-max`. */
+  width: min(100% - 2 * var(--space-6), var(--page-max));
+  margin: var(--space-4) auto var(--space-2);
+  padding: 0 var(--space-5);
+  background: color-mix(in srgb, var(--card-bg) 72%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 0;
+  border-radius: var(--radius-pill);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+    0 0 0 1px color-mix(in srgb, white 6%, transparent),
+    var(--shadow-2);
   z-index: var(--z-sticky);
 }
 
@@ -471,6 +548,16 @@ option {
   flex: 1;
   overflow-y: auto;
   padding-bottom: var(--space-6);
+  /*
+   * Room for the bezel rings, which extend `--ring` past the border box of
+   * every panel inside here.  Setting `overflow-y` computes `overflow-x` to
+   * `auto` as well, so without this the trays would be clipped -- or worse,
+   * would put a horizontal scrollbar on a column that has nothing to scroll
+   * sideways.  The negative margin gives the padding back, so no content
+   * moves.
+   */
+  padding-inline: var(--ring);
+  margin-inline: calc(-1 * var(--ring));
   scrollbar-color: var(--line-strong) transparent;
   /* Two regions on this page scroll inside themselves, and reaching the end of
      one of them should stop rather than start scrolling whatever is behind it
@@ -561,12 +648,20 @@ option {
 
 /* -- panel ------------------------------------------------------------- */
 
+/*
+ * A panel is an enclosure, so it gets the bezel rather than a hairline.
+ *
+ * The margin has to clear `--ring`: a box-shadow occupies no layout space, so
+ * two panels a bare `--space-5` apart would have their trays overlapping and
+ * the ring between them would read as one thick smear instead of two edges.
+ */
 .panel {
   background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border: 0;
+  border-radius: var(--radius-core);
   padding: var(--space-5);
-  margin-bottom: var(--space-5);
+  margin-bottom: calc(var(--space-5) + var(--ring));
+  box-shadow: var(--bezel);
 }
 
 .panel h2 {
@@ -673,10 +768,11 @@ option {
 
 /* -- match list -------------------------------------------------------- */
 
+/* Twice `--ring` plus the gap that was there, or adjacent trays touch. */
 .cards {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: calc(var(--space-3) + 2 * var(--ring));
 }
 
 .card {
@@ -685,16 +781,23 @@ option {
   align-items: center;
   gap: var(--space-5);
   background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border: 0;
+  border-radius: var(--radius-core);
   padding: var(--space-3) var(--space-4);
   text-align: left;
   width: 100%;
   position: relative;
   overflow: hidden;
+  box-shadow: var(--bezel);
+  /*
+   * Transform is in the transition list and `background` is not a layout
+   * property, so a hovered row costs a composite and never a reflow -- which
+   * matters on a page that can hold a hundred of these.
+   */
   transition:
-    background var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease);
+    background var(--dur-base) var(--ease),
+    transform var(--dur-slow) var(--ease-spring),
+    box-shadow var(--dur-slow) var(--ease-spring);
 }
 
 /* A status edge rather than another chip: whether a capture can be opened is
@@ -715,9 +818,23 @@ option {
   background: var(--accent-b);
 }
 
+/*
+ * A row that can be opened lifts; one that cannot does not, which is the same
+ * claim the left edge makes and the reason `.card.unreadable` is a `div`.
+ */
 a.card:hover {
   background: var(--card-hover);
-  border-color: var(--line-strong);
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+    0 0 0 1px color-mix(in srgb, white 6%, transparent),
+    0 0 0 8px color-mix(in srgb, white 3.6%, transparent),
+    0 0 0 var(--ring) color-mix(in srgb, var(--accent) 34%, transparent),
+    var(--shadow-3);
+}
+
+a.card:active {
+  transform: translateY(0);
 }
 
 .card-thumb {
@@ -771,6 +888,83 @@ a.card:hover {
   flex-direction: column;
   align-items: flex-end;
   gap: var(--space-2);
+}
+
+/* -- viewer layout ----------------------------------------------------- */
+
+/*
+ * The map with a team down each side.
+ *
+ * The stage is a square bounded by viewport *height*, so on any wide window a
+ * centred one leaves two large empty columns beside the only object on the
+ * page worth looking at -- while the roster naming those markers sat below the
+ * fold.  This is the desktop viewer's arrangement (`vrfview/panels.py`, two
+ * mirrored columns flanking the centre canvas), which the first port kept the
+ * idea of and lost the placement of.
+ *
+ * Narrow is the base case and it is a column, with the map first: a roster
+ * above the thing it annotates is worse than one below it.  The flanking
+ * layout only switches on where there is genuinely room for it -- 1100px is
+ * the stage at its 320px floor plus two 240px gutters plus the gaps, rounded
+ * up, so the breakpoint is measured rather than picked.
+ */
+.viewer-grid {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-5) + var(--ring));
+  margin-bottom: calc(var(--space-5) + var(--ring));
+}
+
+.viewer-stage {
+  order: -1;
+  min-width: 0;
+}
+
+/* The stage panel already carries its own margin; inside the grid the gap
+   owns the spacing, or the two are added together. */
+.viewer-stage > .panel {
+  margin-bottom: 0;
+}
+
+.gutter {
+  background: var(--card-bg);
+  border-radius: var(--radius-core);
+  padding: var(--space-4);
+  box-shadow: var(--bezel);
+  min-width: 0;
+}
+
+.viewer-note {
+  min-width: 0;
+}
+
+.viewer-note .footnote {
+  margin-top: 0;
+}
+
+@media (min-width: 1100px) {
+  .viewer-grid {
+    display: grid;
+    grid-template-columns:
+      minmax(240px, 1fr)
+      minmax(0, 2.2fr)
+      minmax(240px, 1fr);
+    align-items: start;
+  }
+
+  /* Explicit placement rather than auto-flow: the DOM order is already
+     A, stage, B, and saying so here means a third `.gutter.span` cannot
+     silently land in a column and squash the map. */
+  .viewer-stage {
+    order: 0;
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .gutter.span,
+  .viewer-note {
+    grid-column: 1 / -1;
+  }
 }
 
 /* -- viewer ------------------------------------------------------------ */
@@ -904,6 +1098,41 @@ table.rows tr:last-child td {
 
 /* -- map stage --------------------------------------------------------- */
 
+/*
+ * The stage's bezel, and the only one made of two elements.
+ *
+ * Everywhere else a tray is `--bezel`'s shadow rings, which cost no DOM.  Here
+ * it cannot be: `e2e/gallery.spec.ts` screenshots `.panel.stage`, Playwright
+ * captures a bounding box, and a bounding box excludes box-shadow -- so the
+ * committed gallery images would show a core with its tray sliced off.
+ *
+ * `.tray` is what tells the two apart.  The five empty-state panels in
+ * MapStage are `<Panel className="stage">` and carry no `.tray`, so they keep
+ * the ordinary shadow bezel; only the real stage, which is the thing being
+ * photographed, is built out of elements.
+ *
+ * The radii are concentric by hand rather than by CSS: `--radius-tray` minus
+ * `--ring` is `--radius-core`, 24 - 9 = 15.  Change one and the corners stop
+ * nesting.
+ */
+.panel.stage.tray {
+  background: color-mix(in srgb, white 2.8%, transparent);
+  border-radius: var(--radius-tray);
+  padding: var(--ring);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 7.5%, transparent),
+    var(--shadow-3);
+}
+
+.stage-core {
+  background: var(--card-bg);
+  border-radius: var(--radius-core);
+  padding: var(--space-5);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 5.5%, transparent),
+    0 0 0 1px color-mix(in srgb, white 4.5%, transparent);
+}
+
 .stage-head {
   display: flex;
   align-items: center;
@@ -927,17 +1156,32 @@ table.rows tr:last-child td {
    * Bounded by the viewport height rather than only by the column width: a
    * square as wide as a 1440px layout is a square taller than the screen, and
    * it put the transport bar below the fold -- so the map was unusable until
-   * you scrolled, on the one page where the map is the point.  The 380px is
+   * you scrolled, on the one page where the map is the point.  The 404px is
    * everything above and below it: the app bar, the page head, the panel's
    * own padding, the stage head, the strip, its legend and the transport.
+   *
+   * It was 380px until the app bar started floating, which added its top and
+   * bottom margins (`--space-4` + `--space-2`) to the column above.  This
+   * constant is measured, not guessed: change the chrome, re-measure it, or
+   * the transport quietly drops below the fold again.
    */
-  width: min(100%, max(320px, calc(100vh - 380px)));
+  width: min(100%, max(320px, calc(100vh - 404px)));
   margin-inline: auto;
   aspect-ratio: 1 / 1;
   background: var(--canvas-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border: 0;
+  border-radius: var(--radius-core);
   overflow: hidden;
+  /*
+   * Sunk, not outlined.  Everything else on this page is an enclosure standing
+   * off the ground; the map is the one thing you look *into*, so it takes the
+   * bezel inverted -- an inner hairline and a soft interior shade instead of a
+   * tray and a drop.  That is also what makes the panel around it read as
+   * holding it rather than as another box beside it.
+   */
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, white 6%, transparent),
+    inset 0 2px 18px color-mix(in srgb, black 85%, transparent);
 }
 
 .minimap,
@@ -1076,6 +1320,43 @@ table.rows tr:last-child td {
   font-size: var(--text-sm);
   color: var(--text-muted);
   align-items: center;
+}
+
+/* -- entry ------------------------------------------------------------- */
+
+/*
+ * A card arrives rather than appearing.
+ *
+ * Two rules make this safe on a page that also runs two canvases:
+ *
+ *   * only `transform` and `opacity` are animated, so a reveal is a composite
+ *     and never a reflow -- a hundred rows re-laying out on scroll would be
+ *     felt immediately on the same thread the minimap draws on;
+ *   * the hidden state is applied by script, not by the stylesheet.  A card is
+ *     visible by default and `MatchList` marks it `data-enter` only once it
+ *     has confirmed an `IntersectionObserver` exists.  A stylesheet that hid
+ *     rows up front would leave them hidden forever anywhere the observer does
+ *     not run -- which includes jsdom, where three tests read this list.
+ *
+ * `--dur-entry` is zeroed under `prefers-reduced-motion` along with every
+ * other duration, so this collapses to an instant state change rather than
+ * needing a second rule to switch it off.
+ */
+[data-enter="pending"] {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+[data-enter] {
+  transition:
+    opacity var(--dur-entry) var(--ease-spring),
+    transform var(--dur-entry) var(--ease-spring);
+  transition-delay: var(--enter-delay, 0ms);
+}
+
+[data-enter="in"] {
+  opacity: 1;
+  transform: none;
 }
 
 /* -- spinner ----------------------------------------------------------- */
