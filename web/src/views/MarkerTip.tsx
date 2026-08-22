@@ -25,9 +25,6 @@ import type { Snapshot } from "../model/state";
 import { sideOf, vitalsAt, weaponArt } from "../model/synthetic";
 import { usePlayback } from "./playback";
 
-/** How far right of the marker the card sits, matching the reference's ~10px. */
-const OFFSET_PX = 14;
-
 export function MarkerTip({
   model,
   snap,
@@ -53,12 +50,18 @@ export function MarkerTip({
   const gun = weaponArt(weapons, vitals.weapon);
   const [kills, deaths] = snap.kd.get(actorId) ?? [0, 0];
 
-  // Hovering a roster card gives no canvas coordinate, so the card pins itself
-  // to the stage's own corner instead of guessing one.
+  /*
+    `hoveredAt` is where the tip goes, already worked out by whoever raised it.
+
+    A roster card now supplies one too -- `RosterPanel.tipAnchor` translates
+    the card's own box into this canvas's frame -- so the parked corner is only
+    for a page that has rosters and no stage to anchor to.  Each source applies
+    its own offset, because they need different ones: a marker's is pushed
+    clear of the marker, and a roster's is already an edge.  Guessing which was
+    which from the value would break for a marker near the left edge.
+  */
   const anchored = at !== null;
-  const style = anchored
-    ? { left: `${at.x + OFFSET_PX}px`, top: `${at.y}px` }
-    : undefined;
+  const style = anchored ? { left: `${at.x}px`, top: `${at.y}px` } : undefined;
 
   return (
     <div className={anchored ? "marker-tip" : "marker-tip is-parked"} style={style}>

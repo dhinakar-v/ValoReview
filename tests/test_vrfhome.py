@@ -55,12 +55,24 @@ def card(
 
 
 class CardFacts(unittest.TestCase):
-    def test_duration_is_mm_ss(self):
-        assert card("a").duration == "02:05"
+    def test_a_card_carries_the_instant_and_the_length_not_a_rendering(self):
+        """
+        A scan describes a capture; it does not decide how a date is written.
+
+        There were `duration` and `recorded` properties here that formatted
+        these two into strings for a card to print.  Removing them is what
+        stopped the match list and the viewer header writing the same instant
+        two different ways -- see `web/src/model/format.ts`.
+        """
+        one = card("a")
+        assert one.length_ms == 125_000
+        assert one.recorded_utc is not None
+        assert not hasattr(one, "duration")
+        assert not hasattr(one, "recorded")
 
     def test_a_dateless_card_says_so_rather_than_showing_an_epoch(self):
         dateless = scan.MatchCard(path=Path("x.vrf"))
-        assert dateless.recorded == "date not in file"
+        assert dateless.recorded_utc is None
 
     def test_the_result_badge_is_always_the_refusal(self):
         assert card("a").result == scan.RESULT_NOT_IN_FILE
@@ -223,7 +235,7 @@ class AgainstARealCapture(unittest.TestCase):
         assert got.rounds > 0
         assert got.players == 10
         assert got.recorded_utc is not None
-        assert got.duration.count(":") == 1
+        assert got.length_ms > 0
 
     @unittest.skipUnless(DEMO_11_11.exists(), "needs the 11.11 reference capture")
     def test_the_11_11_capture_reads_but_refuses_positions(self):

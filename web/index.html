@@ -17,9 +17,15 @@
     <meta name="theme-color" content="#0a0b0d" />
     <meta
       name="description"
-      content="Read Valorant .vrf replay captures: decoded player positions on the radar, round and ability timelines, and an account of where every claim came from."
+      content="Vantage reads Valorant .vrf replay captures: decoded player positions on the radar, round and ability timelines, and an account of where every claim came from."
     />
-    <title>Valorant replay analyzer</title>
+    <!--
+      The product name, and the second of its two copies: src/views/brand.ts
+      holds the one the interface renders.  This one is static HTML read before
+      any script runs, so it cannot import that -- the same reason
+      public/favicon.svg duplicates the Wordmark.  Change both.
+    -->
+    <title>Vantage</title>
   </head>
   <body>
     <div id="root"></div>

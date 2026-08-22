@@ -86,6 +86,9 @@ export function palette(element: HTMLElement): Record<string, string> {
     panel: read("--panel", "#101216"),
     accent: read("--accent", "#7c8cff"),
     ult: read("--ult", "#ffd166"),
+    spikeArmed: read("--spike-armed", "#ff9f45"),
+    spikeSafe: read("--spike-safe", "#3ecf8e"),
+    spikeBoom: read("--spike-boom", "#ff7043"),
   };
 }
 

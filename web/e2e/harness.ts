@@ -222,10 +222,24 @@ export async function toggleLayer(page: Page, name: string): Promise<void> {
   // The row, not the input: the input is clipped to a pixel so a reader still
   // announces it, and clicking it directly lands on the drawn box instead.
   // A person clicks the label, and so does this.
-  await page
+  const row = page
     .locator(".check-row")
-    .filter({ has: page.getByText(name, { exact: true }) })
-    .click();
+    .filter({ has: page.getByText(name, { exact: true }) });
+  /*
+    Assert the switch was enabled and actually flipped.
+
+    A row that cannot be used is now shown disabled with a reason rather than
+    dropped from the menu, and this helper used to be blind to that in the
+    worst possible way: Playwright's actionability checks all pass on the
+    `<label>`, the browser then declines to activate a disabled control, and
+    the only thing asserted afterwards was that the menu closed -- which it
+    did.  Every layer spec would have gone on passing while toggling nothing.
+  */
+  const box = row.getByRole("checkbox");
+  await expect(box, `${name} is offered as a working switch here`).toBeEnabled();
+  const before = await box.isChecked();
+  await row.click();
+  await expect(box, `${name} flipped`).toBeChecked({ checked: !before });
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("button", { name: "LAYERS", exact: true }),
@@ -331,6 +345,10 @@ export async function palette(page: Page): Promise<Record<string, string>> {
       b: read("--team-b"),
       unknown: read("--team-unknown"),
       background: read("--app-bg"),
+      // The spike, which is deliberately neither team's: it was `#ff5252`,
+      // twelve RGB from the attacker red, so a pixel of it counted as a
+      // player marker in the very assertions this palette feeds.
+      spikeArmed: read("--spike-armed"),
     };
   });
 }

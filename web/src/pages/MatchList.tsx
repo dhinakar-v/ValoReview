@@ -18,9 +18,10 @@ import { Link } from "react-router-dom";
 
 import { api } from "../api/client";
 import type { Card } from "../api/types";
+import { formatDay, formatDuration, formatTimeOfDay } from "../model/format";
 import { glyphs } from "../views/icons";
 import { Failed, Loading, Page } from "../views/Shell";
-import { Chip, EmptyState, Field, IconButton, Toolbar } from "../views/ui";
+import { Chip, EmptyState, IconButton, Select, Toolbar } from "../views/ui";
 
 function Thumbnail({ card }: { card: Card }) {
   if (!card.listview_url) {
@@ -108,9 +109,34 @@ function CardRow({ card, index }: { card: Card; index: number }) {
       <Thumbnail card={card} />
       <div className="card-facts">
         <span className="card-map display">{card.map_name || card.map_path || "unknown map"}</span>
+        {/*
+          Four quantities, each labelled and each allowed to wrap.
+
+          They used to run together at one weight -- `06 Jun 2026 - 02:00 ·
+          31:08 · 21 rounds · 10 players` -- on a line that was `nowrap` with an
+          ellipsis, so the round count was the first thing to disappear in a
+          narrow column and a reader had to guess which number was which.  The
+          value is the readable weight and the noun is faint beside it.
+        */}
         <span className="card-line">
-          {card.recorded} &middot; {card.duration} &middot; {card.rounds} rounds &middot;{" "}
-          {card.players} players
+          <span className="fact">
+            <b>{formatDay(card.recorded_utc)}</b>
+            {formatTimeOfDay(card.recorded_utc) ? (
+              <span className="unit">{formatTimeOfDay(card.recorded_utc)}</span>
+            ) : null}
+          </span>
+          <span className="fact">
+            <b>{formatDuration(card.length_ms)}</b>
+            <span className="unit">long</span>
+          </span>
+          <span className="fact">
+            <b>{card.rounds}</b>
+            <span className="unit">rounds</span>
+          </span>
+          <span className="fact">
+            <b>{card.players}</b>
+            <span className="unit">players</span>
+          </span>
         </span>
         {card.error ? <span className="card-line error">{card.error}</span> : null}
       </div>
@@ -178,22 +204,22 @@ export function MatchListPage() {
     <Page title="Replays">
       {library.maps_present.length > 0 ? (
         <Toolbar>
-          <Field icon={glyphs.mapPin} label="Filter by map">
-            <select
-              value={mapName}
-              onChange={(event) => {
-                setMapName(event.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">every map</option>
-              {library.maps_present.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </Field>
+          {/* The interface's own control, not the platform's. A native
+              `<select>` draws its popup outside CSS's reach, so the one part
+              of this page a person actually opens belonged to the OS. */}
+          <Select
+            icon={glyphs.mapPin}
+            label="Filter by map"
+            value={mapName}
+            options={[
+              { value: "", label: "every map" },
+              ...library.maps_present.map((name) => ({ value: name, label: name })),
+            ]}
+            onChange={(next) => {
+              setMapName(next);
+              setPage(1);
+            }}
+          />
         </Toolbar>
       ) : null}
 

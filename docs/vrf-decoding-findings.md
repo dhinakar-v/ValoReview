@@ -214,6 +214,54 @@ neither hypothesis should be assumed to match stock UE.
 
 ---
 
+## The spike has a coordinate after all
+
+**Measured 22 August 2026, over the 21 playable captures of the reference library — 274 plants.**
+
+A `spikePlanted` event carries **no arguments at all**: `loader._rounds`' sibling branch reads no
+actor id, and `docs/039f3991_summary.md` §6 lists the spike group as three bare event types. The
+vendored parser exposes only an opaque `BombState` byte, and
+`docs/valorant-replay-parser-features.md` lists "spike plant/defuse position, planter, or timer"
+among the things still out of reach. So for a long time the plant's location was taken to be one
+of the facts a `.vrf` simply does not hold.
+
+It holds it twice removed. Planting spawns a `/Game/GameModes/Bomb/TimedBomb` actor, and
+`csharp/VrfPositions` has recorded every actor's `ActorSpawned` transform since it was written —
+`tracks.py` handed those to `abilities.spawns_from`, which keeps only paths under
+`/Game/Characters/` and dropped the rest on the floor.
+
+Three checks settled that these are the plant rather than an actor that happens to appear nearby,
+and none could be satisfied by a decoding bug:
+
+| Check | Result |
+|---|---|
+| TimedBomb spawns vs. `spikePlanted` events | **equal in every one of the 21 captures**; 274 paired one-to-one, 0 unpaired |
+| Pairing offset | **+8 to +15 ms, median 8** — a constant time base, the same offset the match's first actors are seen at, not jitter |
+| Distance to the nearest player's own decoded position at that instant | median **69.5 uu**, 94.5% within 100 uu |
+| Inside the radar image's playable silhouette | **274 of 274**, where a random coordinate lands inside about a third of the time |
+
+The ~5% beyond 400 uu is a property of the thinning rather than of the coordinate: `Track.at`
+refuses to interpolate across a gap longer than `MAX_INTERPOLATE_MS`, so at a few plants the
+planter has no sample at that millisecond and the nearest *other* player is a room away. The
+silhouette check being 274/274 is what rules out the alternative reading.
+
+`tests/test_positions.py::SpikePlantsAreRealCoordinates` is the standing check, and
+`tracks._plants_from` carries the numbers in its docstring.
+
+**Only the plant is read.** `Bomb_Defuser` actors carry transforms too — they appear at round
+start on whoever is holding one, and again during defuse attempts — and nothing has measured them,
+so nothing reads them. An unmeasured coordinate drawn on a map is indistinguishable from a decoded
+one, which is the whole reason this section exists.
+
+### What this does not give
+
+The **planter** is still unattributable. The coordinate says where, not who: the spike is at
+somebody's feet and several players are usually within a few hundred uu of it, so picking the
+nearest would be a guess. `infer._outcome` still leaves `winner = TEAM_UNKNOWN` on a defuse or a
+detonation for exactly the same reason.
+
+---
+
 ## Reproducing
 
 ```

@@ -33,26 +33,33 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
-import type { MapArt, Player, SightMaskDoc } from "../api/types";
+import type { AbilityCast, MapArt, Player, SightMaskDoc } from "../api/types";
 import type { ReplayModel } from "../model/replay";
 import type { SightMask, SightSettings } from "../model/sight";
 import { cone, decodeMask, forwardUv, uvRadius } from "../model/sight";
 import type { Snapshot } from "../model/state";
-import { positionOf, stateAt } from "../model/state";
+import { positionOf, spikeLocation, stateAt } from "../model/state";
 import { segments } from "../model/track";
 import type { Box } from "../model/transform";
 import { applyTransform, placeSquare, uvToPixels } from "../model/transform";
 import { sideOf } from "../model/synthetic";
 import { markerScale, panBy, viewBox, zoomAt } from "../model/viewport";
-import { palette, sideColour, teamColour, useImages } from "./images";
+import { palette, sideColour, useImages } from "./images";
 import { usePlayback, selectedActor, teamShown } from "./playback";
 
 /** Marker sizes, in CSS pixels, carried over from the desktop viewer. */
 const AVATAR_PX = 26;
 const DOT_RADIUS = 7;
-const DEAD_RADIUS = 6;
-const PAWN_HALF = 5;
-const PLACED_HALF = 6;
+/*
+ * A utility marker's half-size.
+ *
+ * One constant where there were two at 5 and 6, and bigger than both: the
+ * marker carries Riot's ability icon now instead of a name printed beside it,
+ * and that art is white line work that is unrecognisable inside a ten-pixel
+ * box.  Sixteen across, against the players' twenty-six, keeps utility
+ * visibly subordinate to people while staying identifiable.
+ */
+const UTILITY_HALF = 8;
 
 /**
  * The facing mark: a triangle on the ring, not a line out of it.
@@ -68,8 +75,31 @@ const FACING_HALF = 6;
 /** How much larger a hovered or pinned marker is drawn. */
 const PICKED_SCALE = 3;
 
-/** A kill mark's arm, in CSS pixels before the zoom scale. */
-const KILL_MARK = 6;
+/*
+ * The death X's arm, in CSS pixels before the zoom scale.
+ *
+ * One constant where there were two: `KILL_MARK` sized the kill cross and
+ * `DEAD_RADIUS` the dead player's own circle, and both were drawn at the same
+ * point on the same player.  See `drawDeathMark`.
+ */
+const DEATH_MARK = 5;
+
+/** How far right of a marker the hover card sits, matching the reference. */
+const TIP_OFFSET_PX = 14;
+
+/** Half-height of the spike triangle at fit zoom. */
+const SPIKE_HALF = 8;
+
+/*
+ * How far a *mark* is allowed to grow with the zoom.
+ *
+ * `markerScale` reaches 2.2x, which is right for a person -- they occupy room
+ * in the world, so they grow with it.  An annotation does not: a map pin does
+ * not get bigger when you zoom the map, and a death cross or a spike that
+ * doubled would start competing with the players it sits under.  1.4 is the
+ * cap the agent label used before it was removed.
+ */
+const MARK_SCALE_CAP = 1.4;
 
 /**
  * How far ahead the facing probe is placed, in Unreal units.
@@ -153,6 +183,18 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
     return out;
   }, [icons, model]);
 
+  /*
+    Riot's ability art, keyed by url the way the agent portraits are.
+
+    `useImages` never throws and never blocks -- a url that 404s simply never
+    arrives in the map -- so a marker falls back to its keybind character
+    rather than to a gap.  Keyed by url and not by cast, because the same
+    ability cast forty times in a match is one picture.
+  */
+  const castIcons = useImages(
+    useMemo(() => model.replay.ability_casts.map((cast) => cast.icon_url), [model]),
+  );
+
   const silhouette = useMemo<SightMask | null>(
     () => (mask ? decodeMask(mask.size, mask.cells) : null),
     [mask],
@@ -216,6 +258,9 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
         const [u, v] = applyTransform(art.transform, x, y);
         return uvToPixels(box, u, v);
       };
+      // Unreal units to pixels on this frame's box, for the one thing drawn at
+      // a radius rather than at a coordinate.
+      const uvRadiusOf = (uu: number) => uvRadius(art.transform, uu) * box.side;
 
       // The draw order is the z-order, and it is the desktop viewer's: the cone
       // is a wash under everything, then ability paths, then utility, then the
@@ -227,35 +272,51 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
       if (state.layers.trails) {
         drawPlayerTrails(context, { model, snap, world, colours });
       }
-      if (state.layers.killMarkers) {
-        drawKillMarks(context, { model, snap, world, colours, scale });
+      /*
+        There was a whole reservation pass here: the players claimed their icon
+        boxes so that a utility *name* printed beside a marker would be dropped
+        rather than painted across a face.  Both the names and the machinery
+        are gone -- a marker carries Riot's ability icon inside its own box now,
+        and a mark that cannot leave its box cannot collide with anything.
+      */
+      if (state.layers.utility) {
+        drawAbilities(context, {
+          model,
+          snap,
+          world,
+          uvRadiusOf,
+          colours,
+          icons: castIcons,
+          showRange: state.layers.abilityRange,
+        });
       }
       /*
-        The players claim their own icons before any utility name is placed.
-        Abilities draw underneath players by z-order, so without this a cast
-        name lands on a face and is then painted over -- present in the pixels,
-        readable by nobody.  Reserving first is what makes the rejection below
-        prefer the label that can still be read.
+        The spike, if it is on the ground.
+
+        Deliberately not behind a layer switch.  The nine switches are grouped
+        MAP and TIMELINE, and `spike` sits under TIMELINE where it gates the
+        rail's event ticks; the planted spike is not an overlay on the round,
+        it *is* the round, in the same category as the player markers -- which
+        have no switch either.  It draws under the players for the same reason
+        everything else does: a player hidden behind an object is the one thing
+        this canvas cannot afford to lose.
       */
-      const names = labelSpace();
-      for (const player of model.replay.players) {
-        if (!teamShown(state, player.team)) {
-          continue;
-        }
-        const position = positionOf(snap, player.actor_id);
-        if (position !== null) {
-          const [px, py] = world(position.x, position.y);
-          reserve(names, px, py, (AVATAR_PX * scale) / 2);
-        }
-      }
-      if (state.layers.utility) {
-        drawAbilities(context, { model, snap, world, colours, space: names });
-      }
+      drawSpike(context, { model, snap, world, colours, scale });
 
       const hits: Hit[] = [];
       const chosenId = selectedActor(state);
       for (const player of model.replay.players) {
         if (!teamShown(state, player.team)) {
+          continue;
+        }
+        const alive = snap.alive.has(player.actor_id);
+        /*
+          KILL MARKERS now decides whether the dead are drawn at all, which is
+          a switch that means something: on, the map shows where each player
+          died this round; off, it shows only the living.  It used to gate a
+          second mark drawn on top of the first.
+        */
+        if (!alive && !state.layers.killMarkers) {
           continue;
         }
         const position = positionOf(snap, player.actor_id);
@@ -267,7 +328,6 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
         // same two colours, and a card that swaps at halftime while its marker
         // does not is the one inconsistency a viewer would actually notice.
         const colour = sideColour(colours, sideOf(model.replay, player.team, snap.t_ms));
-        const alive = snap.alive.has(player.actor_id);
         const chosen = chosenId === player.actor_id;
         // The picked-out marker is three times the size, which is the
         // reference's own treatment: about 104px against a 26px base. It is
@@ -286,7 +346,7 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
             background: colours.background!,
           });
         } else {
-          drawDead(context, x, y, colour, DEAD_RADIUS * scale);
+          drawDeathMark(context, { x, y, colour, keyline: colours.canvas!, scale });
         }
 
         /*
@@ -404,9 +464,12 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
         // tooltip can anchor to it. Projecting the world position a second
         // time in DOM space would be a copy of the transform, and two copies
         // of a transform are two chances to disagree about where a marker is.
+        // Offset here rather than in `MarkerTip`: the store holds where the
+        // tip goes, and a roster card raising the same tip needs a different
+        // offset from a marker's.  See `RosterPanel.tipAnchor`.
         usePlayback.setState({
           hovered: hit?.player.actor_id ?? null,
-          hoveredAt: hit === null ? null : { x: hit.x, y: hit.y },
+          hoveredAt: hit === null ? null : { x: hit.x + TIP_OFFSET_PX, y: hit.y },
         });
       }}
       onMouseDown={(event) => {
@@ -430,6 +493,67 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
     />
   );
 }
+
+/**
+ * The planted spike, at the coordinate the plant actor spawned at.
+ *
+ * Amber, and that is a constraint rather than a taste: `--spike-armed` was
+ * `#ff5252` until this landed, which is **12 RGB** from `--team-a` -- inside
+ * the 36 `minimap.spec.ts` counts as "this pixel is a player marker".  A red
+ * spike was not merely hard to tell from an attacker, it was arithmetically
+ * the same colour.  See `libraries/vrfview/theme.py`.
+ *
+ * An upward triangle, because the canvas vocabulary is closed and every member
+ * has to be distinct at six pixels: circle is a living person, square a live
+ * ability pawn, hollow diamond a landed cast, X a death, and this is the only
+ * filled triangle standing on its own.
+ *
+ * Near-constant in screen space, like the death mark: the spike is a thing
+ * being pointed at rather than a person occupying room, and a marker that
+ * grows to 2.2x competes with the players it is meant to sit under.
+ */
+function drawSpike(
+  context: CanvasRenderingContext2D,
+  args: {
+    model: ReplayModel;
+    snap: Snapshot;
+    world: (x: number, y: number) => [number, number];
+    colours: Record<string, string>;
+    scale: number;
+  },
+): void {
+  const { model, snap, world, colours, scale } = args;
+  const at = spikeLocation(model, snap);
+  if (at === null) {
+    return;
+  }
+  const [x, y] = world(at.x, at.y);
+  const half = SPIKE_HALF * Math.min(Math.max(scale, 0.9), MARK_SCALE_CAP);
+  const path = new Path2D();
+  path.moveTo(x, y - half);
+  path.lineTo(x + half * 0.9, y + half * 0.7);
+  path.lineTo(x - half * 0.9, y + half * 0.7);
+  path.closePath();
+
+  context.save();
+  // Keyline first, so the mark reads over Ascent's pale mid as well as over
+  // the dark void -- the same trick the player label used before it went.
+  context.lineWidth = 3;
+  context.strokeStyle = colours.canvas!;
+  context.stroke(path);
+  context.fillStyle = colours.spikeArmed!;
+  context.fill(path);
+  // A ring at a fixed radius, so the eye finds it in a crowded site without
+  // the mark itself having to be large enough to cover somebody.
+  context.beginPath();
+  context.arc(x, y, half * 2.1, 0, Math.PI * 2);
+  context.globalAlpha = 0.55;
+  context.lineWidth = 1;
+  context.strokeStyle = colours.spikeArmed!;
+  context.stroke();
+  context.restore();
+}
+
 
 /**
  * The selected player's approximate view cone.
@@ -514,23 +638,36 @@ function drawAbilities(
     model: ReplayModel;
     snap: Snapshot;
     world: (x: number, y: number) => [number, number];
+    uvRadiusOf: (uu: number) => number;
     colours: Record<string, string>;
-    /** Boxes already claimed -- the players, who outrank every label here. */
-    space: LabelBox[];
+    icons: Map<string, HTMLImageElement>;
+    showRange: boolean;
   },
 ): void {
-  const { model, snap, world, colours, space } = args;
-  const byCodename = new Map<string, string>();
+  const { model, snap, world, uvRadiusOf, colours, icons, showRange } = args;
+  const byActor = new Map<number, Player>();
   for (const player of model.replay.players) {
-    if (player.codename) {
-      // A codename two players share is refused rather than resolved to
-      // whichever was found first, so an ambiguous cast simply has no colour.
-      byCodename.set(player.codename, byCodename.has(player.codename) ? "?" : player.team);
-    }
+    byActor.set(player.actor_id, player);
   }
 
   for (const cast of snap.roundCasts) {
-    const colour = teamColour(colours, byCodename.get(cast.codename) ?? "?");
+    /*
+      By **side**, like every other marker on this canvas.
+
+      This used `teamColour` and re-derived the caster from the codename by
+      hand, which meant two things went wrong quietly: an ability marker kept
+      its opening colour across the halftime swap while the players beside it
+      changed, and the join was a second implementation of
+      `abilities.attribute()`.  `player_actor_id` is now on the wire, refused
+      where a codename is ambiguous, so this is a lookup.
+    */
+    const caster = cast.player_actor_id === null ? undefined : byActor.get(cast.player_actor_id);
+    const colour =
+      caster === undefined
+        ? colours.unknown!
+        : sideColour(colours, sideOf(model.replay, caster.team, snap.t_ms));
+    const icon = cast.icon_url === null ? undefined : icons.get(cast.icon_url);
+
     for (const actorId of cast.pawns) {
       const here = snap.abilityPositions.get(actorId);
       if (here === undefined) {
@@ -541,21 +678,15 @@ function drawAbilities(
         drawTrail(context, track, snap.t_ms - PAWN_TRAIL_MS, snap.t_ms, world, colour, 0.45);
       }
       const [x, y] = world(here.x, here.y);
+      drawRange(context, { x, y, cast, colour, uvRadiusOf, show: showRange });
       // A square, so it is never mistaken for a player: circles are people and
       // squares are utility, and at this size that has to survive a glance.
       context.fillStyle = colour;
       context.strokeStyle = colours.background!;
       context.lineWidth = 1;
-      context.fillRect(x - PAWN_HALF, y - PAWN_HALF, PAWN_HALF * 2, PAWN_HALF * 2);
-      context.strokeRect(x - PAWN_HALF, y - PAWN_HALF, PAWN_HALF * 2, PAWN_HALF * 2);
-      label(
-        context,
-        colours.muted!,
-        `${cast.slot} ${cast.internal_name}`,
-        x,
-        y + PAWN_HALF + 10,
-        space,
-      );
+      context.fillRect(x - UTILITY_HALF, y - UTILITY_HALF, UTILITY_HALF * 2, UTILITY_HALF * 2);
+      context.strokeRect(x - UTILITY_HALF, y - UTILITY_HALF, UTILITY_HALF * 2, UTILITY_HALF * 2);
+      drawUtilityMark(context, { x, y, icon, cast, colours, over: colours.background! });
     }
 
     // A cast with no pawn: one coordinate, no path, and no arc anywhere. The
@@ -564,23 +695,109 @@ function drawAbilities(
       continue;
     }
     const [x, y] = world(cast.landed.x, cast.landed.y);
+    drawRange(context, { x, y, cast, colour, uvRadiusOf, show: showRange });
     context.save();
     context.translate(x, y);
     context.rotate(Math.PI / 4);
     context.globalAlpha = 0.85;
     context.strokeStyle = colour;
     context.lineWidth = 2;
-    context.strokeRect(-PLACED_HALF, -PLACED_HALF, PLACED_HALF * 2, PLACED_HALF * 2);
+    context.strokeRect(-UTILITY_HALF, -UTILITY_HALF, UTILITY_HALF * 2, UTILITY_HALF * 2);
+    // Restored *before* the mark: the diamond is the marker and the icon is
+    // the identity, and an ability icon rotated 45 degrees stops being
+    // recognisable as itself.
     context.restore();
-    label(
-      context,
-      colours.muted!,
-      `${cast.slot} ${cast.internal_name}`,
-      x,
-      y + PLACED_HALF + 12,
-      space,
-    );
+    drawUtilityMark(context, { x, y, icon, cast, colours, over: colours.canvas! });
   }
+}
+
+/**
+ * What a utility marker says it is: Riot's icon, or the keybind it was cast on.
+ *
+ * The marker used to carry `\`${cast.slot} ${cast.internal_name}\`` as text
+ * beside it -- `Q Possessable Camera` across the map at nine pixels, colliding
+ * with the geometry underneath and with every other cast in the same site.
+ * The icon identifies the ability the way the agent portrait identifies the
+ * player, and it cannot smear because it sits inside the marker's own box.
+ *
+ * `icon_url` resolves for X and C only: `art.AgentArt.ability` refuses Q and E
+ * because Riot's `Ability1`/`Ability2` map to them in an order that varies by
+ * agent, and the archetype path's own letters do not track the game's current
+ * keybinds either -- see `vrfview.abilityfacts`.  So the fallback is the one
+ * character that **was** read rather than guessed: the slot the path named.
+ * One glyph inside the box, which is why the label-collision machinery this
+ * canvas used to need is gone.
+ */
+function drawUtilityMark(
+  context: CanvasRenderingContext2D,
+  args: {
+    x: number;
+    y: number;
+    icon: HTMLImageElement | undefined;
+    cast: AbilityCast;
+    colours: Record<string, string>;
+    over: string;
+  },
+): void {
+  const { x, y, icon, cast, colours, over } = args;
+  if (icon !== undefined) {
+    const box = UTILITY_HALF * 2 - 2;
+    context.drawImage(icon, x - box / 2, y - box / 2, box, box);
+    return;
+  }
+  context.save();
+  context.font = `700 9px ${LABEL_FONT}`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillStyle = over === colours.canvas! ? colours.text! : over;
+  context.fillText(cast.slot, x, y + 0.5);
+  context.restore();
+}
+
+/**
+ * A published radius, drawn dashed because nothing in this capture states it.
+ *
+ * Every other geometry on this canvas is a solid stroke around something that
+ * was decoded, so **dashed is the token that means generated** -- the canvas's
+ * equivalent of the SIMULATED chip on the stage head.  The figure is looked up
+ * in `vrfview.abilityfacts`, which is community research about a game that
+ * rebalances every few weeks, and the layer that switches it on is labelled
+ * `RANGE (SIM)` for the same reason.
+ *
+ * Off unless asked for, and absent entirely for the many abilities nobody
+ * publishes a radius for: a ring at a made-up size is worse than no ring.
+ */
+function drawRange(
+  context: CanvasRenderingContext2D,
+  args: {
+    x: number;
+    y: number;
+    cast: AbilityCast;
+    colour: string;
+    uvRadiusOf: (uu: number) => number;
+    show: boolean;
+  },
+): void {
+  const { x, y, cast, colour, uvRadiusOf, show } = args;
+  if (!show || cast.range_uu === null) {
+    return;
+  }
+  const radius = uvRadiusOf(cast.range_uu);
+  if (!Number.isFinite(radius) || radius <= 0) {
+    return;
+  }
+  context.save();
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  context.globalAlpha = 0.12;
+  context.fillStyle = colour;
+  context.fill();
+  context.globalAlpha = 0.4;
+  context.setLineDash([4, 4]);
+  context.lineWidth = 1;
+  context.strokeStyle = colour;
+  context.stroke();
+  context.restore();
 }
 
 function drawPlayerTrails(
@@ -717,41 +934,51 @@ function drawFacing(
  * A cross and not a portrait: the player is not there any more, and a marker
  * that still looks like a person is a lie about where five people are.
  */
-function drawKillMarks(
+/**
+ * Where a player died: one X, drawn once.
+ *
+ * This replaces two marks that were both drawn at the same point.  `positionOf`
+ * falls back to `deathPositions`, so a dead player's own marker already sat on
+ * their death coordinate -- and with KILL MARKERS on (the default) they also
+ * got a cross and a concentric circle here.  Two circles and five strokes
+ * inside fourteen pixels at two different transparencies is the "fuzzy blue
+ * smudge that reads as a marker for something alive" the UI review reported,
+ * and no redesign of either shape alone would have fixed it, because the
+ * problem was that there were two.
+ *
+ * A bare X with no enclosure, because the canvas vocabulary has to stay
+ * distinguishable at six pixels and **an X has no interior**: a circle, a
+ * square and a diamond all collapse into a blob at that size and an X cannot.
+ * Circle is a living person, square a live ability pawn, hollow diamond a
+ * landed cast, filled triangle the spike, and this is the only bare cross.
+ *
+ * Keyline first and then the mark, which is how the agent label used to stay
+ * readable over Ascent's pale mid before it was removed.  Fully opaque: the
+ * old 0.55 and 0.8 were half the illegibility, and a stroke blended toward the
+ * radar underneath can also drift outside the 36-RGB window `minimap.spec.ts`
+ * counts as a team colour -- so a dead player was being *checked* by luck as
+ * well as read by squinting.
+ */
+function drawDeathMark(
   context: CanvasRenderingContext2D,
-  args: {
-    model: ReplayModel;
-    snap: Snapshot;
-    world: (x: number, y: number) => [number, number];
-    colours: Record<string, string>;
-    scale: number;
-  },
+  args: { x: number; y: number; colour: string; keyline: string; scale: number },
 ): void {
-  const { model, snap, world, colours, scale } = args;
-  const arm = KILL_MARK * scale;
+  const { x, y, colour, keyline, scale } = args;
+  const arm = DEATH_MARK * Math.min(Math.max(scale, 0.85), MARK_SCALE_CAP);
+  const path = new Path2D();
+  path.moveTo(x - arm, y - arm);
+  path.lineTo(x + arm, y + arm);
+  path.moveTo(x - arm, y + arm);
+  path.lineTo(x + arm, y - arm);
+
   context.save();
-  context.globalAlpha = 0.8;
+  context.lineCap = "square";
+  context.lineWidth = 4;
+  context.strokeStyle = keyline;
+  context.stroke(path);
   context.lineWidth = 2;
-  for (const [actorId, position] of snap.deathPositions) {
-    const player = model.replay.players.find((p) => p.actor_id === actorId);
-    if (player === undefined || !teamShown(usePlayback.getState(), player.team)) {
-      continue;
-    }
-    const [x, y] = world(position.x, position.y);
-    context.strokeStyle = sideColour(
-      colours,
-      sideOf(model.replay, player.team, snap.t_ms),
-    );
-    context.beginPath();
-    context.moveTo(x - arm, y);
-    context.lineTo(x + arm, y);
-    context.moveTo(x, y - arm);
-    context.lineTo(x, y + arm);
-    context.stroke();
-    context.beginPath();
-    context.arc(x, y, arm * 0.55, 0, Math.PI * 2);
-    context.stroke();
-  }
+  context.strokeStyle = colour;
+  context.stroke(path);
   context.restore();
 }
 
@@ -798,94 +1025,20 @@ function drawAlive(
   context.stroke();
 }
 
-function drawDead(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  colour: string,
-  radius: number = DEAD_RADIUS,
-): void {
-  context.save();
-  context.globalAlpha = 0.55;
-  context.strokeStyle = colour;
-  context.lineWidth = 2;
-  context.beginPath();
-  context.arc(x, y, radius, 0, Math.PI * 2);
-  context.stroke();
-  context.beginPath();
-  context.moveTo(x - radius, y - radius);
-  context.lineTo(x + radius, y + radius);
-  context.moveTo(x - radius, y + radius);
-  context.lineTo(x + radius, y - radius);
-  context.stroke();
-  context.restore();
-}
 
-/**
- * The boxes already spoken for on this frame.
+/*
+ * There was a label-collision system here -- `LabelBox`, `overlaps`,
+ * `labelSpace`, `reserve` and `label` -- about ninety lines of it.
  *
- * Utility labels were drawn unconditionally, one per pawn and one per landed
- * cast, so a round where several pieces of utility land near each other put
- * four or five names through the same twenty pixels -- legible in none of
- * them.  The committed gallery screenshot has one such smear beside B site,
- * which is what makes this a defect rather than a preference: the layer's job
- * is saying what is there, and a smear says nothing.
+ * It existed for one reason: utility markers printed their name beside them
+ * (`Q Possessable Camera`), and a name is wider than the thing it names, so
+ * two casts in one site smeared into each other and a cast behind a player
+ * painted itself across their face.  The machinery reserved each player's icon
+ * box first and then dropped any label that would not fit.
  *
- * Greedy rejection is the whole algorithm.  There is no cleverer placement
- * here on purpose: moving a label away from the thing it names is a worse lie
- * than omitting it, because a name six pixels off is still read as belonging
- * to whatever it is now nearest.  So a label either sits where its own marker
- * is or is not drawn, and the marker -- the square, the diamond -- is always
- * drawn regardless.  What is on the map never depends on whether its name fit.
+ * The names are gone -- a marker carries Riot's ability icon inside its own
+ * box now, and the one text fallback is a single keybind character drawn in
+ * the centre of that box.  A mark that cannot leave its box cannot collide
+ * with anything, so there is nothing left to arbitrate.
  */
-type LabelBox = { left: number; right: number; top: number; bottom: number };
 
-function overlaps(a: LabelBox, b: LabelBox): boolean {
-  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-}
-
-export function labelSpace(): LabelBox[] {
-  return [];
-}
-
-/** Reserve a box without drawing anything -- how a player claims their icon. */
-export function reserve(space: LabelBox[], x: number, y: number, half: number): void {
-  space.push({ left: x - half, right: x + half, top: y - half, bottom: y + half });
-}
-
-/**
- * Draw a label unless something is already there.  Returns whether it landed,
- * which nothing needs yet and which makes the rejection visible to a test.
- */
-function label(
-  context: CanvasRenderingContext2D,
-  colour: string,
-  text: string,
-  x: number,
-  y: number,
-  space?: LabelBox[],
-): boolean {
-  context.fillStyle = colour;
-  context.font = `600 9px ${LABEL_FONT}`;
-  context.textAlign = "center";
-
-  if (space) {
-    // `measureText` reads the font set above, so the order matters.  A 9px
-    // line box plus two pixels of air is what stops two rows of names from
-    // touching where their columns happen not to.
-    const width = context.measureText(text).width;
-    const box: LabelBox = {
-      left: x - width / 2 - 1,
-      right: x + width / 2 + 1,
-      top: y - 9,
-      bottom: y + 2,
-    };
-    if (space.some((taken) => overlaps(box, taken))) {
-      return false;
-    }
-    space.push(box);
-  }
-
-  context.fillText(text, x, y);
-  return true;
-}

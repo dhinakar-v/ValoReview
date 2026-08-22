@@ -184,6 +184,18 @@ class AgentArt:
         name.  Q and E therefore resolve to nothing here, and the caller shows
         the internal name it read out of the replication stream instead -- a
         fact from the file, which needs no lookup to be true.
+
+        **This was re-examined when `abilityfacts` was written, and it stands.**
+        The obvious repair is a sourced table naming each agent's Q and E, and
+        two measurements say it would be a guess wearing a citation.  The
+        archetype path's letters are Riot's *internal* ones and do not track
+        the keybinds the game currently displays: the decode calls Sova's Recon
+        Bolt `Q` where the game binds it to E, and Brimstone's Stim Beacon `E`
+        where the game binds it to C.  And matching the decoded internal names
+        against these display names agrees on 3 of the 40 (agent, slot) pairs
+        the reference library produces -- one of which is wrong.  So
+        `abilityfacts` is keyed on (agent, internal name) and carries no slot
+        map, and this method goes on refusing.
         """
         slot = SLOT_TO_MANIFEST.get(key)
         return self.abilities.get(slot) if slot else None

@@ -26,13 +26,19 @@ const LENGTH_MS = 60_000;
 function Bound({
   clock,
   step,
+  seekTo = () => undefined,
+  toStart = () => undefined,
+  toEnd = () => undefined,
   layers = { sight: true, callouts: true },
 }: {
   clock: PlaybackClock;
   step: (direction: 1 | -1) => void;
+  seekTo?: (ms: number) => void;
+  toStart?: () => void;
+  toEnd?: () => void;
   layers?: { sight: boolean; callouts: boolean };
 }) {
-  useTransportKeys({ clock, step, seekTo: () => undefined, lengthMs: LENGTH_MS, layers });
+  useTransportKeys({ clock, step, seekTo, toStart, toEnd, layers });
   return (
     <>
       <button type="button">TRAILS</button>
@@ -40,6 +46,9 @@ function Bound({
         <button type="button" role="tab">
           Rounds
         </button>
+      </div>
+      <div role="dialog" aria-label="Round Timeline">
+        <button type="button">Next round</button>
       </div>
       <p>somewhere that is not a control</p>
     </>
@@ -103,5 +112,67 @@ describe("a key exists exactly where the control it presses does", () => {
     fireEvent.keyDown(screen.getByText("somewhere that is not a control"), { key: "s" });
     expect(usePlayback.getState().layers.sight).toBe(true);
     usePlayback.setState({ layers: { ...DEFAULT_LAYERS } });
+  });
+});
+
+describe("the transport keys press the transport's own buttons", () => {
+  /*
+    Asserting *which function fired* rather than where the playhead ended up.
+
+    Home and End were `seekTo(0)` and `seekTo(lengthMs)` in a transport that is
+    scoped to a round everywhere else, so they landed outside the round the
+    rest of the interface was showing.  A test that checked the resulting time
+    would pass against any re-implementation that happened to compute the same
+    number today; this one only passes while the key and the button are
+    literally the same callback.
+  */
+  it("sends Home to the same function the start button calls", () => {
+    const clock = new PlaybackClock(LENGTH_MS);
+    const toStart = vi.fn();
+    const seekTo = vi.fn();
+    render(<Bound clock={clock} step={() => undefined} toStart={toStart} seekTo={seekTo} />);
+    fireEvent.keyDown(screen.getByText("somewhere that is not a control"), { key: "Home" });
+    expect(toStart).toHaveBeenCalledTimes(1);
+    expect(seekTo).not.toHaveBeenCalled();
+  });
+
+  it("sends End to the same function the end button calls", () => {
+    const clock = new PlaybackClock(LENGTH_MS);
+    const toEnd = vi.fn();
+    const seekTo = vi.fn();
+    render(<Bound clock={clock} step={() => undefined} toEnd={toEnd} seekTo={seekTo} />);
+    fireEvent.keyDown(screen.getByText("somewhere that is not a control"), { key: "End" });
+    expect(toEnd).toHaveBeenCalledTimes(1);
+    expect(seekTo).not.toHaveBeenCalled();
+  });
+
+  it("nudges without doing any bounds arithmetic of its own", () => {
+    // The clamp belongs to `Transport`, which is the only thing that knows
+    // which round is picked. A nudge that clamped here to [0, lengthMs] is how
+    // `,` used to walk out of the round it was scoped to.
+    const clock = new PlaybackClock(LENGTH_MS);
+    clock.seek(500);
+    usePlayback.setState({ tMs: 500 });
+    const seekTo = vi.fn();
+    render(<Bound clock={clock} step={() => undefined} seekTo={seekTo} />);
+    fireEvent.keyDown(screen.getByText("somewhere that is not a control"), { key: "," });
+    expect(seekTo).toHaveBeenCalledWith(500 - 1000);
+  });
+
+  it("leaves every transport key to an open dialog", () => {
+    // The round timeline is a role="dialog" mounted inside Transport, and
+    // ui.Modal traps focus in it -- so these keys were moving the playhead
+    // behind a dialog the reader could not see past.
+    const clock = new PlaybackClock(LENGTH_MS);
+    const toStart = vi.fn();
+    const step = vi.fn();
+    render(<Bound clock={clock} step={step} toStart={toStart} />);
+    const inside = screen.getByRole("button", { name: "Next round" });
+    fireEvent.keyDown(inside, { key: "Home" });
+    fireEvent.keyDown(inside, { key: "ArrowRight" });
+    fireEvent.keyDown(inside, { key: " " });
+    expect(toStart).not.toHaveBeenCalled();
+    expect(step).not.toHaveBeenCalled();
+    expect(clock.playing).toBe(false);
   });
 });

@@ -40,6 +40,7 @@ import {
   Crosshair,
   Droplet,
   Eye,
+  EyeOff,
   FileQuestion,
   Grid2x2,
   ImageOff,
@@ -166,8 +167,27 @@ export const glyphs = {
   noArt: ImageOff,
   noFile: FileQuestion,
 
-  // roster and events
-  side: Shield,
+  /*
+    Roster and events.
+
+    `atk` and `def` are two glyphs and not one, and that is the whole point:
+    both sides used to be badged with `Shield`, which is the **defender's**
+    mark.  Using it for ATK inverts the game's own iconography, which every
+    player reads without thinking.  The attackers are the side that carries
+    the spike, so they get the spike.
+  */
+  atk: Bomb,
+  def: Shield,
+  /*
+    Show and hide, as an eye and a struck-through eye.
+
+    This was `ListFilter` -- three descending bars -- on a control that filters
+    nothing: it shows and hides five markers.  Two glyphs rather than one so
+    the icon flips with the state, which is what makes the current state
+    readable without hovering for the tooltip.
+  */
+  shown: Eye,
+  hidden: EyeOff,
   credits: Coins,
   swap: ArrowLeftRight,
   close: X,

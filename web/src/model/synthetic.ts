@@ -31,9 +31,10 @@ import type { ReplayModel } from "./replay";
 import type { Snapshot } from "./state";
 
 export const SIMULATED_NOTE =
-  "Health, armour, credits, the weapon held and which side attacked are not " +
-  "in a .vrf and are not decoded: these are simulated from the real kills, " +
-  "rounds and side swap. Positions, deaths, rounds and ability casts are read.";
+  "Health, armour, credits, the weapon held, ability charges and which side " +
+  "attacked are not in a .vrf and are not decoded: these are simulated from " +
+  "the real kills, rounds, ability casts and side swap. Positions, deaths, " +
+  "rounds and ability casts are read.";
 
 /** The short form, for a chip that has no room for the sentence. */
 export const SIMULATED_LABEL = "SIMULATED";
@@ -350,4 +351,79 @@ export function weaponArt(
     return null;
   }
   return weapons.find((weapon) => weapon.name === name) ?? null;
+}
+
+/* -- ability charges ------------------------------------------------------ */
+
+/**
+ * What a roster card can say about one ability slot this round.
+ *
+ * The review asked for used charges to come off the card and for the remainder
+ * to be visible.  Two halves of that are not in a `.vrf` and one is:
+ *
+ *   * **Used** is real for two slots and only two.  The ultimate comes from
+ *     `Snapshot.ultedThisRound`, which is a `characterUltimateUsed` event
+ *     carrying the player's own actor id -- exact, no join.  `Grenade` joins to
+ *     a cast whose keybind is `C`.  `Ability1` and `Ability2` are Q and E in an
+ *     order that varies by agent, and Riot's own archetype letters do not track
+ *     the game's current keybinds either (`vrfview.abilityfacts` has the
+ *     measurement), so which of the two a `Q` cast spent is **not knowable**
+ *     and is generated.
+ *   * **How many charges there were** is nowhere in the replay, the manifest or
+ *     val-content-v1.  Generated.
+ *   * **How many are left** is worse than absent: `AbilityCast` groups every
+ *     use of a slot in a round into one record on purpose, so the model can say
+ *     "this was used at some point this round" and can never say how often.
+ *     The remainder is therefore generated too, and never claims exhaustion
+ *     from a real cast.
+ *
+ * Deterministic on the match, the actor, the round and the slot -- never on a
+ * clock, because the Playwright suite photographs this.
+ */
+export interface SlotState {
+  /** Charges the card shows, generated. Always at least one. */
+  charges: number;
+  /** Charges still available, generated except where `usedIsReal`. */
+  left: number;
+  /** Whether a real event says this slot was used this round. */
+  used: boolean;
+  /** Whether `used` came from the file rather than from the generator. */
+  usedIsReal: boolean;
+}
+
+/** Riot's slot names, in the order `wire.ABILITY_ORDER` sends them. */
+const REAL_SLOT_FOR: Record<string, string> = { Grenade: "C", Ultimate: "X" };
+
+export function slotStateAt(
+  model: ReplayModel,
+  snap: Snapshot,
+  actorId: number,
+  slot: string,
+): SlotState {
+  const round = snap.round?.number ?? 0;
+  const rng = new Rng(`${model.replay.match_id}:${actorId}:${round}:${slot}:charges`);
+  // One or two, the way most of the game's basic abilities go. The ultimate is
+  // one thing you either have or do not.
+  const charges = slot === "Ultimate" ? 1 : rng.int(1, 2);
+
+  const keybind = REAL_SLOT_FOR[slot];
+  let used = false;
+  let usedIsReal = false;
+  if (slot === "Ultimate") {
+    used = snap.ultedThisRound.has(actorId);
+    usedIsReal = true;
+  } else if (keybind !== undefined) {
+    used = snap.roundCasts.some(
+      (cast) => cast.player_actor_id === actorId && cast.slot === keybind,
+    );
+    usedIsReal = true;
+  } else {
+    // Q and E: something was cast, but not which of the two icons it was.
+    const cast = snap.roundCasts.some(
+      (entry) => entry.player_actor_id === actorId && (entry.slot === "Q" || entry.slot === "E"),
+    );
+    used = cast && rng.next() < 0.5;
+  }
+
+  return { charges, left: used ? Math.max(0, charges - 1) : charges, used, usedIsReal };
 }

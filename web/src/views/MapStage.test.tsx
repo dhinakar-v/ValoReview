@@ -241,12 +241,41 @@ async function openLayers() {
 }
 
 describe("the layers menu", () => {
-  it("offers SIGHT only where there is a mask to raycast against", async () => {
+  it("offers every layer it has, by the exact names other files address", async () => {
     show({ has_positions: true });
     await openLayers();
     expect(await screen.findByText("SIGHT")).toBeTruthy();
     expect(screen.getByText("UTILITY")).toBeTruthy();
     expect(screen.getByText("TRAILS")).toBeTruthy();
+  });
+
+  /*
+    CALLOUTS is placed in the 3D scene, so in 2D -- the default -- it cannot do
+    anything.  It used to be dropped from the list, which is what the UI review
+    reported: a layer the interface documents was simply not on the surface the
+    user was looking at, and a missing row reads as a missing feature.
+  */
+  it("still offers CALLOUTS in 2D, and says why it cannot be used", async () => {
+    show({ has_positions: true });
+    await openLayers();
+    expect(await screen.findByText("CALLOUTS")).toBeTruthy();
+    expect(screen.getByText(/3D only/)).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "CALLOUTS" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+  });
+
+  /*
+    The reason is rendered outside the `<label>`, because a `<label>` names the
+    control it wraps by its text content -- so a reason inside it would rename
+    this checkbox from `CALLOUTS` to `CALLOUTS 3D only ...` and break every
+    role-and-name lookup in the suite.  That is what this asserts.
+  */
+  it("keeps a disabled row's accessible name to the label alone", async () => {
+    show({ has_positions: true });
+    await openLayers();
+    expect(await screen.findByRole("checkbox", { name: "CALLOUTS" })).toBeTruthy();
   });
 });
 

@@ -34,7 +34,7 @@
 import { useMemo, useState } from "react";
 
 import type { Replay, Round, Weapon } from "../api/types";
-import { clockText } from "../model/roundclock";
+import { clockText, remainingMs } from "../model/roundclock";
 import type { Side } from "../model/synthetic";
 import { sideOf, weaponArt, weaponInRound } from "../model/synthetic";
 import { Icon, glyphs } from "./icons";
@@ -139,7 +139,17 @@ function rowsFor(replay: Replay, round: Round, weapons: Weapon[] | undefined): R
   }
 
   for (const cast of replay.ability_casts.filter((c) => inRound(c.t_ms))) {
-    const side = sideAt(cast.actor_id, cast.t_ms);
+    /*
+      The **caster**, not `cast.actor_id`.
+
+      `actor_id` on a cast is the first ability actor it spawned, and no player
+      has that id -- so this resolved nobody and every ability row here was
+      drawn with no side: no coloured edge, and invisible to the Attackers and
+      Defenders filters two panels away.  Nothing failed, which is why it
+      lasted.  `player_actor_id` is the join `abilities.attribute` makes, and
+      it is null where two players share the agent rather than guessing one.
+    */
+    const side = cast.player_actor_id === null ? null : sideAt(cast.player_actor_id, cast.t_ms);
     rows.push({
       key: `cast-${cast.t_ms}-${cast.actor_id}-${cast.internal_name}`,
       tMs: cast.t_ms,
@@ -150,10 +160,12 @@ function rowsFor(replay: Replay, round: Round, weapons: Weapon[] | undefined): R
           <Name text={cast.identity || nameOf(cast.actor_id)} side={side} />
           <span className="ev-verb">used</span>
           {cast.icon_url ? <img className="ev-ability" src={cast.icon_url} alt="" /> : null}
-          <span className="ev-thing">
-            {cast.published_name ?? cast.internal_name}
-            {cast.published_name ? null : <span className="muted"> (internal)</span>}
-          </span>
+          {/* The published name where there is one and the name read out of
+              the archetype path where there is not -- but never annotated as
+              internal.  "(internal)" was a note to whoever built the decoder;
+              to somebody watching a replay it labels the ability as a piece of
+              plumbing rather than naming it. */}
+          <span className="ev-thing">{cast.published_name ?? cast.internal_name}</span>
         </>
       ),
     });
@@ -275,8 +287,19 @@ export function RoundTimeline({
               }`}
             >
               <button type="button" onClick={() => onSeek(row.tMs)}>
+                {/*
+                  Time **remaining**, not elapsed.  A Valorant round clock
+                  counts down, so this is what a player saw when it happened;
+                  counting up from the round start was a number nobody in the
+                  match could have read off their own screen.
+
+                  Two rows in the last second both showing 0:00 is correct and
+                  is not to be rounded away: `clockText` truncates on purpose,
+                  because a countdown reading 1:40 through the first half of a
+                  1:39.6 round has already lied about a whole second.
+                */}
                 <span className="ev-time numeric">
-                  {clockText(row.tMs - round.start_ms)}
+                  {clockText(remainingMs(round, row.tMs))}
                 </span>
                 <span className="ev-glyph">
                   <Icon
@@ -318,16 +341,20 @@ export function RoundTimeline({
             />
           ))}
           <p className="menu-title">Side</p>
+          {/* The same two marks the roster headers carry, and for the same
+              reason: the shield is the defender's, so both sides wearing it
+              made ATK read as backwards in the one place the two are listed
+              side by side. */}
           <CheckRow
             label="Attackers"
-            icon={glyphs.side}
+            icon={glyphs.atk}
             tone="a"
             checked={sides.includes("ATK")}
             onChange={() => toggle(sides, "ATK", setSides)}
           />
           <CheckRow
             label="Defenders"
-            icon={glyphs.side}
+            icon={glyphs.def}
             tone="b"
             checked={sides.includes("DEF")}
             onChange={() => toggle(sides, "DEF", setSides)}

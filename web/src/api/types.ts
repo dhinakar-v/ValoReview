@@ -55,9 +55,7 @@ export interface Card {
   map_key: string;
   listview_url: string | null;
   recorded_utc: string | null;
-  recorded: string;
   length_ms: number;
-  duration: string;
   rounds: number;
   players: number;
   size_bytes: number;
@@ -170,6 +168,19 @@ export interface SpikeEvent {
   t_ms: number;
   kind: string;
   round_no: number;
+  /**
+   * Where it was planted, in Unreal units, or null.
+   *
+   * Decoded, where `t_ms` and `kind` are read: a `spikePlanted` event carries
+   * no arguments at all, and the coordinate comes from the `TimedBomb` actor
+   * the plant spawns.  Null on a defuse, on an explode, and on any plant in a
+   * capture nothing has decoded -- three absences that all mean "draw nothing
+   * here".  See `vrfview.tracks._plants_from` for the measurement that settled
+   * these are the plant and not an actor that happens to appear nearby.
+   */
+  x: number | null;
+  y: number | null;
+  z: number | null;
 }
 
 export interface Placement {
@@ -203,6 +214,30 @@ export interface AbilityCast {
   /** Measured path length. Null, never zero, where no pawn moved. */
   travel_uu: number | null;
   travel_note: string | null;
+  /**
+   * A published radius in Unreal units, or null.
+   *
+   * Neither read nor measured: looked up in `vrfview.abilityfacts`, which is
+   * community research about the game rather than anything this capture
+   * states.  `travel_uu` beside it is the opposite kind of number -- a path
+   * length a pawn actually covered -- and the two must never be conflated: a
+   * distance travelled drawn as a circle becomes an area of effect.
+   *
+   * Null for the many abilities nobody publishes a radius for, and drawn
+   * dashed under a layer labelled `RANGE (SIM)` when it is not.
+   */
+  range_uu: number | null;
+  range_source: string | null;
+  /**
+   * The caster's actor id, or null where the codename is shared.
+   *
+   * `actor_id` above is the **ability actor's** id, not the caster's, which is
+   * a trap this field exists to close: `sideAt(cast.actor_id, ...)` resolved
+   * nobody, so every ability row in the round timeline was silently sideless.
+   * Filled by `abilities.attribute()`, which refuses an ambiguous codename
+   * rather than picking the first player holding it.
+   */
+  player_actor_id: number | null;
   /** Every non-moving actor this cast spawned, at the point it appeared. */
   placements: Placement[];
   /**

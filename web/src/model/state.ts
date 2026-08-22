@@ -130,6 +130,42 @@ function deathsThisRound(
   return { deadSince, roundKills };
 }
 
+/**
+ * Where the spike is lying right now, or null.
+ *
+ * A free function rather than a `Snapshot` field on purpose.  `Snapshot` is
+ * serialised field-for-field against `tests/golden/` by `parity.test.ts`, so a
+ * new member needs a Python counterpart, a regenerated golden and a
+ * `make-golden --check` pass -- in two languages, for one marker.  Nothing
+ * here needs the snapshot's own work, only the round and the clock.
+ *
+ * Only while **planted**: on a defuse the spike is picked up and on an explode
+ * it is gone, so drawing it after either would put an object on the map that
+ * is not there.  A plant whose capture was never decoded has no coordinate and
+ * returns null, which is the same "draw nothing" as no plant at all.
+ */
+export function spikeLocation(
+  model: ReplayModel,
+  snap: Snapshot,
+): { x: number; y: number; z: number } | null {
+  if (snap.spikeState !== SPIKE_PLANTED || snap.round === null) {
+    return null;
+  }
+  for (const event of model.replay.spike) {
+    if (
+      event.kind === "planted" &&
+      event.t_ms === snap.spikeSinceMs &&
+      event.x !== null &&
+      event.y !== null &&
+      event.z !== null
+    ) {
+      return { x: event.x, y: event.y, z: event.z };
+    }
+  }
+  return null;
+}
+
+
 /** The last spike event inside the current round wins; nothing carries over. */
 function spikeAt(
   model: ReplayModel,

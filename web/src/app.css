@@ -386,6 +386,88 @@ option {
   outline: none;
 }
 
+/*
+ * The map filter, as this interface's own control.
+ *
+ * The list is a sibling of the button inside one positioned wrapper, the way
+ * `.menu-panel` is: it is anchored to the control and nothing here needs to
+ * escape an overflow.  `--shadow-2` is allowed because a popover genuinely
+ * floats, which is the whole of the exception `review.spec.ts` enforces.
+ */
+.select-field {
+  position: relative;
+  padding-left: var(--space-3);
+}
+
+.select-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 148px;
+  background: transparent;
+  border: none;
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.select-button > span {
+  flex: 1;
+}
+
+.select-button svg {
+  transform: rotate(90deg);
+  color: var(--text-faint);
+}
+
+.select-button[aria-expanded="true"] svg {
+  transform: rotate(-90deg);
+  color: var(--text-primary);
+}
+
+.select-list {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  right: 0;
+  z-index: var(--z-overlay);
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--card-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-2);
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* Kept in the tree and hidden by `display`, so the list has no size when it is
+   shut. `aria-expanded` on the button is what a reader goes by. */
+.select-list.is-shut {
+  display: none;
+}
+
+.select-option {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+/* The active option is the one the arrows are on, which is not necessarily the
+   chosen one -- that is the whole point of `aria-activedescendant`. */
+.select-option.is-active {
+  background: var(--card-hover);
+  color: var(--text-primary);
+}
+
+.select-option[aria-selected="true"] {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
 /* -- app frame --------------------------------------------------------- */
 
 .app-frame {
@@ -520,11 +602,21 @@ option {
   padding: 0 var(--space-6);
 }
 
+/*
+ * One vertical rhythm for the whole page, instead of space accumulating.
+ *
+ * The heading padded its own bottom, the toolbar sat loose above the card
+ * list, and the pager sat loose below it -- three separate gaps that nobody
+ * had chosen together, which is what the UI review reported twice: dead space
+ * under `REPLAYS` and again above `page 1 of 3`.  The head no longer pads
+ * downward and `.page-body` owns the spacing between its children.
+ */
 .page-head {
   display: flex;
   align-items: center;
   gap: var(--space-5);
   padding: var(--space-6) 0 var(--space-4);
+  flex: none;
 }
 
 .page-head h1 {
@@ -533,6 +625,10 @@ option {
 
 .page-body {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
   overflow-y: auto;
   padding-bottom: var(--space-6);
   scrollbar-color: var(--line-strong) transparent;
@@ -772,21 +868,23 @@ option {
     box-shadow var(--dur-slow) var(--ease-spring);
 }
 
-/* A status edge rather than another chip: whether a capture can be opened is
-   the one thing worth reading before anything else on the row. */
-.card::before {
+/*
+ * An edge only where there is something to say.
+ *
+ * Every card carried a 3px left edge, green when playable and red when not --
+ * and `/api/library` filters to playable, so in practice every card on the
+ * page had the green one.  An edge every row shares distinguishes nothing, and
+ * the green was the only green in an interface whose two accents are the team
+ * colours, so it fought every thumbnail it sat beside.
+ *
+ * What survives is the case that is actually a distinction: a capture that
+ * could not be read gets a red edge, and everything else gets none.
+ */
+.card.unreadable::before {
   content: "";
   position: absolute;
   inset: 0 auto 0 0;
   width: 3px;
-  background: var(--border);
-}
-
-.card.playable::before {
-  background: var(--accent-ok);
-}
-
-.card.unreadable::before {
   background: var(--accent-b);
 }
 
@@ -829,15 +927,39 @@ a.card:hover {
   font-size: var(--text-xl);
 }
 
+/*
+ * Four labelled facts that wrap rather than one run-on line that clips.
+ *
+ * `nowrap` with an ellipsis meant the round count was the first thing to go in
+ * a narrow column -- the UI review caught it mid-word, `21 round...` -- and
+ * every quantity was the same weight, so which number was which was a guess.
+ */
 .card-line {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
   color: var(--text-muted);
   font-size: var(--text-sm);
+  min-width: 0;
+}
+
+.card-line .fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.card-line .fact b {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-line .unit {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
 }
 
 .card-line.mono {
@@ -1619,6 +1741,51 @@ main.viewer {
   opacity: 0.8;
 }
 
+/*
+ * A slot, so a used charge can be marked without moving anything.
+ *
+ * The icon is never removed: removing it would state exhaustion, and the model
+ * groups every use of a slot in a round into one record, so it knows a slot was
+ * used and never how many are left.  Both states occupy the same box -- a card
+ * that changes length four times a round is worse than the fault being fixed.
+ */
+.ability-slot {
+  position: relative;
+  display: inline-flex;
+  line-height: 0;
+}
+
+/*
+ * Dim and desaturate read as "unavailable"; the rule underneath is what reads
+ * as "spent", and at seventeen pixels it is the only mark that survives -- a
+ * strikethrough across low-contrast line art is invisible.
+ */
+.ability-slot.is-used .ability-icon {
+  opacity: 0.45;
+  filter: grayscale(0.8);
+}
+
+.ability-slot.is-used::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -3px 0;
+  height: 2px;
+  background: var(--text-faint);
+}
+
+.ability-charges {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  font-size: 9px;
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--text-muted);
+  background: var(--card-bg);
+  padding: 0 1px;
+}
+
 .card-weapon {
   height: 18px;
   max-width: 78px;
@@ -1657,53 +1824,111 @@ main.viewer {
   gap: var(--space-1);
 }
 
+/*
+ * Halftime, as a division of the strip rather than a stray glyph.
+ *
+ * It was a 12px arrow squeezed between two numbers, where it read as a third
+ * kind of round.  A rule with a word beside it is the one thing in a row of
+ * numbers that cannot be mistaken for one.  Not a `.round-chip`: the specs
+ * index those by position to pick a round.
+ */
 .round-swap {
   display: inline-flex;
   align-items: center;
+  gap: var(--space-1);
+  margin: 0 var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--line-strong);
   color: var(--text-faint);
-  padding: 0 var(--space-2);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--track-wide);
 }
 
 /*
- * A chip is a number over a 2px result bar, so the whole match reads at a
- * glance.  `is-open` is a round `infer` could not award -- a defuse or a
- * detonation, where the spike event carries no actor id -- and it keeps the
- * neutral colour.  Resolving it here would put a claim on screen that the
- * model deliberately refused to make.
+ * A chip carries its result in its body, not in a hairline under it.
+ *
+ * This was a bare number over a 2px rule -- about fifty square pixels of
+ * colour on a 26px control, which is why the strip read as a debug row rather
+ * than as a match history.  The tint fills the chip instead, so nineteen
+ * rounds are legible in one glance, and the rule stays as the second, stronger
+ * signal.
+ *
+ * `is-open` is a round `infer` could not award -- a defuse or a detonation,
+ * where the spike event carries no actor id -- and it stays visibly weaker
+ * than either team rather than picking one.  Resolving it here would put a
+ * claim on screen the model deliberately refused to make.
+ *
+ * The colour is by **team**, not by side: a match history is about who won,
+ * and a team's results should be one colour across the halftime swap even
+ * though every marker on the canvas flips at it.  That is the one place in
+ * this interface where team colouring is the right answer, and saying so here
+ * is what stops it being "fixed" to `sideColour`.
  */
 .round-chip {
   min-width: 26px;
-  padding: 2px var(--space-2) 4px;
-  background: none;
-  border: 1px solid transparent;
-  border-bottom: 2px solid var(--team-unknown);
-  color: var(--text-muted);
+  padding: 2px var(--space-2) 3px;
+  background: color-mix(in srgb, var(--team-unknown) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--team-unknown) 40%, transparent);
+  border-bottom-width: 3px;
+  color: var(--text-primary);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .round-chip.is-a {
+  background: color-mix(in srgb, var(--team-a) 18%, transparent);
+  border-color: color-mix(in srgb, var(--team-a) 45%, transparent);
   border-bottom-color: var(--team-a);
 }
 
 .round-chip.is-b {
+  background: color-mix(in srgb, var(--team-b) 18%, transparent);
+  border-color: color-mix(in srgb, var(--team-b) 45%, transparent);
   border-bottom-color: var(--team-b);
 }
 
 .round-chip.is-open {
-  border-bottom-color: color-mix(in srgb, var(--team-unknown) 40%, transparent);
+  background: color-mix(in srgb, var(--team-unknown) 8%, transparent);
+  border-color: color-mix(in srgb, var(--team-unknown) 25%, transparent);
+  color: var(--text-muted);
 }
 
 .round-chip:hover {
   color: var(--text-primary);
-  background: var(--card-hover);
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
+/*
+ * Selected, without throwing away the result.
+ *
+ * `.is-active` used to fill the chip with `--accent` and invert the text,
+ * which destroyed the one fact the chip carries on precisely the round being
+ * looked at -- and put a third hue between the two team colours.  A full white
+ * border and a deeper tint say "this one" at radius 0 and cost no new token.
+ */
 .round-chip.is-active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--app-bg);
+  border-color: var(--text-primary);
+  color: var(--text-primary);
   font-weight: var(--weight-semibold);
+}
+
+.round-chip.is-active.is-a {
+  background: color-mix(in srgb, var(--team-a) 34%, transparent);
+}
+
+.round-chip.is-active.is-b {
+  background: color-mix(in srgb, var(--team-b) 34%, transparent);
+}
+
+.round-chip.is-active.is-open {
+  background: color-mix(in srgb, var(--team-unknown) 22%, transparent);
+}
+
+/* The focused chip was indistinguishable from the hovered one, on a strip that
+   is nineteen keyboard-reachable buttons in a row. */
+.round-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* -- the transport ------------------------------------------------------ */
@@ -1801,6 +2026,13 @@ main.viewer {
 .menu-panel.at-start {
   right: auto;
   left: 0;
+}
+
+/* Opening upward, for the layers menu now that it sits in the playback bar at
+   the bottom of a viewer that does not scroll. */
+.menu-panel.drops-up {
+  top: auto;
+  bottom: calc(100% + var(--space-2));
 }
 
 .menu-title {
@@ -1913,6 +2145,55 @@ main.viewer {
 .check-row.is-b {
   border-color: color-mix(in srgb, var(--team-b) 55%, transparent);
   color: var(--team-b);
+}
+
+/*
+ * The four event tones, which are the rail's own tick colours.
+ *
+ * The rail is a 24px canvas and cannot carry a legend, so this menu is the
+ * legend: a row's glyph is the shape and its colour is the colour, and reading
+ * the strip stops being a matter of hovering each tick.
+ */
+.check-row.is-kill {
+  color: var(--text-primary);
+}
+
+.check-row.is-cast {
+  color: var(--accent);
+}
+
+.check-row.is-ult {
+  color: var(--ult);
+}
+
+.check-row.is-spike {
+  color: var(--spike-armed);
+}
+
+/*
+ * A switch that cannot be used here, and the sentence saying why.
+ *
+ * The row used to be dropped from the list entirely, which reads as a feature
+ * that does not exist rather than as one that is unavailable.  The reason sits
+ * *outside* the `<label>` -- see `ui.CheckRow` -- so it never becomes part of
+ * the checkbox's accessible name.
+ */
+.check-row.is-disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.check-row.is-disabled:hover {
+  background: none;
+}
+
+.check-why {
+  margin: 0;
+  padding: 0 var(--space-2) var(--space-2) calc(var(--space-2) + 14px + var(--space-3));
+  max-width: 30ch;
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  color: var(--text-faint);
 }
 
 /* -- modal -------------------------------------------------------------- */

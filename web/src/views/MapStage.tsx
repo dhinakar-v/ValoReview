@@ -63,7 +63,7 @@ import { Failed } from "./Shell";
 import { Transport } from "./Transport";
 import { Button, Chip, EmptyState, Panel, Segmented } from "./ui";
 import { useImages } from "./images";
-import { seek, usePlayback, usePlaybackDriver } from "./playback";
+import { seek, selectedActor, usePlayback, usePlaybackDriver } from "./playback";
 
 // `three` and its two wrappers are about a megabyte of the bundle, and the 2D
 // view is the default and is not a stepping stone to this one. Loading the
@@ -276,7 +276,12 @@ export function MapStage({
             icon: option === "2D" ? glyphs.view2d : glyphs.view3d,
           })}
         />
-        <LayersMenu hasMask={maskDoc !== null} is3d={mode === "3d"} />
+        {/*
+          LAYERS used to sit here.  It is a menu button, and everything else
+          that changes what is being watched -- the transport, the speed, the
+          round strip -- is in one row at the bottom, so it has gone to join
+          them.  What stays on the head is the view mode and the disclaimer.
+        */}
       </div>
 
       <div className="arena">
@@ -322,15 +327,23 @@ export function MapStage({
 
       {/*
         The same two conditions the layers menu uses to decide whether SIGHT
-        and CALLOUTS exist at all.  A key is a faster way to press a control,
-        so it exists exactly where the control does.
+        and CALLOUTS can do anything -- not whether they are *offered*, which
+        they always are now, disabled and carrying the reason.  A key has
+        nowhere to put a reason, so it exists only where its control works.
+
+        `LayersMenu` is a child rather than an import here: it is a menu
+        button, and everything else that changes what is being watched lives in
+        the transport row, so that is where it goes.  `MapStage` still owns
+        which layers are available, because it is the one holding the mask.
       */}
       <Transport
         replay={replay}
         clock={clock}
         weapons={weapons}
         layers={{ sight: maskDoc !== null, callouts: mode === "3d" }}
-      />
+      >
+        <LayersMenu hasMask={maskDoc !== null} is3d={mode === "3d"} />
+      </Transport>
 
       <Captions
         sightCaption={maskDoc?.caption ?? null}
@@ -353,6 +366,18 @@ export function MapStage({
  * matched exactly by a test and a glyph that joined the text node would change
  * what it is.
  */
+/**
+ * What SIGHT needs, said on the stage rather than inside a closed menu.
+ *
+ * The cone is drawn for one player because ten overlapping wedges over one
+ * radar are a wash -- the argument `DEFAULT_LAYERS` already makes.  Switching
+ * the layer on with nobody picked therefore correctly draws nothing, and until
+ * this sentence existed that was indistinguishable from a layer that does not
+ * work.  `gallery.spec.ts` had even written the behaviour down in a comment.
+ */
+export const SIGHT_NEEDS_A_PLAYER =
+  "SIGHT is drawn for one player: point at a marker, or click one to pin it.";
+
 function Captions({
   sightCaption,
   maskUnavailable,
@@ -361,6 +386,7 @@ function Captions({
   maskUnavailable: string | null;
 }) {
   const showSight = usePlayback((state) => state.layers.sight);
+  const chosen = usePlayback(selectedActor);
   return (
     <div className="captions">
       <p>
@@ -371,6 +397,20 @@ function Captions({
         <p>
           <Icon glyph={glyphs.sight} size={12} />
           <span>{sightCaption}</span>
+        </p>
+      ) : null}
+      {/*
+        SIGHT on with nobody picked draws nothing, and that is correct -- ten
+        overlapping wedges say nothing, which is the argument `DEFAULT_LAYERS`
+        makes for the layer being off by default.  What was missing is anybody
+        saying so: the switch lit up and the map did not change, which reads as
+        a broken layer.  Additional to the server's caption, never instead of
+        it: that sentence travels with the mask and is asserted verbatim.
+      */}
+      {showSight && chosen === null ? (
+        <p>
+          <Icon glyph={glyphs.sight} size={12} />
+          <span>{SIGHT_NEEDS_A_PLAYER}</span>
         </p>
       ) : null}
       {maskUnavailable ? (

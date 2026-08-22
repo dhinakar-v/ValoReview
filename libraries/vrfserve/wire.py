@@ -29,8 +29,9 @@ from __future__ import annotations
 import base64
 from typing import TYPE_CHECKING
 
+from vrfview import abilityfacts
 from vrfview import sight as sight_mod
-from vrfview.abilities import NO_POSITION, travel
+from vrfview.abilities import NO_POSITION, attribute, travel
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -250,13 +251,26 @@ def placement(entry) -> dict:
     }
 
 
-def ability_cast(cast, replay: Replay, cache: ArtCache | None) -> dict:
+def ability_cast(
+    cast,
+    replay: Replay,
+    cache: ArtCache | None,
+    attribution=None,
+) -> dict:
     """
     One cast, with both names and a measured distance or none at all.
 
     `travel_uu` is null rather than zero where no pawn moved: zero is a real
-    answer for a turret, and a range this project could publish does not exist
-    -- no ability carries one in the replay or in Riot's catalogue.
+    answer for a turret.  It is a **measured path length** and never a radius:
+    only `Pawn_` actors move, so it says how far a drone drove, and drawing it
+    as a circle would turn a distance travelled into an area of effect.
+
+    `range_uu` is the radius, and it is neither read nor measured -- it is
+    looked up in `vrfview.abilityfacts`, which is community research about the
+    game rather than anything this capture states.  `range_source` travels
+    beside it so a reader can see that, and the browser draws the ring dashed
+    under a layer labelled `RANGE (SIM)` for the same reason.  Both are null
+    for the many abilities nobody publishes a radius for.
 
     `placements` and `landed` are the same pair the model keeps: every
     non-moving actor this cast spawned, and the one of them that says where
@@ -266,6 +280,17 @@ def ability_cast(cast, replay: Replay, cache: ArtCache | None) -> dict:
     `landed` is null for a cast with a pawn -- the pawn has a track, and a
     track outranks a spawn point -- and for one decoded before the spawn
     transform was read, which is every v1 and v2 sidecar.
+
+    `player_actor_id` is the **caster**, and it is here because `actor_id` is
+    not: that one is the first ability actor the cast spawned, which no player
+    has, so `sideAt(cast.actor_id, ...)` in the browser's round timeline
+    resolved nobody and every ability row was silently sideless.  The join is
+    `abilities.attribute`, which is the only implementation of it and refuses a
+    codename two players share.  It travels for the same reason `landed` does:
+    a client that had only the codename would have to re-derive the join, and
+    the reasoning for refusing an ambiguous one lives in `abilities` and should
+    stay there -- it had in fact been re-derived, by hand and untested, in
+    `MinimapCanvas`.
     """
     published = None
     icon = None
@@ -275,6 +300,7 @@ def ability_cast(cast, replay: Replay, cache: ArtCache | None) -> dict:
         if slot is not None:
             published = slot.name
             icon = asset_url(slot.icon, cache.root)
+    published_range = abilityfacts.facts_for(cast.agent, cast.display_name)
     distance = None
     for actor_id in cast.pawns:
         track = replay.ability_track(actor_id)
@@ -286,6 +312,9 @@ def ability_cast(cast, replay: Replay, cache: ArtCache | None) -> dict:
         "round_no": cast.round_no,
         "actor_id": cast.actor_id,
         "codename": cast.codename,
+        "player_actor_id": (
+            attribution.by_codename.get(cast.codename) if attribution else None
+        ),
         "agent": cast.agent,
         "identity": cast.identity,
         "slot": cast.slot,
@@ -298,6 +327,8 @@ def ability_cast(cast, replay: Replay, cache: ArtCache | None) -> dict:
         "has_track": cast.has_track,
         "travel_uu": distance,
         "travel_note": None if distance is not None else NO_POSITION,
+        "range_uu": published_range.radius_uu if published_range else None,
+        "range_source": published_range.source if published_range else None,
         "placements": [placement(p) for p in cast.placements],
         "landed": placement(cast.landed) if cast.landed is not None else None,
     }
@@ -326,6 +357,9 @@ def replay_doc(
     authority; `vrfserve.app` asks it.
     """
     art = cache.map_art(replay.map_path) if cache else None
+    # Once for the whole document rather than per cast: it is a sweep of the
+    # roster, and there are hundreds of casts.
+    attribution = attribute(replay.players)
     return {
         "id": replay_id,
         "source": replay.source,
@@ -366,12 +400,24 @@ def replay_doc(
             {"t_ms": u.t_ms, "actor_id": u.actor_id, "round_no": u.round_no}
             for u in replay.ultimates
         ],
+        # x/y/z are null on a defuse, on an explode, and on any plant in a
+        # capture nothing has decoded -- three separate absences that all mean
+        # "draw nothing here", which is why they are one null and not a flag.
         "spike": [
-            {"t_ms": s.t_ms, "kind": s.kind, "round_no": s.round_no}
+            {
+                "t_ms": s.t_ms,
+                "kind": s.kind,
+                "round_no": s.round_no,
+                "x": s.location[0] if s.location else None,
+                "y": s.location[1] if s.location else None,
+                "z": s.location[2] if s.location else None,
+            }
             for s in replay.spike
         ],
         "loadouts": [loadout(x, cache) for x in replay.loadouts],
-        "ability_casts": [ability_cast(c, replay, cache) for c in replay.ability_casts],
+        "ability_casts": [
+            ability_cast(c, replay, cache, attribution) for c in replay.ability_casts
+        ],
         "event_times": list(replay.event_times),
         "score": list(replay.score),
         "has_positions": replay.has_positions,
@@ -411,10 +457,15 @@ def card(entry, replay_id: str, cache: ArtCache | None, prewarm: dict | None) ->
         "map_name": entry.map_name,
         "map_key": art.name if art else "",
         "listview_url": asset_url(art.listview, cache.root) if art and cache else None,
+        # The instant and the length, never a pre-formatted rendering of
+        # either.  `recorded` and `duration` used to travel beside these and
+        # were `strftime` output, so the same fact reached the match list as a
+        # formatted string and the viewer header as a raw ISO instant, and the
+        # two disagreed about how a date is written.  The browser owns that
+        # now -- `web/src/model/format.ts` -- and it can write the reader's own
+        # zone, which a server formatting in UTC cannot.
         "recorded_utc": entry.recorded_utc.isoformat() if entry.recorded_utc else None,
-        "recorded": entry.recorded,
         "length_ms": entry.length_ms,
-        "duration": entry.duration,
         "rounds": entry.rounds,
         "players": entry.players,
         "size_bytes": entry.size_bytes,

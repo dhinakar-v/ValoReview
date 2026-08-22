@@ -30,35 +30,70 @@
  * text -- so no icon and no extra word may go inside that span.
  */
 
+import type { ReactNode } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Replay, Round, Weapon } from "../api/types";
 import type { PlaybackClock } from "../model/clock";
 import { SPEEDS } from "../model/clock";
-import { activeRound, clockText, elapsedMs, eventTimesIn } from "../model/roundclock";
+import {
+  activeRound,
+  clampToRound,
+  clockText,
+  elapsedMs,
+  eventTimesIn,
+} from "../model/roundclock";
 import { Icon, glyphs } from "./icons";
 import { palette } from "./images";
 import { seek, setBounds, usePlayback } from "./playback";
 import { RoundStrip } from "./RoundStrip";
 import { RoundTimeline } from "./RoundTimeline";
 import { SHORTCUTS, useTransportKeys } from "./shortcuts";
-import { IconButton, Segmented } from "./ui";
+import { IconButton, Segmented, Toggle } from "./ui";
 
 const RAIL_HEIGHT = 24;
 /** Where the rail itself sits, leaving the event ticks the room above it. */
 const RAIL_Y = 17;
+
+/** Half-width of a tick's head, in CSS pixels. */
+const HEAD = 3;
+
+/** The shapes a tick head can take, one per kind of event. */
+type Head = "triangle" | "diamond" | "square";
+
+/**
+ * A spike tick's colour, by what the event was.
+ *
+ * `--spike-armed`, `--spike-safe` and `--spike-boom` have been in the palette
+ * since it was written and nothing had ever read them; the rail drew every
+ * spike event in the defender's blue instead, which attributes a sideless
+ * event to a side.
+ */
+function spikeColour(colours: Record<string, string>, kind: string): string {
+  if (kind === "defused") return colours.spikeSafe!;
+  if (kind === "exploded") return colours.spikeBoom!;
+  return colours.spikeArmed!;
+}
 
 export function Transport({
   replay,
   clock,
   weapons,
   layers,
+  children,
 }: {
   replay: Replay;
   clock: PlaybackClock;
   weapons: Weapon[] | undefined;
   /** Which layer switches the stage is drawing, so the keys match them. */
   layers: { sight: boolean; callouts: boolean };
+  /**
+   * Anything the stage wants in the control row, which today is the layers
+   * menu.  Passed in rather than imported so this component keeps knowing
+   * nothing about layers beyond the two booleans the keys need -- `MapStage`
+   * owns which of them are available, and it is the one holding the mask.
+   */
+  children?: ReactNode;
 }) {
   const playing = usePlayback((state) => state.playing);
   const speed = usePlayback((state) => state.speed);
@@ -120,14 +155,49 @@ export function Transport({
     [clock, replay.length_ms, round, times],
   );
 
-  const seekTo = useCallback((ms: number) => seek(clock, ms), [clock]);
+  /*
+    Every seek goes through the round.
+
+    `clampToRound` had been sitting unused in `roundclock` while the frame loop
+    clamped only the *upper* edge -- so a nudge backwards at a round's first
+    millisecond walked the playhead into the previous round with the rail, the
+    countdown and the chip strip all still scoped to this one.  Clamping here
+    puts the bound in the one place that knows which round is picked, which is
+    also what lets the keys stop doing arithmetic of their own.
+  */
+  const seekTo = useCallback(
+    (ms: number) =>
+      seek(
+        clock,
+        round === null
+          ? Math.max(0, Math.min(replay.length_ms, ms))
+          : clampToRound(round, ms),
+      ),
+    [clock, replay.length_ms, round],
+  );
+
+  /*
+    The two ends of the round, hoisted so the buttons and the keys are the same
+    reference rather than two expressions that happen to agree today.  This is
+    the fix for Home and End: they were absolute seeks in a round-scoped
+    transport, and now they simply are these.
+  */
+  const toStart = useCallback(
+    () => seek(clock, round?.start_ms ?? 0),
+    [clock, round],
+  );
+  const toEnd = useCallback(
+    () => seek(clock, round?.end_ms ?? replay.length_ms),
+    [clock, replay.length_ms, round],
+  );
 
   // The keys do exactly what the buttons do, by calling the same functions.
   useTransportKeys({
     clock,
     step,
     seekTo,
-    lengthMs: replay.length_ms,
+    toStart,
+    toEnd,
     stepRound,
     layers,
   });
@@ -167,7 +237,7 @@ export function Transport({
           label="Back to the start"
           icon={glyphs.toStart}
           variant="default"
-          onClick={() => seek(clock, round?.start_ms ?? 0)}
+          onClick={toStart}
         />
         <IconButton
           label="Previous event"
@@ -189,7 +259,7 @@ export function Transport({
           label="To the end"
           icon={glyphs.toEnd}
           variant="default"
-          onClick={() => seek(clock, round?.end_ms ?? replay.length_ms)}
+          onClick={toEnd}
         />
 
         <Rail replay={replay} round={round} clock={clock} />
@@ -201,18 +271,30 @@ export function Transport({
           {round === null ? clockText(replay.length_ms) : clockText(round.duration_ms)}
         </span>
 
-        <IconButton
-          label="Loop this round"
-          icon={glyphs.loop}
-          pressed={looping}
-          onClick={() => setLooping((on) => !on)}
-        />
         <Segmented
           label="Playback speed"
           options={SPEEDS}
           value={speed}
           onChange={(next) => usePlayback.setState({ speed: next })}
           format={(value) => ({ label: `${value}×` })}
+        />
+        {/*
+          LOOP carries its word.
+
+          As a bare `Repeat` glyph jammed against the clock it read as neither
+          a reset nor a loop -- the UI review called it "useless" and could not
+          tell what it did -- which is the house rule catching up with a
+          control that had quietly broken it: an icon sits beside a label, and
+          `IconButton` is the sole exception for glyphs whose meaning is not in
+          dispute.  It also moves off the clock's shoulder, so the readout is
+          flanked by the rail and the speed control instead.
+        */}
+        <Toggle
+          label="LOOP"
+          icon={glyphs.loop}
+          pressed={looping}
+          title="Replay this round when it reaches the end"
+          onChange={() => setLooping((on) => !on)}
         />
         <IconButton
           label="Round timeline"
@@ -226,6 +308,7 @@ export function Transport({
           pressed={showKeys}
           onClick={() => setShowKeys((on) => !on)}
         />
+        {children}
       </div>
 
       {showKeys ? (
@@ -299,37 +382,78 @@ function Rail({
       context.fillStyle = colours.border!;
       context.fillRect(0, RAIL_Y, width, 2);
 
-      const tick = (ms: number, colour: string, top: number) => {
+      /*
+        A tick is a stem and a head, and the head says what kind of event it is.
+
+        Every mark used to be a bare 1px line, differing only in colour and in
+        how far up it started -- so the strip could be read by hovering and no
+        other way.  Now each kind has a silhouette as well: a stem alone, a
+        downward triangle, a diamond, a square.  Shape *and* colour, because at
+        one pixel wide colour alone is a hue judgement against a dark ground.
+
+        The heads are drawn at the top of the stem rather than on the rail, so
+        a dense round of casts stays a comb rather than a solid bar.
+      */
+      const tick = (ms: number, colour: string, top: number, head?: Head) => {
         if (!inRound(ms)) {
           return;
         }
-        const x = at(ms);
+        const x = Math.round(at(ms)) + 0.5;
         context.strokeStyle = colour;
         context.lineWidth = 1;
         context.beginPath();
-        context.moveTo(x + 0.5, top);
-        context.lineTo(x + 0.5, RAIL_Y);
+        context.moveTo(x, top + (head === undefined ? 0 : HEAD));
+        context.lineTo(x, RAIL_Y);
         context.stroke();
+        if (head === undefined) {
+          return;
+        }
+        context.fillStyle = colour;
+        context.beginPath();
+        if (head === "triangle") {
+          context.moveTo(x - HEAD, top);
+          context.lineTo(x + HEAD, top);
+          context.lineTo(x, top + HEAD);
+        } else if (head === "diamond") {
+          context.moveTo(x, top);
+          context.lineTo(x + HEAD, top + HEAD);
+          context.lineTo(x, top + HEAD * 2);
+          context.lineTo(x - HEAD, top + HEAD);
+        } else {
+          context.rect(x - HEAD, top, HEAD * 2, HEAD * 2);
+        }
+        context.closePath();
+        context.fill();
       };
 
+      // Densest first and rarest last, so a spike that lands on the same
+      // millisecond as a cast is the one still visible.
       if (layers.casts) {
         for (const cast of replay.ability_casts) {
-          tick(cast.t_ms, colours.muted!, 11);
+          tick(cast.t_ms, colours.faint!, 12);
         }
       }
       if (layers.kills) {
         for (const kill of replay.kills) {
-          tick(kill.t_ms, colours.text!, 5);
+          tick(kill.t_ms, colours.text!, 4, "triangle");
         }
       }
       if (layers.ultimates) {
         for (const ult of replay.ultimates) {
-          tick(ult.t_ms, colours.ult!, 0);
+          tick(ult.t_ms, colours.ult!, 0, "diamond");
         }
       }
       if (layers.spike) {
         for (const event of replay.spike) {
-          tick(event.t_ms, colours.b!, 0);
+          /*
+            Coloured by what happened, not by a side.  These ticks were drawn
+            in `--team-b` -- the defender colour -- and a spike event carries
+            no actor id at all, which is exactly the attribution
+            `RoundTimeline` states in words must never be made.  The three
+            spike colours already existed in the palette and nothing was using
+            them.
+          */
+          tick(event.t_ms, spikeColour(colours, event.kind), 0, "square");
         }
       }
 

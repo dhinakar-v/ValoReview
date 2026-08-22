@@ -66,7 +66,7 @@ import type { ReplayModel } from "../model/replay";
 import { floorZ } from "../model/replay";
 import type { SightMask, SightSettings } from "../model/sight";
 import { cone, decodeMask, forwardUv, uvRadius } from "../model/sight";
-import { positionOf, stateAt } from "../model/state";
+import { positionOf, spikeLocation, stateAt } from "../model/state";
 import { segments } from "../model/track";
 import { applyTransform } from "../model/transform";
 import { sideOf } from "../model/synthetic";
@@ -81,6 +81,11 @@ const FACING_LENGTH = 0.035;
 
 /** How far back a trail reaches, in playback ms. */
 const TRAIL_MS = 8000;
+
+/* The spike cone, in scene units -- a shade wider and taller than a player
+   capsule, because it has to be findable from across the map. */
+const SPIKE_RADIUS = 0.009;
+const SPIKE_HEIGHT = 0.026;
 
 /** How far ahead the heading probe is placed, in Unreal units. */
 const FACING_PROBE_UU = 100;
@@ -133,6 +138,7 @@ export function Scene3D(props: SceneProps) {
       <Ground radar={props.radar} colours={colours} />
       <Trails {...props} colours={colours} />
       <Actors {...props} colours={colours} />
+      <Spike {...props} colours={colours} />
       <SightWedge {...props} colours={colours} />
       <Callouts art={props.art} />
     </Canvas>
@@ -453,6 +459,57 @@ function Trails({
 
   return <primitive object={built.root} />;
 }
+
+/**
+ * The planted spike, standing on the ground where it was planted.
+ *
+ * One cone, built once and moved: a round has at most one plant, and rebuilding
+ * geometry every frame for a single marker would be the most expensive object
+ * in the scene.  Amber for the reason `theme.py` gives -- an armed spike wants
+ * to be red, and team A already is.
+ *
+ * A cone rather than the 2D triangle because this is a scene and the marker has
+ * to read from any bearing the orbit camera reaches; a flat triangle vanishes
+ * edge-on, which is the one thing a marker for "the most important object in
+ * the round" may not do.
+ */
+function Spike({
+  model,
+  art,
+  colours,
+}: SceneProps & { colours: Record<string, string> }) {
+  const reference = useMemo(() => floorZ(model), [model]);
+
+  const built = useMemo(() => {
+    const mesh = new THREE.Mesh(
+      new THREE.ConeGeometry(SPIKE_RADIUS, SPIKE_HEIGHT, 12),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(colours.spikeArmed!) }),
+    );
+    mesh.visible = false;
+    return mesh;
+  }, [colours]);
+
+  useFrame(() => {
+    const state = usePlayback.getState();
+    const snap = stateAt(model, state.tMs);
+    const at = spikeLocation(model, snap);
+    if (at === null) {
+      built.visible = false;
+      return;
+    }
+    const [u, v] = applyTransform(art.transform, at.x, at.y);
+    // Half a cone up, so it stands on the ground rather than through it.
+    built.position.set(
+      u,
+      (at.z - reference) * art.transform.vertical_scale + SPIKE_HEIGHT / 2,
+      v,
+    );
+    built.visible = true;
+  });
+
+  return <primitive object={built} />;
+}
+
 
 /**
  * The sight wedge, flat on the ground plane and staying there.

@@ -160,22 +160,34 @@
     {
       "t_ms": 50000,
       "kind": "planted",
-      "round_no": 2
+      "round_no": 2,
+      "x": null,
+      "y": null,
+      "z": null
     },
     {
       "t_ms": 70000,
       "kind": "exploded",
-      "round_no": 2
+      "round_no": 2,
+      "x": null,
+      "y": null,
+      "z": null
     },
     {
       "t_ms": 95000,
       "kind": "planted",
-      "round_no": 3
+      "round_no": 3,
+      "x": null,
+      "y": null,
+      "z": null
     },
     {
       "t_ms": 110000,
       "kind": "defused",
-      "round_no": 3
+      "round_no": 3,
+      "x": null,
+      "y": null,
+      "z": null
     }
   ],
   "loadouts": [],
@@ -185,6 +197,7 @@
       "round_no": 1,
       "actor_id": 899,
       "codename": "Hunter",
+      "player_actor_id": 101,
       "agent": "Sova",
       "identity": "Sova",
       "slot": "E",
@@ -202,6 +215,8 @@
       "has_track": true,
       "travel_uu": 848.5281374238571,
       "travel_note": null,
+      "range_uu": null,
+      "range_source": null,
       "placements": [
         {
           "actor_id": 899,
@@ -220,6 +235,7 @@
       "round_no": 2,
       "actor_id": 910,
       "codename": "Wraith",
+      "player_actor_id": 202,
       "agent": "Omen",
       "identity": "Omen",
       "slot": "Q",
@@ -235,6 +251,8 @@
       "has_track": false,
       "travel_uu": null,
       "travel_note": "no position on wire",
+      "range_uu": 410.0,
+      "range_source": "wiki.playvalorant.com/Dark_Cover: smoke radius 4.1 m",
       "placements": [
         {
           "actor_id": 910,

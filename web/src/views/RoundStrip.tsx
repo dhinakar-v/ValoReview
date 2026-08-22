@@ -55,8 +55,11 @@ export function RoundStrip({
         return (
           <span className="round-slot" key={round.number}>
             {swapsHere ? (
+              // A rule and a word, not a glyph wedged between two numbers,
+              // where it read as a third kind of round.
               <span className="round-swap" title="Halftime side swap">
                 <Icon glyph={glyphs.swap} size={12} />
+                HALF
               </span>
             ) : null}
             <button

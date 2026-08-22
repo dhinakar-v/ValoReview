@@ -16,10 +16,20 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { glyphs } from "./icons";
-import { Button, Chip, Field, IconButton, Segmented, TabPanel, Tabs, Toggle } from "./ui";
+import {
+  Button,
+  Chip,
+  Field,
+  IconButton,
+  Segmented,
+  Select,
+  TabPanel,
+  Tabs,
+  Toggle,
+} from "./ui";
 
 afterEach(cleanup);
 
@@ -134,6 +144,75 @@ describe("a control whose label is not drawn still has one", () => {
       </Field>,
     );
     expect(screen.getByRole("combobox", { name: "Filter by map" })).toBeTruthy();
+  });
+
+  /*
+    The same guarantee for the control that replaced it.
+
+    A combobox named by its own contents announces the current *value* where
+    its name belongs -- "every map" instead of "Filter by map" -- so the name
+    comes from `aria-labelledby` pointing at the clipped label.  This is the
+    assertion that keeps that true, and the reason the button's text is not
+    allowed to become the name.
+  */
+  it("names the map filter by its label and not by its current value", () => {
+    render(
+      <Select
+        icon={glyphs.mapPin}
+        label="Filter by map"
+        value=""
+        options={[
+          { value: "", label: "every map" },
+          { value: "Ascent", label: "Ascent" },
+        ]}
+        onChange={() => undefined}
+      />,
+    );
+    const box = screen.getByRole("combobox", { name: "Filter by map" });
+    expect(box.textContent).toContain("every map");
+    expect(box.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("opens on the arrow keys and commits the one the arrows are on", () => {
+    const onChange = vi.fn();
+    render(
+      <Select
+        label="Filter by map"
+        value=""
+        options={[
+          { value: "", label: "every map" },
+          { value: "Ascent", label: "Ascent" },
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const box = screen.getByRole("combobox", { name: "Filter by map" });
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    expect(box.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(onChange).toHaveBeenCalledWith("Ascent");
+  });
+
+  it("closes on Escape without choosing anything", () => {
+    const onChange = vi.fn();
+    render(
+      <Select
+        label="Filter by map"
+        value=""
+        options={[
+          { value: "", label: "every map" },
+          { value: "Ascent", label: "Ascent" },
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const box = screen.getByRole("combobox", { name: "Filter by map" });
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.keyDown(box, { key: "ArrowDown" });
+    fireEvent.keyDown(box, { key: "Escape" });
+    expect(box.getAttribute("aria-expanded")).toBe("false");
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 

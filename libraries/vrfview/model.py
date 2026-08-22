@@ -287,12 +287,36 @@ class SpikeEvent:
     A spike plant, defuse or explode.
 
     These events carry no actor net ID at all -- `args` is just the type ID --
-    so the spike can never be attributed to a player or to a site.
+    so the spike can never be attributed to a **player**.  It can be attributed
+    to a **place**, and `location` is that: see below.
+
+    `location` is decoded, where `t_ms` and `kind` are read.  The event chunk
+    holds no coordinate; what holds one is the `TimedBomb` actor the plant
+    spawns, whose transform `csharpdecode` has always carried and `tracks`
+    discarded, because nothing had established those numbers were the spike
+    rather than plausible noise.  Measured over the whole reference library:
+    274 plants across 21 captures pair one-to-one with a `TimedBomb` spawn
+    (0 unpaired, and the spawn count equals the plant count in every capture),
+    at a constant +8..15 ms time-base offset; the coordinate is a median 69.5 uu
+    from some player's own decoded position at that instant, 94.5% within 100
+    uu; and **274 of 274 land inside the radar image's playable silhouette**,
+    where a random coordinate lands inside about a third of the time.
+
+    It is `None` on a defuse or an explode, and on a plant in a capture nothing
+    has decoded -- a plant with no coordinate is the ordinary state, never an
+    origin.  Only the plant is measured: `Bomb_Defuser` actors carry transforms
+    too, but nothing has checked them, so nothing reads them.
     """
 
     t_ms: int
     kind: str
     round_no: int = 0
+    location: tuple[float, float, float] | None = None
+
+    @property
+    def placed(self) -> bool:
+        """Whether this event knows where it happened."""
+        return self.location is not None
 
 
 @dataclass(frozen=True)

@@ -45,6 +45,8 @@ export interface Layers {
   sight: boolean;
   callouts: boolean;
   killMarkers: boolean;
+  /** A looked-up radius, drawn dashed. See DEFAULT_LAYERS. */
+  abilityRange: boolean;
   casts: boolean;
   kills: boolean;
   ultimates: boolean;
@@ -64,6 +66,13 @@ export const DEFAULT_LAYERS: Layers = {
   trails: false,
   callouts: false,
   killMarkers: true,
+  /*
+    Off, because it is the only thing this canvas draws that nothing decoded.
+    A published radius is looked up in `vrfview.abilityfacts` -- community
+    research about a game that rebalances every few weeks -- so it is asked
+    for deliberately, drawn dashed, and labelled `RANGE (SIM)` on its own row.
+  */
+  abilityRange: false,
   casts: true,
   kills: true,
   ultimates: true,

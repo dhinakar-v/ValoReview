@@ -17,7 +17,7 @@
  */
 
 import type { ComponentType, KeyboardEvent, ReactNode, SVGProps } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { Icon, ICON_ALONE, Spinner, glyphs } from "./icons";
 import { Sentence } from "./Shell";
@@ -300,6 +300,179 @@ export function Field({
   );
 }
 
+/**
+ * A dropdown that belongs to this interface rather than to the operating
+ * system.
+ *
+ * The map filter was a bare `<select>`, and the one thing CSS cannot reach on
+ * a `<select>` is the part people actually look at: the popup is drawn by the
+ * platform, so it opened as a white-on-black OS list with a system highlight
+ * and a scrollbar belonging to nothing else on the page.  `color-scheme: dark`
+ * is as far as styling gets.
+ *
+ * So it is a `role="combobox"` button over a `role="listbox"`, which means the
+ * behaviour a native select gave for free has to be implemented rather than
+ * assumed -- that is the whole cost of this control and the reason it is here
+ * and not inlined at the call site:
+ *
+ *   * the name comes from `aria-labelledby` pointing at the clipped label,
+ *     **not** from the button's own text.  A combobox named by its contents
+ *     announces the current value where its name should be, and
+ *     `ui.test.tsx` asserts the name is the label and nothing else;
+ *   * `aria-activedescendant` moves without the focus, which is what keeps the
+ *     button focused while the arrows walk the list;
+ *   * Enter and Space commit, Escape closes without committing and returns the
+ *     focus, Home and End jump, and typing a letter jumps to the next option
+ *     starting with it -- all of which a `<select>` does and nobody would
+ *     forgive this for not doing.
+ *
+ * `shortcuts.ts` yields the arrows, Home and End to `[role="listbox"]` and
+ * `[role="combobox"]`, because its `editing()` check recognises a native
+ * `SELECT` by tag name and a div with a role is not one.
+ */
+export function Select({
+  icon,
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  icon?: Glyph;
+  /** Read but not drawn, and the accessible name of the control. */
+  label: string;
+  value: string;
+  /** `value` is what the caller stores; `label` is what a person reads. */
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const wrap = useRef<HTMLDivElement | null>(null);
+  const base = useId();
+  const labelId = `${base}-label`;
+  const listId = `${base}-list`;
+  const optionId = (index: number) => `${base}-option-${index}`;
+
+  const chosen = options.findIndex((option) => option.value === value);
+  const shown = options[chosen === -1 ? 0 : chosen]?.label ?? "";
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onDown = (event: MouseEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const commit = (index: number) => {
+    const option = options[index];
+    if (option !== undefined) {
+      onChange(option.value);
+    }
+    setOpen(false);
+    wrap.current?.querySelector("button")?.focus();
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const last = options.length - 1;
+    if (!open && (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter")) {
+      setActive(chosen === -1 ? 0 : chosen);
+      setOpen(true);
+      event.preventDefault();
+      return;
+    }
+    if (!open) {
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      setActive((at) => Math.min(last, at + 1));
+    } else if (event.key === "ArrowUp") {
+      setActive((at) => Math.max(0, at - 1));
+    } else if (event.key === "Home") {
+      setActive(0);
+    } else if (event.key === "End") {
+      setActive(last);
+    } else if (event.key === "Enter" || event.key === " ") {
+      commit(active);
+    } else if (event.key === "Escape") {
+      // Closes without committing, which is what a native select does and
+      // what makes arrowing through a long list safe to abandon.
+      setOpen(false);
+      wrap.current?.querySelector("button")?.focus();
+    } else if (event.key.length === 1) {
+      const from = event.key.toLowerCase();
+      const found = options.findIndex((option) =>
+        option.label.toLowerCase().startsWith(from),
+      );
+      if (found === -1) {
+        return;
+      }
+      setActive(found);
+    } else {
+      return;
+    }
+    event.preventDefault();
+  };
+
+  return (
+    <div className="field select-field" ref={wrap}>
+      {icon ? <Icon glyph={icon} /> : null}
+      <span className="sr-only" id={labelId}>
+        {label}
+      </span>
+      <button
+        type="button"
+        role="combobox"
+        className="select-button"
+        aria-labelledby={labelId}
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-haspopup="listbox"
+        aria-activedescendant={open ? optionId(active) : undefined}
+        title={label}
+        onKeyDown={onKeyDown}
+        onClick={() => {
+          setActive(chosen === -1 ? 0 : chosen);
+          setOpen((was) => !was);
+        }}
+      >
+        <span>{shown}</span>
+        <Icon glyph={glyphs.pageNext} />
+      </button>
+      <ul
+        className={open ? "select-list" : "select-list is-shut"}
+        id={listId}
+        role="listbox"
+        aria-labelledby={labelId}
+      >
+        {options.map((option, index) => (
+          <li
+            key={option.value}
+            id={optionId(index)}
+            role="option"
+            aria-selected={option.value === value}
+            className={index === active ? "select-option is-active" : "select-option"}
+            onMouseEnter={() => setActive(index)}
+            onMouseDown={(event) => {
+              // Before blur, or the outside-click handler closes the list out
+              // from under the click that was choosing something.
+              event.preventDefault();
+              commit(index);
+            }}
+          >
+            {option.label}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export type Tab = { id: string; label: string; icon?: Glyph; count?: number };
 
 /**
@@ -471,22 +644,63 @@ export function CheckRow({
   onChange,
   tone,
   title,
+  disabled,
+  reason,
 }: {
   label: string;
   icon?: Glyph;
   checked: boolean;
   onChange: () => void;
-  /** `a` or `b` outlines the row in a team colour, as the reference does. */
-  tone?: "a" | "b";
+  /**
+   * Outlines the row in a colour that means something.
+   *
+   * `a`/`b` are the team colours, as the reference does.  The four event tones
+   * are the rail's own tick colours, which is what makes the layers menu the
+   * legend for a 24px canvas that cannot carry one.
+   */
+  tone?: "a" | "b" | "kill" | "cast" | "ult" | "spike";
   title?: string;
+  disabled?: boolean;
+  /**
+   * Why this switch cannot be used, shown under the label.
+   *
+   * **Outside the `<label>`, and that is load-bearing.**  A `<label>` names the
+   * control it wraps by its *text content*, so a reason rendered inside it
+   * renames the checkbox from `SIGHT` to `SIGHT 3D only` -- which breaks every
+   * `getByRole("checkbox", { name })` in the suite and is the exact failure
+   * class `ui.test.tsx` exists to catch.  It is attached with
+   * `aria-describedby` instead, so a reader announces it as a description.
+   */
+  reason?: string;
 }) {
+  const id = useId();
+  const classes = [
+    "check-row",
+    tone ? `is-${tone}` : "",
+    disabled ? "is-disabled" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
-    <label className={tone ? `check-row is-${tone}` : "check-row"} title={title}>
-      <input type="checkbox" checked={checked} onChange={onChange} />
-      <span className="check-box" aria-hidden="true" />
-      {icon ? <Icon glyph={icon} /> : null}
-      <span className="check-label">{label}</span>
-    </label>
+    <>
+      <label className={classes} title={title}>
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          aria-describedby={reason ? id : undefined}
+          onChange={onChange}
+        />
+        <span className="check-box" aria-hidden="true" />
+        {icon ? <Icon glyph={icon} /> : null}
+        <span className="check-label">{label}</span>
+      </label>
+      {reason ? (
+        <p className="check-why" id={id}>
+          {reason}
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -505,12 +719,22 @@ export function Menu({
   icon,
   children,
   align = "end",
+  drop = "down",
   title,
 }: {
   label: string;
   icon?: Glyph;
   children: ReactNode;
   align?: "start" | "end";
+  /**
+   * Which way the panel opens.
+   *
+   * `up` exists because the layers menu moved off the stage head and down into
+   * the playback bar, where everything else that changes what is being watched
+   * already lives.  A panel that still dropped downward from there would open
+   * off the bottom of a viewer that does not scroll.
+   */
+  drop?: "down" | "up";
   title?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -555,7 +779,15 @@ export function Menu({
         <span>{label}</span>
       </button>
       {open ? (
-        <div className={align === "start" ? "menu-panel at-start" : "menu-panel"}>
+        <div
+          className={[
+            "menu-panel",
+            align === "start" ? "at-start" : "",
+            drop === "up" ? "drops-up" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
           {children}
         </div>
       ) : null}

@@ -65,7 +65,7 @@ from pathlib import Path
 from vrf_reader import REPLAYDATA, VrfError, VrfFile
 from vrfnet.payload_transform import UnsupportedBuildError, transform_for
 from vrfview import abilities, csharpdecode, positioncache, positionfile
-from vrfview.model import POSITION_HZ, Replay, Track
+from vrfview.model import POSITION_HZ, Replay, SpikeEvent, Track
 
 # The archetype path of a player pawn: /Game/Characters/<Codename>/<Codename>_PC
 CHARACTERS_ROOT = ("Game", "Characters")
@@ -81,6 +81,64 @@ NOT_DECODED = (
     "positions not decoded yet; nothing stored for this capture "
     "(press DECODE POSITIONS, or let the match list prepare it)"
 )
+
+
+SPIKE_ARCHETYPE = "/Game/GameModes/Bomb/TimedBomb"
+
+# How far a TimedBomb spawn may sit from its spikePlanted event and still be
+# that plant.  The decoder's clock runs 8..15 ms ahead of the event stream's
+# across the whole library -- a constant time-base offset, not jitter -- so
+# this is generous by two orders of magnitude and exists only so that a
+# capture whose clocks genuinely disagree pairs nothing rather than pairing
+# the wrong round.
+PLANT_PAIR_MS = 250
+
+
+def _plants_from(
+    archetypes: dict[int, str],
+    first_seen: dict[int, float],
+    spawn_locations: dict[int, tuple[float, float, float]],
+) -> list[tuple[int, float, float, float]]:
+    """
+    Where each spike was planted, from the actor the plant spawns.
+
+    A `spikePlanted` event carries no arguments at all, so for a long time this
+    coordinate was assumed not to exist.  It does: planting spawns a
+    `/Game/GameModes/Bomb/TimedBomb` actor, and `csharpdecode` has carried
+    every actor's spawn transform since it was written -- `spawns_from` simply
+    kept the ones under `/Game/Characters/` and dropped the rest.
+
+    What settled that these are the plant rather than plausible noise is the
+    same kind of check the ability spawns had to pass, using only data already
+    in hand.  Over the 21 playable captures in the reference library:
+
+      * 274 plant events and 274 TimedBomb spawns, pairing one-to-one with
+        none left over, and the two counts equal in **every** capture;
+      * a constant +8..15 ms offset, median 8 -- the decoder's own time base,
+        the same offset the first actors of the match are seen at;
+      * the coordinate a median 69.5 uu from some player's own decoded
+        position at that instant (94.5% within 100 uu), which is what "planted
+        at the planter's feet" looks like through a 10 Hz thinning; and
+      * **274 of 274 inside the radar image's playable silhouette**, where a
+        random coordinate lands inside about a third of the time.
+
+    `tests/test_positions.py` is the standing check.  Only the plant is read.
+    `Bomb_Defuser` actors carry transforms too and nothing has measured them,
+    so nothing here looks at them -- an unmeasured coordinate drawn on a map is
+    indistinguishable from a decoded one, which is the whole reason this
+    function has a docstring this long.
+    """
+    plants: list[tuple[int, float, float, float]] = []
+    for actor_guid, archetype in archetypes.items():
+        if not archetype.startswith(SPIKE_ARCHETYPE):
+            continue
+        location = spawn_locations.get(actor_guid)
+        seen = first_seen.get(actor_guid)
+        if location is None or seen is None:
+            continue
+        plants.append((round(seen * 1000.0), location[0], location[1], location[2]))
+    plants.sort()
+    return plants
 
 
 def codename_for(archetype_path: str) -> str:
@@ -139,6 +197,10 @@ class Extraction:
     # are the only kind that ever moves.  See vrfview.abilities.
     spawns: list = field(default_factory=list)
     ability_positions: dict[int, Track] = field(default_factory=dict)
+    # Where each spike was planted: (t_ms, x, y, z), one per `TimedBomb` spawn.
+    # See SPIKE_ARCHETYPE and _plants_from for why these are the plant and not
+    # merely an actor that happens to spawn nearby.
+    plants: list[tuple[int, float, float, float]] = field(default_factory=list)
     build: str = ""
     blocks: int = 0
     hz: int = POSITION_HZ
@@ -172,6 +234,8 @@ class Extraction:
                 f"{len(self.ability_positions)} of them with a track and "
                 f"{located} with a spawn coordinate"
             )
+        if self.plants:
+            extra += f"; {len(self.plants)} spike plants located"
         return (
             f"{self.build}: {self.samples:,} positions for "
             f"{len(self.positions)} player actors at {self.hz} Hz, thinned from "
@@ -217,6 +281,11 @@ def extract(
     out.blocks = sum(1 for _ in vrf.data_blocks(kinds=(REPLAYDATA,)))
 
     out.spawns = abilities.spawns_from(
+        decoded.archetypes,
+        decoded.first_seen,
+        decoded.spawn_locations,
+    )
+    out.plants = _plants_from(
         decoded.archetypes,
         decoded.first_seen,
         decoded.spawn_locations,
@@ -355,6 +424,7 @@ def attach(
     replay.ability_tracks = found.ability_positions
     _name_pawns(replay, found.codenames)
     _name_casts(replay, found.spawns)
+    _place_spike(replay, found.plants)
     if options.cache:
         positioncache.write(path, sidecar_for(replay, found))
     return replay
@@ -383,6 +453,7 @@ def sidecar_for(replay: Replay, found: Extraction) -> positionfile.Sidecar:
         hz=found.hz,
         ability_spawns={s.actor_id: (s.path, s.t_ms, s.location) for s in found.spawns},
         ability_tracks=found.ability_positions,
+        plants=found.plants,
     )
 
 
@@ -418,6 +489,11 @@ def sidecar_of(replay: Replay) -> positionfile.Sidecar:
         # Not reconstructible from a loaded replay; see the docstring.
         ability_spawns={},
         ability_tracks=replay.ability_tracks,
+        # The plants *are* reconstructible, and the asymmetry is the point: a
+        # cast's archetype path is consumed by the grouping and gone, whereas a
+        # plant's coordinate lands on the event itself and stays there.  So
+        # this half of a round trip is lossless where the ability half is not.
+        plants=_plants_of(replay),
     )
 
 
@@ -476,7 +552,54 @@ def _apply_sidecar(
             },
         ),
     )
+    # Re-paired rather than read back paired, for the reason the casts are
+    # regrouped: which event a coordinate belongs to is a reading, and a v3
+    # cache simply has no plants to re-pair.
+    _place_spike(replay, stored.plants)
     return True
+
+
+def _place_spike(replay: Replay, plants: list[tuple[int, float, float, float]]) -> None:
+    """
+    Give each plant event the coordinate the plant actor spawned at, in place.
+
+    Paired by time and nothing else, because there is nothing else to pair on:
+    a `spikePlanted` event carries no arguments.  The pairing is safe anyway --
+    a round holds at most one plant, and the two clocks differ by a constant
+    8..15 ms across the whole library, so `PLANT_PAIR_MS` is three orders of
+    magnitude clear of a round boundary.  A plant with no spawn within that
+    window keeps `location=None` and is drawn nowhere; it never falls back to
+    the nearest one it can find.
+
+    `replace`, not a fresh `SpikeEvent` listing every field, for the reason
+    `_name_pawns` gives: rebuilding a frozen record by hand silently drops any
+    field added to it since.
+    """
+    if not plants or not replay.spike:
+        return
+    unused = sorted(plants)
+    placed: list[SpikeEvent] = []
+    for event in replay.spike:
+        if event.kind != "planted" or not unused:
+            placed.append(event)
+            continue
+        best = min(unused, key=lambda plant: abs(plant[0] - event.t_ms))
+        if abs(best[0] - event.t_ms) > PLANT_PAIR_MS:
+            placed.append(event)
+            continue
+        # Consumed, so two plants in one capture can never share a coordinate.
+        unused.remove(best)
+        placed.append(replace(event, location=(best[1], best[2], best[3])))
+    replay.spike = placed
+
+
+def _plants_of(replay: Replay) -> list[tuple[int, float, float, float]]:
+    """The plant coordinates a replay is already carrying, in the stored shape."""
+    return [
+        (event.t_ms, *event.location)
+        for event in replay.spike
+        if event.location is not None
+    ]
 
 
 def _name_casts(replay: Replay, spawns: list) -> None:

@@ -26,6 +26,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import type { Player, Replay, Round } from "../api/types";
+import { formatRecorded } from "../model/format";
 import { sideOf } from "../model/synthetic";
 import { glyphs } from "../views/icons";
 import { MapStage } from "../views/MapStage";
@@ -183,11 +184,10 @@ function Casts({ replay }: { replay: Replay }) {
                 <td>{cast.identity}</td>
                 <td className="numeric">{cast.slot}</td>
                 <td>
-                  {/* Riot's name where it joins -- X and C only -- and the name
-                      read out of the archetype path otherwise. Q and E vary by
-                      agent, so preferring one would be a coin flip. */}
+                  {/* Riot's name where it joins and the name read out of the
+                      archetype path otherwise -- never annotated as internal,
+                      which was a note to whoever built the decoder. */}
                   {cast.published_name ?? cast.internal_name}
-                  {cast.published_name ? null : <span className="muted"> (internal)</span>}
                 </td>
                 <td className="numeric muted">
                   {cast.travel_uu === null
@@ -320,7 +320,11 @@ export function ViewerPage() {
           <Button label="BACK" icon={glyphs.back} size="sm" />
         </Link>
         <span className="viewer-title">{replay.map_name || replay.map_path}</span>
-        <span className="viewer-sub mono">{replay.recorded_utc || replay.match_id}</span>
+        {/* Written in the reader's own zone. This was the raw ISO instant,
+            microseconds and UTC offset and all. */}
+        <span className="viewer-sub">
+          {replay.recorded_utc ? formatRecorded(replay.recorded_utc) : replay.match_id}
+        </span>
         <div className="spacer" />
       </header>
       <main id="main" className="viewer" tabIndex={-1}>

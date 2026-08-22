@@ -27,8 +27,8 @@
 import type { Player, Weapon } from "../api/types";
 import type { ReplayModel } from "../model/replay";
 import type { Snapshot } from "../model/state";
-import type { Side, Vitals } from "../model/synthetic";
-import { vitalsAt, weaponArt } from "../model/synthetic";
+import type { Side, SlotState, Vitals } from "../model/synthetic";
+import { slotStateAt, vitalsAt, weaponArt } from "../model/synthetic";
 import { Icon, glyphs } from "./icons";
 import { usePlayback } from "./playback";
 
@@ -61,8 +61,11 @@ export function RosterPanel({
       aria-label={`${side} roster`}
     >
       <header className="roster-head">
+        {/* The spike for the attackers and the shield for the defenders.
+            Both were the shield, which is the defender's mark and reads as
+            exactly backwards on ATK. */}
         <span className="roster-side">
-          <Icon glyph={glyphs.side} />
+          <Icon glyph={side === "ATK" ? glyphs.atk : glyphs.def} />
           {side}
         </span>
         <button
@@ -76,7 +79,9 @@ export function RosterPanel({
           title={`${hidden ? "Show" : "Hide"} ${side} on the map`}
           onClick={() => toggleTeam(team)}
         >
-          <Icon glyph={glyphs.filter} />
+          {/* The glyph flips with the state, so which sides are hidden is
+              readable across the whole page without hovering either one. */}
+          <Icon glyph={hidden ? glyphs.hidden : glyphs.shown} />
         </button>
         <span className="roster-score numeric">{score}</span>
       </header>
@@ -89,6 +94,14 @@ export function RosterPanel({
             vitals={vitalsAt(model, snap, player.actor_id)}
             alive={snap.alive.has(player.actor_id)}
             weapons={weapons}
+            slots={
+              new Map(
+                player.abilities.map((ability) => [
+                  ability.slot,
+                  slotStateAt(model, snap, player.actor_id, ability.slot),
+                ]),
+              )
+            }
           />
         ))}
       </div>
@@ -104,16 +117,67 @@ export function RosterPanel({
  * dims the accent, which reads as *this player is out* where an empty card
  * reads as *this player is missing*.
  */
+/**
+ * Where the hover card should sit for a roster card, in canvas coordinates.
+ *
+ * `MarkerTip` is positioned inside `.stage-canvas`, and a roster card is in a
+ * different column of the arena, so this is a deliberate translation rather
+ * than a lookup: vertically the card's own middle, horizontally the canvas
+ * edge on this roster's side, both clamped to stay inside the canvas.
+ *
+ * Returns null when there is no canvas -- the document-shaped page for a
+ * capture with no positions has rosters and no stage -- and `MarkerTip` then
+ * parks itself as it always did.
+ */
+function tipAnchor(card: HTMLElement): { x: number; y: number } | null {
+  const canvas = document.querySelector(".stage-canvas");
+  if (canvas === null) {
+    return null;
+  }
+  const stage = canvas.getBoundingClientRect();
+  if (stage.width === 0 || stage.height === 0) {
+    return null;
+  }
+  const box = card.getBoundingClientRect();
+  const onTheLeft = box.left < stage.left;
+  const x = onTheLeft ? TIP_EDGE_PX : stage.width - TIP_WIDTH_PX - TIP_EDGE_PX;
+  const middle = box.top + box.height / 2 - stage.top;
+  const y = Math.max(
+    TIP_EDGE_PX,
+    Math.min(stage.height - TIP_HEIGHT_PX - TIP_EDGE_PX, middle - TIP_HEIGHT_PX / 2),
+  );
+  return { x: Math.max(0, x), y: Math.max(0, y) };
+}
+
+/*
+ * The tip's own box, restated here because it is drawn by CSS and read by
+ * arithmetic.  `MarkerTip` cannot be measured before it exists, and measuring
+ * it after would move it on the frame after it appeared.
+ */
+const TIP_WIDTH_PX = 212;
+const TIP_HEIGHT_PX = 180;
+const TIP_EDGE_PX = 12;
+
 export function PlayerCard({
   player,
   vitals,
   alive,
   weapons,
+  slots,
 }: {
   player: Player;
   vitals: Vitals;
   alive: boolean;
   weapons: Weapon[] | undefined;
+  /**
+   * Per-slot charge state, computed by the parent because it has the snapshot.
+   *
+   * Deliberately **not** a field on `Snapshot`: that record is serialised
+   * field-for-field against `tests/golden/` by `parity.test.ts`, so a new
+   * member needs a Python counterpart, a regenerated golden and a
+   * `make-golden --check` pass in two languages -- for a card decoration.
+   */
+  slots?: Map<string, SlotState>;
 }) {
   const hovered = usePlayback((state) => state.hovered === player.actor_id);
   const selected = usePlayback((state) => state.selected === player.actor_id);
@@ -130,8 +194,29 @@ export function PlayerCard({
   return (
     <article
       className={classes.join(" ")}
-      onMouseEnter={() => usePlayback.setState({ hovered: player.actor_id })}
-      onMouseLeave={() => usePlayback.setState({ hovered: null })}
+      /*
+        Hovering a card raises the same tooltip a marker does, and it has to
+        appear *beside the card*.  This used to set `hovered` and not
+        `hoveredAt`, so `MarkerTip` fell back to parking itself in the stage's
+        bottom-left corner -- hundreds of pixels from the avatar being pointed
+        at, across the whole map and back.
+
+        The tip is a child of `.stage-canvas`, which keeps the viewer's
+        `overflow: hidden` safe, so the coordinate is worked out in the
+        canvas's own frame: the card's vertical middle, and horizontally
+        whichever edge of the canvas this roster is against.  `tipAnchor`
+        clamps both, so a card at the very top or bottom of a tall roster still
+        raises a tip that is entirely on screen.
+      */
+      onMouseEnter={(event) =>
+        usePlayback.setState({
+          hovered: player.actor_id,
+          hoveredAt: tipAnchor(event.currentTarget),
+        })
+      }
+      // Both, or the tip freezes at the last card's position and the next
+      // marker hover inherits it.
+      onMouseLeave={() => usePlayback.setState({ hovered: null, hoveredAt: null })}
     >
       {/*
         `icon_url` and not `portrait_url`.  Riot publishes both: `fullPortrait`
@@ -181,17 +266,40 @@ export function PlayerCard({
               the key is not named.  `art.AgentArt.ability` is where that
               refusal lives.
             */}
-            {player.abilities.map((ability) =>
-              ability.icon_url ? (
-                <img
+            {player.abilities.map((ability) => {
+              const state = slots?.get(ability.slot);
+              if (!ability.icon_url) {
+                return null;
+              }
+              /*
+                A used charge is *marked*, never removed.
+
+                Removing the icon would state exhaustion, and the model cannot
+                say that: a cast groups every use of a slot in a round into one
+                record, so it knows the slot was used and never how often.  Dim
+                and desaturate say "unavailable"; the rule under it is what
+                reads as "spent" at fourteen pixels, where a strikethrough is
+                invisible.  Both states occupy the same box, because a card
+                that changes length four times a round is worse than the fault.
+              */
+              const spent = state?.used ?? false;
+              const why = spent
+                ? state?.usedIsReal
+                  ? `${ability.name} — used this round`
+                  : `${ability.name} — simulated as used this round`
+                : ability.name;
+              return (
+                <span
                   key={ability.slot}
-                  className="ability-icon"
-                  src={ability.icon_url}
-                  alt=""
-                  title={ability.name}
-                />
-              ) : null,
-            )}
+                  className={spent ? "ability-slot is-used" : "ability-slot"}
+                >
+                  <img className="ability-icon" src={ability.icon_url} alt="" title={why} />
+                  {state && state.charges > 1 ? (
+                    <b className="ability-charges">{state.left}</b>
+                  ) : null}
+                </span>
+              );
+            })}
           </span>
           <div className="spacer" />
           {gun?.icon_url ? (

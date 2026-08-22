@@ -39,6 +39,7 @@ from vrfserve import app as app_mod
 from vrfserve import ids, schema, wire
 from vrfserve.app import Settings, create_app
 from vrfview import positionfile, sight, tracks
+from vrfview.abilities import AbilityCast
 from vrfview.art import ArtCache, Callout, MapArt, Transform
 from vrfview.model import Loadout, Player, Position, Replay, Round, Track
 
@@ -979,3 +980,41 @@ class BackgroundPreparation(unittest.TestCase):
             ):
                 client.post(f"/api/replays/{replay_id}/decode")
         assert resumed.call_count == 1
+
+
+class AbilityCastsCarryTheirCaster(unittest.TestCase):
+    """
+    `actor_id` on a cast is the *ability actor*, and no player has it.
+
+    That is why `player_actor_id` exists: the browser's round timeline looked
+    the side up by `actor_id`, found nobody, and drew every ability row with no
+    side at all -- silently, because a missing side is a missing tint rather
+    than an error.  The join refuses an ambiguous codename instead of picking a
+    player, which is the property worth pinning.
+    """
+
+    def _doc(self, players, casts):
+        replay = Replay()
+        replay.players = players
+        replay.ability_casts = casts
+        return wire.replay_doc(replay, "id", None)
+
+    def test_a_unique_codename_names_its_caster(self):
+        players = [
+            Player(actor_id=11, team="A", codename="Hunter"),
+            Player(actor_id=22, team="B", codename="Gumshoe"),
+        ]
+        casts = [AbilityCast(t_ms=1, codename="Hunter", slot="Q", name="Reveal_Bolt")]
+        doc = self._doc(players, casts)
+        assert doc["ability_casts"][0]["player_actor_id"] == 11
+        # And it is not the ability actor's own id, which is the whole point.
+        assert doc["ability_casts"][0]["actor_id"] != 11
+
+    def test_a_shared_codename_is_refused_rather_than_guessed(self):
+        players = [
+            Player(actor_id=11, team="A", codename="Hunter"),
+            Player(actor_id=22, team="B", codename="Hunter"),
+        ]
+        casts = [AbilityCast(t_ms=1, codename="Hunter", slot="Q", name="Reveal_Bolt")]
+        doc = self._doc(players, casts)
+        assert doc["ability_casts"][0]["player_actor_id"] is None

@@ -56,6 +56,33 @@ POINT_BLANK_UU = 100.0
 # `clean_packet_rate` is blind to both.
 WEAPON_RANGE_UU = 5000.0
 
+# How near a player the planted spike has to be, and how often.  A spike is
+# planted at the planter's feet, so across the library the median gap is 69.5
+# uu and 94.5% are inside 100.  It is a share rather than a maximum because
+# `Track.at` refuses to interpolate across a long gap: at a few plants the
+# planter has no sample at all and the nearest other player is a room away,
+# which is a fact about the 10 Hz thinning rather than about the coordinate.
+PLANT_NEAR_PLAYER_UU = 100.0
+PLANT_NEAR_PLAYER_SHARE = 0.85
+
+
+def infer_with_positions():
+    """
+    The reference capture, decoded, with its plants paired onto its events.
+
+    `cache=False` deliberately.  A ground-truth measurement that reads the
+    machine's cache passes or fails on what some earlier run happened to leave
+    there -- and a sidecar written before the plants were measured is a real,
+    readable v3 file with no plants in it, so this would fail on a developer's
+    machine and pass on a clean one.  The decode is seconds; the ambiguity is
+    not worth saving them.
+    """
+    from vrfview import infer, loader, tracks
+
+    replay = infer.annotate(loader.load(DEMO_12_10))
+    tracks.attach(replay, DEMO_12_10, tracks.Options(decode=True, cache=False))
+    return replay
+
 
 def _signed(degrees):
     """An angle in 0..360 as one in -180..180.  Positive pitch is looking up."""
@@ -253,4 +280,118 @@ class SpawnLocationsAreRealCoordinates(unittest.TestCase):
         worst = max(gaps)
         assert worst <= SPAWN_GAP_UU, (
             f"a spawn point is {worst:.0f} uu from its own first sample"
+        )
+
+
+class SpikePlantsAreRealCoordinates(unittest.TestCase):
+    """
+    The check that let the spike have a place on the map for the first time.
+
+    A `spikePlanted` event carries no arguments at all -- `args` is just the
+    type ID -- so for a long time the plant's coordinate was taken to be one of
+    the things a `.vrf` simply does not hold.  It holds it twice removed:
+    planting spawns a `/Game/GameModes/Bomb/TimedBomb` actor, `csharpdecode`
+    has carried every actor's spawn transform since it was written, and
+    `tracks` kept the ones under `/Game/Characters/` and dropped the rest.
+
+    Three facts settled that these are the plant rather than an actor that
+    happens to appear nearby, and none of them could be satisfied by a
+    decoding bug.  Measured over the 21 playable captures, 274 plants:
+
+      * the TimedBomb spawn count equals the plant count in **every** capture,
+        and all 274 pair one-to-one with none left over;
+      * the pairing offset is a constant +8..15 ms -- the decoder's own time
+        base, the same offset the first actors of the match are seen at, not
+        jitter;
+      * the coordinate is a median 69.5 uu from some player's own decoded
+        position at that instant and 94.5% are within 100 uu, which is what
+        "planted at the planter's feet" looks like through a 10 Hz thinning;
+      * and **274 of 274 land inside the radar image's playable silhouette**,
+        where a coordinate drawn at random lands inside about a third of the
+        time.
+
+    Only the plant is read.  `Bomb_Defuser` actors carry transforms too and
+    nothing has measured them, so nothing reads them: an unmeasured coordinate
+    drawn on a map is indistinguishable from a decoded one.
+    """
+
+    decoded: ClassVar = None
+    replay: ClassVar = None
+
+    @classmethod
+    def setUpClass(cls):
+        from vrfview import csharpdecode, infer, loader
+
+        try:
+            csharpdecode.locate(None)
+        except csharpdecode.DecodeError as exc:
+            raise unittest.SkipTest(str(exc)) from exc
+        cls.decoded = csharpdecode.run(DEMO_12_10)
+        cls.replay = infer.annotate(loader.load(DEMO_12_10))
+
+    def _plants(self):
+        from vrfview import tracks
+
+        return tracks._plants_from(
+            self.decoded.archetypes,
+            self.decoded.first_seen,
+            self.decoded.spawn_locations,
+        )
+
+    def test_every_plant_event_has_exactly_one_plant_actor(self):
+        """
+        Counted, not matched: a spare actor would mean the archetype is wrong.
+
+        Pairing by nearest time can always find *something*, so the count is
+        the check that cannot be fudged -- if `TimedBomb` named anything other
+        than the planted spike there would be a different number of them.
+        """
+        events = [s for s in self.replay.spike if s.kind == "planted"]
+        assert len(self._plants()) == len(events)
+
+    def test_the_two_clocks_differ_by_a_constant_and_not_by_noise(self):
+        from vrfview import tracks
+
+        events = sorted(s.t_ms for s in self.replay.spike if s.kind == "planted")
+        offsets = [
+            plant[0] - t_ms
+            for plant, t_ms in zip(sorted(self._plants()), events, strict=True)
+        ]
+        assert offsets, "the reference capture has no plant"
+        # A time base, so every offset is small and positive and they agree
+        # with each other; noise would straddle zero and spread.
+        assert min(offsets) >= 0
+        assert max(offsets) <= tracks.PLANT_PAIR_MS
+        assert max(offsets) - min(offsets) <= 50
+
+    def test_a_plant_sits_where_somebody_was_standing(self):
+        """
+        A spike is planted at the planter's feet, and every player's position
+        at that instant is already known -- so the plant coordinate has to fall
+        on one of them.  Not all of them: `Track.at` refuses to interpolate
+        across a long gap, so at some plants the planter has no sample and the
+        nearest *other* player is genuinely far away.  That is a property of
+        the thinning, which is why this is a share rather than a maximum.
+        """
+
+        replay = infer_with_positions()
+        events = [s for s in replay.spike if s.kind == "planted"]
+        assert events, "the reference capture has no plant"
+        assert all(s.placed for s in events), "a plant was not paired"
+
+        near = 0
+        for event in events:
+            x, y, _z = event.location
+            gaps = [
+                math.dist((pos.x, pos.y), (x, y))
+                for player in replay.players
+                if (track := replay.positions.get(player.actor_id)) is not None
+                and (pos := track.at(event.t_ms)) is not None
+            ]
+            if gaps and min(gaps) <= PLANT_NEAR_PLAYER_UU:
+                near += 1
+        share = near / len(events)
+        assert share >= PLANT_NEAR_PLAYER_SHARE, (
+            f"only {share:.0%} of plants are within {PLANT_NEAR_PLAYER_UU:.0f} uu "
+            f"of any player's own position at that instant"
         )

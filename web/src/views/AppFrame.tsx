@@ -28,6 +28,7 @@
 
 import { Link, Outlet, useLocation } from "react-router-dom";
 
+import { PRODUCT_NAME, PRODUCT_TAGLINE } from "./brand";
 import { Wordmark } from "./icons";
 
 /**
@@ -64,9 +65,9 @@ export function AppFrame() {
           <Link to="/" className="brand">
             <Wordmark />
             <span>
-              <span className="brand-name">Replay Analyzer</span>
+              <span className="brand-name">{PRODUCT_NAME}</span>
               <br />
-              <span className="brand-sub">Valorant &middot; local captures</span>
+              <span className="brand-sub">{PRODUCT_TAGLINE}</span>
             </span>
           </Link>
           <Crumbs />

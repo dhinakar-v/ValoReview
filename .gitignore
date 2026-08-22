@@ -241,3 +241,9 @@ csharp/**/obj/
 # specs are committed; what they produce is not.
 web/e2e/results/
 web/e2e/report/
+
+# UI reference frames and feedback screenshots. They are local working
+# material -- reference captures of the game's own interface and annotated
+# screenshots of this one -- so the folder and the notes beside it are kept
+# out of the tree along with the .md that indexes them.
+images/

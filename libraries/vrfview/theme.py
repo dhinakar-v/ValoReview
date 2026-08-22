@@ -79,9 +79,24 @@ ACCENT_OK = "#3ecf8e"
 ACCENT_WARN = "#f5a623"
 
 ULT = "#ffd166"
-SPIKE_ARMED = "#ff5252"
+
+# The spike is amber, and that is a constraint rather than a taste.
+#
+# These three were picked when the team pair was blue and coral, and an armed
+# spike could be red without colliding with anything.  Team A is now Valorant's
+# attacker red (#ff4655), and the old SPIKE_ARMED was #ff5252 -- **12 RGB
+# away**, inside the 36 that `minimap.spec.ts` counts as "this pixel is a team
+# marker".  So a planted spike drawn in it was not merely hard to tell from an
+# attacker; it was arithmetically the same colour, and the pixel suite would
+# have counted every one of its pixels as a player drawn somewhere no player
+# was.  Amber is 90 away from team A and 269 from team B, reads as armed rather
+# than as either side, and is what Valorant's own planted-spike UI uses.
+#
+# The three stay far apart from each other too (47 between armed and boom), so
+# the rail tick that carries one of them says which event it is.
+SPIKE_ARMED = "#ff9f45"
 SPIKE_SAFE = "#3ecf8e"
-SPIKE_BOOM = "#ff9f45"
+SPIKE_BOOM = "#ff7043"
 PLAYHEAD = "#ffffff"
 ACCENT = "#7c8cff"
 

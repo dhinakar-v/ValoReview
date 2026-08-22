@@ -73,10 +73,10 @@ class CardDoc(BaseModel):
     map_name: str
     map_key: str
     listview_url: str | None
+    # The instant and the length only: how they are written is the browser's,
+    # in the reader's own zone.  See wire.card.
     recorded_utc: str | None
-    recorded: str
     length_ms: int
-    duration: str
     rounds: int
     players: int
     size_bytes: int
@@ -278,6 +278,13 @@ class SpikeDoc(BaseModel):
     t_ms: int
     kind: str
     round_no: int
+    # Decoded, where t_ms and kind are read: a spikePlanted event carries no
+    # arguments, and the coordinate comes from the TimedBomb actor the plant
+    # spawns.  See vrfview.tracks._plants_from for the measurement that
+    # established these are the plant and not an actor that appears nearby.
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
 
 
 class PlacementDoc(BaseModel):
@@ -312,6 +319,10 @@ class AbilityCastDoc(BaseModel):
     round_no: int
     actor_id: int
     codename: str
+    # The caster, or null where two players share the agent.  `actor_id` above
+    # is the ability actor's id and no player has it, which is what left every
+    # ability row in the round timeline sideless.  See wire.ability_cast.
+    player_actor_id: int | None = None
     agent: str
     identity: str
     slot: str
@@ -326,6 +337,12 @@ class AbilityCastDoc(BaseModel):
     # pawn moved: no ability publishes a range anywhere.
     travel_uu: float | None
     travel_note: str | None
+    # Looked up in `vrfview.abilityfacts`, not read and not measured: no
+    # ability's radius is published by Riot, by val-content-v1 or by the
+    # manifest.  `range_source` names where the figure came from, and the
+    # browser draws it dashed under a layer labelled `RANGE (SIM)`.
+    range_uu: float | None = None
+    range_source: str | None = None
     # Every non-moving actor this cast spawned, at the coordinate its channel
     # opened at.
     placements: list[PlacementDoc]

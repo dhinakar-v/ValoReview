@@ -145,18 +145,13 @@ class MatchCard:
     def positions_note(self) -> str:
         return positions_note(self.build)
 
-    @property
-    def duration(self) -> str:
-        """MM:SS, as the brief's card asks for it."""
-        seconds = self.length_ms // 1000
-        return f"{seconds // 60:02d}:{seconds % 60:02d}"
-
-    @property
-    def recorded(self) -> str:
-        """`DD MMM YYYY - HH:MM`, or a plain unknown when the header had none."""
-        if self.recorded_utc is None:
-            return "date not in file"
-        return self.recorded_utc.strftime("%d %b %Y - %H:%M")
+    # There were a `duration` and a `recorded` here, formatting `length_ms` and
+    # `recorded_utc` into `MM:SS` and `DD MMM YYYY - HH:MM` for a card to print
+    # directly.  They are gone: the browser is the only reader, it already had
+    # to format `recorded_utc` for the viewer header, and two formatters over
+    # one field is how the match list and the viewer came to write the same
+    # instant two different ways.  `web/src/model/format.ts` owns it now, and
+    # can write the reader's own zone -- which a `strftime` in UTC here cannot.
 
     @property
     def result(self) -> str:

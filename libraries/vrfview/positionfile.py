@@ -40,15 +40,17 @@ from pathlib import Path
 from vrfview.model import POSITION_HZ, Position, Track
 
 FORMAT = "vrf-positions"
-VERSION = 3
+VERSION = 4
 # Every version this module can still read.  A v1 file is a real sidecar
 # written by `vrf-to-json --positions` before abilities were decoded, and it is
 # not wrong -- it simply says nothing about them.  A v2 file predates the spawn
 # transform being measured, so its casts have a time and no coordinate, which
-# is exactly the state the whole project was in when it was written.  Refusing
-# either would throw away a whole decode over a field it was never asked to
+# is exactly the state the whole project was in when it was written.  A v3 file
+# predates the spike plant being measured, so its plants have a time and no
+# coordinate -- again exactly the state the project was in.  Refusing any of
+# them would throw away a whole decode over a field it was never asked to
 # carry.
-READABLE = (1, 2, 3)
+READABLE = (1, 2, 3, 4)
 SUFFIX = ".positions.json"
 
 # The order the columns are written in, and the order Position takes them.
@@ -60,6 +62,9 @@ COLUMNS = ("t", "x", "y", "z", "yaw", "pitch")
 # whose coordinate is genuinely unknown, not a defaulted zero.
 _SPAWN_FIELDS = 2
 _SPAWN_FIELDS_LOCATED = 5
+
+# A plant is [t_ms, x, y, z] or it is not stored at all.
+_PLANT_FIELDS = 4
 
 
 class PositionFileError(Exception):
@@ -87,6 +92,12 @@ class Sidecar:
         field(default_factory=dict)
     )
     ability_tracks: dict[int, Track] = field(default_factory=dict)
+    # Where each spike was planted: (t_ms, x, y, z), one per plant, since
+    # version 4.  Stored as coordinates rather than as placed events for the
+    # same reason `ability_spawns` is stored raw -- pairing a plant to an event
+    # is a reading, and `tracks._place_spike` should get to redo it on every
+    # load rather than have an old reading baked into the cache.
+    plants: list[tuple[int, float, float, float]] = field(default_factory=list)
 
     @property
     def samples(self) -> int:
@@ -141,6 +152,9 @@ def to_document(sidecar: Sidecar) -> dict:
             str(actor_id): to_columns(track)
             for actor_id, track in sorted(sidecar.ability_tracks.items())
         },
+        # [t_ms, x, y, z] per plant.  A capture whose plants were never located
+        # writes an empty list, which is what every v1..v3 file reads back as.
+        "spike_plants": [list(plant) for plant in sorted(sidecar.plants)],
     }
 
 
@@ -201,7 +215,23 @@ def read(path: str | Path) -> Sidecar:
             for raw_id, entry in (doc.get("ability_spawns") or {}).items()
         },
         ability_tracks=ability_tracks,
+        plants=[
+            _plant(src, entry) for entry in (doc.get("spike_plants") or [])
+        ],
     )
+
+
+def _plant(src: Path, entry) -> tuple[int, float, float, float]:
+    """
+    One stored plant back, or refuse the file.
+
+    Four fields or nothing: unlike an ability spawn there is no short form,
+    because a plant with no coordinate is simply absent from the list.
+    """
+    if not isinstance(entry, (list, tuple)) or len(entry) != _PLANT_FIELDS:
+        msg = f"{src}: spike plant {entry!r} is not [t_ms, x, y, z]"
+        raise PositionFileError(msg)
+    return (int(entry[0]), float(entry[1]), float(entry[2]), float(entry[3]))
 
 
 def _spawn(

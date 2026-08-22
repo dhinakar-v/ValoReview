@@ -18,6 +18,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Card, Library } from "../api/types";
+import { NO_DATE } from "../model/format";
 import { MatchListPage } from "./MatchList";
 
 const CARD: Card = {
@@ -28,10 +29,10 @@ const CARD: Card = {
   map_name: "Haven",
   map_key: "Haven",
   listview_url: null,
-  recorded_utc: null,
-  recorded: "21 Aug 2026 - 18:02",
+  // The instant and the length, never a pre-formatted rendering: the browser
+  // writes both, in the reader's own zone.  See `model/format.ts`.
+  recorded_utc: "2026-08-21T18:02:00+00:00",
   length_ms: 1_571_721,
-  duration: "26:11",
   rounds: 15,
   players: 10,
   size_bytes: 49_283_746,
@@ -112,5 +113,26 @@ describe("the match list", () => {
   it("says where it looked when the library is empty", async () => {
     show({ ...LIBRARY, cards: [] });
     expect(await screen.findByText(/No replays in Demos/)).toBeTruthy();
+  });
+
+  /*
+    The four card facts used to be one run-on string the server had formatted,
+    at one weight, on a line that clipped -- so the round count was the first
+    thing to vanish and nothing said which number was which.  Labelled and
+    separate now, and the date is written by the browser in the reader's zone
+    rather than by `strftime` in UTC on the server.
+  */
+  it("labels each card fact and writes the length itself", async () => {
+    show();
+    // All of them, because the fixture library holds more than one card.
+    expect(await screen.findAllByText("26:11")).toBeTruthy();
+    expect(screen.getAllByText("rounds").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("players").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("15").length).toBeGreaterThan(0);
+  });
+
+  it("says so plainly where the container carried no date", async () => {
+    show({ ...LIBRARY, cards: [{ ...CARD, recorded_utc: null }] });
+    expect(await screen.findByText(NO_DATE)).toBeTruthy();
   });
 });

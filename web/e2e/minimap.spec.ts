@@ -18,13 +18,16 @@
  * keeps saying it will not make and which looks entirely plausible on screen.
  */
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import type { Transform } from "../src/api/types";
+import type { ReplayModel } from "../src/model/replay";
 import { decodeMask, cone, forwardUv, uvRadius, type SightSettings } from "../src/model/sight";
-import { positionOf, stateAt } from "../src/model/state";
-import { applyTransform, placeSquare, uvToPixels } from "../src/model/transform";
+import { positionOf, spikeLocation, stateAt } from "../src/model/state";
+import { applyTransform, placeSquare, uvToPixels, type Box } from "../src/model/transform";
 import {
   firstCrowdedEvent,
+  momentAt,
   openFirstPlayable,
   palette,
   parseColour,
@@ -32,8 +35,9 @@ import {
   readCanvas,
   rgbDistance,
   stepToEvent,
-  type Pixels,
   toggleLayer,
+  type Moment,
+  type Pixels,
 } from "./harness";
 
 /**
@@ -68,6 +72,140 @@ function colouredPixels(image: Pixels, colours: Array<[number, number, number]>)
     }
   }
   return found;
+}
+
+/**
+ * The biggest 8-connected run of pixels in a scattered set.
+ *
+ * Deliberately not a count of the whole set: see the call site.  Eight-connected
+ * rather than four, because a triangle's antialiased edge steps diagonally and a
+ * four-connected walk would report one marker as several.
+ */
+function largestPatch(pixels: Array<[number, number]>): number {
+  const left = new Set(pixels.map(([x, y]) => `${x},${y}`));
+  let biggest = 0;
+  for (const start of [...left]) {
+    if (!left.has(start)) {
+      continue;
+    }
+    let size = 0;
+    const queue = [start];
+    left.delete(start);
+    while (queue.length > 0) {
+      const [x, y] = queue.pop()!.split(",").map(Number) as [number, number];
+      size += 1;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const key = `${x + dx},${y + dy}`;
+          if (left.delete(key)) {
+            queue.push(key);
+          }
+        }
+      }
+    }
+    biggest = Math.max(biggest, size);
+  }
+  return biggest;
+}
+
+interface Rect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function inside(rect: Rect, x: number, y: number): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+/**
+ * Where the clock pill covers the canvas, in the screenshot's own pixels.
+ *
+ * `.clock-pill` is `position: absolute` over the map, and while the spike is
+ * down it carries a `SPIKE DOWN` badge whose text *and* 1px border are
+ * `currentcolor` -- which is `--spike-armed`.  A Playwright element screenshot
+ * clips the page to the element's box rather than isolating it, so those ~210
+ * amber pixels are in the read of the canvas without a single one of them
+ * having been drawn on it.  They are the DOM saying the same true thing the
+ * marker says, so the count below steps over them rather than budgeting for
+ * them -- which is what let the budget tighten from 200 to 20.
+ */
+async function pillRect(page: Page, canvas: Locator): Promise<Rect | null> {
+  const pill = page.locator(".clock-pill");
+  if ((await pill.count()) === 0) {
+    return null;
+  }
+  const [over, under] = await Promise.all([pill.boundingBox(), canvas.boundingBox()]);
+  if (over === null || under === null) {
+    return null;
+  }
+  // A pixel of slack each way: both boxes are fractional and the screenshot is
+  // whole pixels, so a glyph's edge can land just outside the rounded box.
+  return {
+    left: over.x - under.x - 1,
+    top: over.y - under.y - 1,
+    right: over.x - under.x + over.width + 1,
+    bottom: over.y - under.y + over.height + 1,
+  };
+}
+
+/**
+ * How far a player's centre has to be for the spike to be visible under it.
+ *
+ * A marker is `AVATAR_PX / 2` of portrait plus a 2px ring, and its facing arrow
+ * reaches `FACING_LENGTH` beyond that -- 24 px in all at fit zoom -- and the
+ * spike triangle is 8 px tall.  So a player centred closer than 32 px has drawn
+ * pixels somewhere on the triangle, and the players draw after it.  34 is that
+ * sum with a little room, and it is deliberately not read from
+ * `MinimapCanvas` -- a test that imported the drawing's own constants would
+ * agree with the drawing however wrong the drawing was.
+ */
+const SPIKE_CLEARANCE = 34;
+
+/**
+ * A moment at which the spike is down and nobody is standing on it.
+ *
+ * The plant instant is never one: the planter is on the coordinate by
+ * definition, and this canvas draws players over the spike on purpose.  So walk
+ * the event times the transport can actually step to, and take the first at
+ * which `spikeLocation` -- the same function `drawSpike` asks -- returns a
+ * coordinate that every placeable player is clear of.
+ */
+function uncoveredPlant(
+  model: ReplayModel,
+  transform: Transform,
+  box: Box,
+): { at: { x: number; y: number }; moment: Moment } | null {
+  for (const tMs of model.replay.event_times) {
+    const snap = stateAt(model, tMs);
+    const at = spikeLocation(model, snap);
+    if (at === null) {
+      continue;
+    }
+    const moment = momentAt(model, tMs);
+    // `presses` is zero for a time the round chip already seeks to, and for one
+    // `momentAt` could not place in its round's own event list at all. Either
+    // way there is nothing to step, so it is not a moment this test can reach.
+    if (moment.presses === 0) {
+      continue;
+    }
+    const [su, sv] = applyTransform(transform, at.x, at.y);
+    const [sx, sy] = uvToPixels(box, su, sv);
+    const covered = model.replay.players.some((player) => {
+      const position = positionOf(snap, player.actor_id);
+      if (position === null) {
+        return false;
+      }
+      const [pu, pv] = applyTransform(transform, position.x, position.y);
+      const [px, py] = uvToPixels(box, pu, pv);
+      return Math.hypot(px - sx, py - sy) < SPIKE_CLEARANCE;
+    });
+    if (!covered) {
+      return { at, moment };
+    }
+  }
+  return null;
 }
 
 test.describe("the 2D minimap", () => {
@@ -253,5 +391,108 @@ test.describe("the 2D minimap", () => {
       }
     }
     expect(differing, "the same instant is drawn identically from either side").toBe(0);
+  });
+
+  /*
+    The planted spike is on the map, and this is the test that says so.
+
+    The failure this guards is the quiet one.  A marker that is computed, laid
+    out and then drawn nowhere -- because a coordinate never arrived, or a
+    colour resolved to the background, or the layer was gated on something that
+    is never true -- looks exactly like a round in which nobody planted.  That
+    is how `floorZ` lifted every player out of frame on four captures for nine
+    months while the ground rendered perfectly underneath.
+
+    So: seek to a moment at which the model says the spike is down, and require
+    amber pixels at the coordinate it says the plant is at.  `--spike-armed` is
+    the one colour on this canvas that is neither team's -- deliberately, it is
+    90 RGB from the attacker red it used to be 12 from -- so finding it is
+    unambiguous.
+
+    **Not the plant instant itself, and that is the point of `uncoveredPlant`.**
+    The spike draws *under* the players, which is a rule this canvas keeps on
+    purpose: a person hidden behind an object is the one thing it cannot afford
+    to lose.  At the millisecond of the plant the planter is by definition
+    standing on the spike -- measured at 2.2 px away on the reference capture --
+    so their portrait covers the triangle completely and there is no amber to
+    find.  That is the drawing behaving as designed, so the test moves to the
+    first later event in the same round at which nobody is near enough to cover
+    it, rather than the drawing moving to suit the test.
+  */
+  test("draws the spike where it was planted", async ({ page }) => {
+    const { model, art } = await openFirstPlayable(page);
+    const canvas = page.locator("canvas.minimap");
+
+    // `clientWidth`/`clientHeight`, not `boundingBox()`: those are the two
+    // numbers `MinimapCanvas` itself hands `placeSquare`, and they are whole
+    // pixels where the bounding box is fractional -- a third of a pixel of
+    // disagreement moves the box's side and with it every coordinate below.
+    const [width, height] = await canvas.evaluate((element) => [
+      element.clientWidth,
+      element.clientHeight,
+    ]);
+    const box = placeSquare(width, height);
+
+    const found = uncoveredPlant(model, art.transform, box);
+    // Every playable capture in the reference library has a located plant, but
+    // a library that had none -- or none the planter ever walks away from --
+    // should skip rather than fail: this is about the drawing.
+    test.skip(found === null, "no located plant this capture ever leaves uncovered");
+    const { at, moment } = found!;
+
+    // `Replay.event_times` includes every spike event, so `>>` lands on the
+    // chosen moment exactly rather than near it.
+    await stepToEvent(page, moment);
+
+    const image = await readCanvas(page, canvas);
+    // Within a pixel, never equal: an element screenshot clips the page to the
+    // element's *bounding box*, which is fractional (975.03 x 806.42 here), and
+    // rounds it out to whole raster pixels -- so the image is up to one pixel
+    // larger than the CSS box the canvas laid itself out in.  That is half a
+    // pixel of drift on a coordinate, against a `MARKER_REACH` of 26.
+    expect(
+      Math.max(Math.abs(image.width - width), Math.abs(image.height - height)),
+      "the screenshot is the box the moment was chosen against",
+    ).toBeLessThanOrEqual(1);
+    const [u, v] = applyTransform(art.transform, at.x, at.y);
+    const [x, y] = uvToPixels(box, u, v);
+
+    const colours = await palette(page);
+    const amber = parseColour(colours.spikeArmed!);
+    const overlay = await pillRect(page, canvas);
+    let near = 0;
+    const stray: Array<[number, number]> = [];
+    for (const [px, py] of colouredPixels(image, [amber])) {
+      if (overlay !== null && inside(overlay, px, py)) {
+        continue;
+      }
+      if (Math.hypot(px - x, py - y) <= MARKER_REACH) {
+        near += 1;
+      } else {
+        stray.push([px, py]);
+      }
+    }
+    expect(near, `spike at (${x.toFixed(1)}, ${y.toFixed(1)})`).toBeGreaterThan(20);
+    /*
+      And nowhere else -- but as the largest *patch* rather than as a total.
+
+      A count cannot say this.  Riot's own radar art has warm orange detail on
+      it, 33 to 41 pixels of it within tolerance of `--spike-armed` on the
+      reference capture, and turning the utility layer off *raises* that number
+      because ability markers had been covering some of it.  So the map's own
+      amber is a permanent floor that no budget can distinguish from a second
+      marker of the same size.
+
+      What the two failure modes this guards do have in common is a *patch*: a
+      marker at the wrong coordinate is a whole triangle somewhere else, and a
+      canvas drawn without clearing is a trail of them.  The map's noise is
+      scattered -- its biggest connected run is 14 pixels -- so the assertion is
+      that the plant is the biggest amber thing on the canvas, which needs no
+      threshold at all.
+    */
+    expect(
+      largestPatch(stray),
+      "an amber patch away from the plant, as large as the plant's own",
+    ).toBeLessThan(near);
   });
 });
