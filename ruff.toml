@@ -2,7 +2,7 @@ target-version = "py311"
 
 # Source roots: libraries/ holds the importable code, scripts/ the standalone
 # CLIs.  Neither is a package, so declaring them here keeps INP001 quiet and
-# keeps isort treating vrf_reader / vrfnet / vrfview as first-party.
+# keeps isort treating vrf_reader / vrfview / vrfserve as first-party.
 src = ["libraries", "scripts", "tests"]
 
 # RUFF DEFAULTS

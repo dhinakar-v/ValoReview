@@ -370,7 +370,7 @@ def dump_positions(vrf_path: str, out: Path, args) -> int:
     The imports are local, and deliberately so.  This module is the container
     layer: it reads chunks and knows nothing about the viewer.  Positions come
     out of the replication stream through `vrfview.tracks`, which sits two
-    layers up and pulls in the whole vrfnet decoder, so importing it at module
+    layers up and pulls in the position decoder, so importing it at module
     scope would make every `vrf-to-json` run pay for a decoder it almost never
     uses -- and would invert the layering the rest of the file keeps.
 

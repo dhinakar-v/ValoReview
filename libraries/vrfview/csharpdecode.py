@@ -3,7 +3,7 @@ The one decoder: run `csharp/VrfPositions` and read what it wrote.
 
 Why this replaced a pure-Python decode
 --------------------------------------
-`vrfnet` decodes the same stream and decodes it *correctly* -- the two agree on
+A Python port of the same net stack decoded this stream *correctly* -- the two agreed on
 every one of 10,544 compared samples, to the last bit of yaw and pitch -- but it
 takes about four minutes on a full match, because `bitreader` is backed by a
 Python int and the movement loop runs three million times.  The same work in C#
@@ -30,7 +30,7 @@ where the tests are, and none of it crossed the process boundary.  That is the
 same rule the sidecar follows, for the same reason -- the readings have already
 changed once.
 
-Imports no tkinter and no vrfnet, so it stays headless.
+Imports nothing that needs a display, so it stays headless.
 """
 
 from __future__ import annotations

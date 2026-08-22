@@ -378,9 +378,9 @@ def replay_doc(
         "has_abilities": replay.has_abilities,
         # Whether a decode *could* work, which is a different question from
         # whether one has happened. Handed in rather than worked out here:
-        # the answer is a membership test against the decoder's own branch
-        # table, which lives in `vrfnet`, and this module is the one place in
-        # the server that reaches neither a framework nor a decoder. One
+        # the answer is a membership test against `vrfnet`, which is the
+        # build table and nothing else now, and this module is the one place
+        # in the server that reaches neither a framework nor a decoder. One
         # authority -- `vrfhome.scan.positions_available` -- so a card and a
         # replay can never disagree about a capture.
         "positions_available": available,

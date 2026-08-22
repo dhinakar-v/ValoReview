@@ -13,7 +13,7 @@ ability spawns, and that channel names its archetype.
 
 So a cast is not *reported* by the file; it is *inferred from the actors it
 creates*, and this module is the parser for those paths and nothing else.  It
-imports no tkinter and no vrfnet for the same reason `model` and `state` do
+imports no decoder for the same reason `model` and `state` do
 not: path parsing is plain string work and has to stay testable headlessly.
 `vrfview.tracks` is the only thing that feeds it, exactly as it is the only
 bridge from the replication stream into the model.
@@ -65,7 +65,7 @@ carries positions is `ReceiveRemoteCharacterUpdates` and a thrown projectile
 is not a character.  So there is still **no arc**: a projectile has a start
 and an end and nothing in between, and nothing here may draw a curve.
 
-What there is now is a start.  `vrfnet.actors.read_new_actor` never read the
+What there is now is a start.  The old Python decoder never read the
 spawn transform -- it was searched for across 2,700 offset and scale
 combinations and not found -- but `csharp/VrfPositions` does, off the channel's
 own `ActorSpawned`, and the measurement says those coordinates are real:
@@ -363,7 +363,7 @@ def spawns_from(
     """
     Every ability actor in a decoded session, in the order it appeared.
 
-    `archetypes` and `first_seen` are `vrfnet.actors.ChannelTable`'s two
+    `archetypes` and `first_seen` are the decoder's two
     history tables, both keyed by actor net GUID and both deliberately
     surviving a checkpoint reset.  An actor with no recorded time is skipped
     rather than placed at zero: a cast at the wrong instant is worse than one

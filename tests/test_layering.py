@@ -50,6 +50,8 @@ MODEL_MODULES = (
     "theme",
 )
 
+# `vrfnet` is the build table and its bit reader, and nothing else -- the net
+# stack that gave the package its name is gone.
 BUILD_TABLE = "vrfnet"
 
 

@@ -21,9 +21,9 @@ rather than leaving an empty space that reads as "nobody won".
 What the card *can* say, and what the brief never thought to ask for, is
 whether this capture's build has a payload transform -- that is, whether the
 viewer can draw it at all.  It costs one string comparison against
-`payload_transform.SUPPORTED_BRANCHES`, which is the same table the decoder
-itself consults, so the indicator cannot drift away from what the decode will
-actually do.  It is now load-bearing rather than decorative: the list shows
+`payload_transform.SUPPORTED_BRANCHES`, which is the table `vrfview.tracks`
+gates on, so the indicator and the refusal cannot disagree.  Both mirror what
+`csharp/VrfPositions` supports; adding a build means adding it in both places.  It is now load-bearing rather than decorative: the list shows
 `playable` by default, because opening a capture that will never produce a map
 is a dead end and the schematic that used to soften it is gone.  The ones held
 back are counted and one button away, never silently dropped.
@@ -61,8 +61,9 @@ def positions_available(build: str) -> bool:
     """
     Whether a decode can work on this build at all, before anything is tried.
 
-    A membership test against `payload_transform.SUPPORTED_BRANCHES`, which is
-    the decoder's own table, so this cannot drift from what a decode will do.
+    A membership test against `payload_transform.SUPPORTED_BRANCHES`, the same
+    table `tracks.extract` gates on, so this cannot drift from what a decode
+    will refuse.
     Here rather than on `MatchCard` because two interfaces ask it about two
     different things -- a card asks whether to show a capture, and a viewer
     asks whether to offer a DECODE button -- and a control that can only ever

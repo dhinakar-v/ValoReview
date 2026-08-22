@@ -2,7 +2,7 @@
 The shapes a replay reduces to, once the container has been parsed.
 
 These are plain records with no behaviour beyond derived properties, and they
-deliberately import nothing from vrfnet or tkinter: the whole model and
+deliberately import no decoder and nothing that draws: the whole model and
 inference layer has to stay runnable without a display so it can be unit
 tested and dumped as text.
 
@@ -12,7 +12,7 @@ Read directly: event times, event groups, actor net IDs, round numbers, the
 map's internal path, the match id, the recording timestamp, the match length,
 and the player loadouts -- a subject UUID and an agent UUID per roster slot.
 
-Read too, but only where the build is one vrfnet can de-obfuscate, and only
+Read too, but only where the build is one `payload_transform` names, and only
 through vrfview.tracks: each pawn's agent codename and its position, heading
 and pitch over time.  Those are as read as a kill event is -- they come off the
 wire, not from a derivation -- but they are not in a plain chunk, so a replay

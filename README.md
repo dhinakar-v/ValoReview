@@ -5,7 +5,7 @@ Decode and replay Valorant `.vrf` replay files.
 ## Layout
 
     libraries/      importable code -- vrf_reader.py, vrf_to_json.py, vrfnet/, vrfview/, vrfserve/
-    scripts/        standalone CLIs -- vrf_net.py, vrf_serve.py, fetch_assets.py
+    scripts/        standalone CLIs -- vrf_serve.py, fetch_assets.py, make_*.py
     csharp/         the position decoder (VrfPositions); see The decoder below
     web/            the browser interface (React over vrfserve; web/dist gitignored)
     runners/        .bat launchers; each one works from any directory
@@ -34,7 +34,6 @@ Every runner forwards its arguments and returns the underlying exit code.
     runners\vrf-to-json.bat <replay.vrf> -o out.json
     runners\vrf-to-json.bat <replay.vrf> -o out.json --positions
                                                     and a positions sidecar
-    runners\vrf-net.bat actors <block.bin>          decode the replication stream
     runners\vrf-serve.bat                           the replay library, in a browser
     runners\vrf-serve.bat --routes                  list the endpoints, bind nothing
     runners\build-decoder.bat                       build the position decoder
@@ -84,17 +83,19 @@ the clone lives somewhere other than beside this repository.
     vendor/parser/        a published, self-contained drop-in
     csharp/VrfPositions/  whatever this working tree last built
 
-`libraries/vrfnet/` still decodes the same stream in pure Python and is kept
-for exactly one reason: it is the independent check on the decoder above. The
-two agree on all 10,544 samples of the reference 12.10 decode, exactly, in
-x, y, z, yaw and pitch. See `docs/valorant-replay-parser-features.md`.
+`libraries/vrfnet/` used to decode the same stream in pure Python, and the two
+agreed on all 10,544 samples of the reference 12.10 decode, exactly, in
+x, y, z, yaw and pitch. That check has been made; the 2,400 lines that made it
+have been removed. What is left of the package is `payload_transform` -- which
+builds can be decoded, and the keystream each one whitens its payloads with --
+and the bit reader its test uses. See `docs/valorant-replay-parser-features.md`.
 
 ## Oodle
 
 Positions no longer need Oodle -- the decoder does its own decompression. What
-still does: `--decode`, `vrf-to-json` without `--no-decompress`, and `vrf-net`
-on a `.vrf`, all of which touch the compressed REPLAYDATA and CHECKPOINT
-payloads directly. The viewer and the event timeline need no setup at all:
+still does: `--decode` and `vrf-to-json` without `--no-decompress`, both of
+which touch the compressed REPLAYDATA and CHECKPOINT payloads directly. The
+viewer and the event timeline need no setup at all:
 everything they read lives in plain chunks. Those payloads are Oodle (Mermaid),
 which needs an `oo2core_*_win64.dll` at runtime.
 
@@ -232,8 +233,8 @@ already reads `.env` with the same precedence and mutates nothing.
 Two things outside pip. Positions need the compiled decoder — "The decoder" above,
 built by `runners\build-decoder.bat` — and the browser interface needs node
 (`cd web && npm install`). Neither is needed to run the tests, and the Oodle DLL is
-now wanted only by `vrf-reader --decode` and `vrf-net`, which read compressed chunks
-directly.
+now wanted only by `vrf-reader --decode` and `vrf-to-json`, which read compressed
+chunks directly.
 
     uv sync                       # create .venv and install the project + dev tools
     runners\test.bat              # run tests      (uv run pytest)

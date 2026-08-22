@@ -27,24 +27,26 @@ file is the licence record, not the index.
 
 <https://github.com/michel-giehl/ValorantReplayParser>
 
-Two modules are Python ports of that project, and each names its own upstream
-files in its docstring:
+This project reaches that work in two ways.
 
-`libraries/vrfnet/payload_transform.py` -- the payload de-obfuscation.
-`tests/test_payload_transform.py` reuses its known-answer vectors verbatim.
+**Referenced, not vendored.** `csharp/VrfPositions` is a small C# program that
+references the upstream project as a library and is where every position in
+this project now comes from. Nothing of it is copied here; `runners\
+build-decoder.bat` builds against a clone. **Do not take its decompressor** --
+`OozSharpOodleDecompressor` wraps OozSharp, which carries a GPLv3 header under
+an MIT package.
+
+**Ported.** `libraries/vrfnet/payload_transform.py` is a Python port of the
+payload de-obfuscation, and `tests/test_payload_transform.py` reuses its
+known-answer vectors verbatim.
 
 - `src/Replay.Encoding/PayloadEncryption/ValorantSeededTransformHelpers.cs`
 - `src/Replay.Encoding/PayloadEncryption/VersionedTransforms/ValorantSeededTransform*.cs`
 - `tests/Replay.Encoding.Tests/PayloadEncryption/ValorantSeededTransformTests.cs`
 
-`libraries/vrfnet/movement.py` -- the movement RPC and the bitstream inside it,
-which is where every position in this project comes from.
-
-- `src/Replay.Valorant/Movement/RemoteCharacterUpdatesRpcDecoder.cs`
-- `src/Replay.Valorant/Movement/ComponentDataStream.cs`
-
-`libraries/vrfnet/properties.py` is **not** a port: the property loop it runs
-is the documented UE one, reached once the transform above is undone.
+A port of the movement RPC and of the surrounding net stack lived here too,
+in `libraries/vrfnet/`. It was replaced by the C# decoder above and has been
+removed; nothing of it remains beyond the transform and its bit reader.
 
 ```
 MIT License

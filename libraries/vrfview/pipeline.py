@@ -14,7 +14,7 @@ A caller that wants the four-minute decode asks `tracks.attach` for it directly
 and afterwards runs `names.resolve` again, because the codenames only exist
 once the stream has been read.
 
-This module reaches `tracks`, and `tracks` reaches `vrfnet` and `vrf_reader`.
+This module reaches `tracks`, and `tracks` reaches the decoder and `vrf_reader`.
 It is therefore not a model-layer module in the sense `vrfview.model` and its
 neighbours are, and it is deliberately kept out of that set: the rule those
 modules keep is that they run with no display *and no decoder*, and this one

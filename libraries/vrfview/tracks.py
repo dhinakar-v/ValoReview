@@ -4,7 +4,7 @@ Positions, and the one bridge from the replication stream into the model.
 Everything else the viewer shows comes out of a plain chunk.  This does not:
 it decompresses every REPLAYDATA block, de-obfuscates each property payload and
 decodes the movement RPC inside.  That work now happens in `csharp/VrfPositions`
-rather than in `vrfnet`, because the same decode is about four seconds there and
+rather than in Python, because the same decode is about four seconds there and
 about four minutes here -- see `vrfview.csharpdecode` for why, and for what did
 *not* change.  It still needs a built decoder, so it is still never done
 implicitly: `loader.load` returns a positionless Replay and a caller asks.
@@ -13,8 +13,8 @@ Why a separate module
 ---------------------
 `loader` reads the container, `infer` derives, `names` looks up.  This is a
 fourth kind of act: it decodes a second, deeper stream out of the same file.
-Keeping it apart means `model`, `infer` and `state` import neither the decoder
-nor vrfnet, and a replay whose build has no transform loses positions and
+Keeping it apart means `model`, `infer` and `state` import no decoder at all,
+and a replay whose build has no transform loses positions and
 nothing else -- `attach` records the refusal in `Replay.position_source` and
 returns the replay untouched, for the viewer to say so on screen.
 
@@ -31,16 +31,19 @@ two were established against the Python decoder and re-run against this one:
   * a movement sample exists at the exact millisecond of every one of those
     events, which is what says the demo frame clock and the event clock are
     the same clock and no offset is needed;
-  * and the two decoders, written in different languages from different
-    sources, agree on all 10,544 samples of the stored 12.10 decode to the
-    last bit of x, y, z, yaw and pitch.  `vrfnet` is kept in the tree for
-    exactly that reason: it is the independent check on this one.
+  * and this decode was checked once against a second one, written in a
+    different language from a different source, which agreed on all 10,544
+    samples of the stored 12.10 decode to the last bit of x, y, z, yaw and
+    pitch.  That second decoder was `vrfnet`, and it has been removed: it was
+    2,400 lines maintained to re-run a check that had already passed, and
+    what remains of the package is the build table below.
 
 Two more were added when the pitch and the spawn transform were first read
 rather than carried: at 2,949 kills across the whole library the killer's
 pitch agrees with the true angle to the victim to a median of 0.91 degrees,
 and every one of 210 player pawns spawns within 100 uu of its own first
-movement sample.  Both live in tests/test_movement.py.
+movement sample.  Both live in tests/test_positions.py, and unlike the
+cross-check they still run.
 
 Identifying player pawns
 ------------------------
