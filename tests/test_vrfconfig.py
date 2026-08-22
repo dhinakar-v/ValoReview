@@ -18,6 +18,7 @@ import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import pytest
 
@@ -45,7 +46,19 @@ class DemoPathResolution(unittest.TestCase):
         envfile.clear_cache()
 
     def test_default_is_demos_and_says_so(self):
-        root = vrfconfig.demo_root()
+        """
+        With nothing set anywhere, the default answers and names itself.
+
+        `find_upwards` is patched out rather than merely chdir-ing to a temp
+        directory, because it deliberately searches from *this module's* home
+        as well as from the cwd -- that is what makes an installed wheel find
+        the `.env` beside it.  Here that means a developer who has a real
+        `.env` at the repository root would otherwise have it decide the
+        result, and the one thing this test is for is what happens when
+        nothing has been decided.
+        """
+        with mock.patch.object(envfile, "find_upwards", return_value=None):
+            root = vrfconfig.demo_root()
         assert root.path == Path(vrfconfig.DEFAULT_DEMO_PATH)
         assert root.source == vrfconfig.SOURCE_DEFAULT
 
