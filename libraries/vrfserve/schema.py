@@ -182,6 +182,45 @@ class SightDoc(BaseModel):
     probe_uu: float
 
 
+class AbilityIconDoc(BaseModel):
+    """
+    One published ability slot on a player's card.
+
+    `slot` is Riot's own name -- `Ability1`, `Ability2`, `Grenade`, `Ultimate`,
+    `Passive` -- and deliberately not a keybind.  `Grenade` is C and `Ultimate`
+    is X on every agent, but `Ability1` and `Ability2` are Q and E in an order
+    that varies by agent, so naming a keybind here would be a coin flip wearing
+    a label.  A card renders these in manifest order and says nothing about
+    which key presses them; `art.AgentArt.ability` is where that reasoning
+    lives.
+    """
+
+    slot: str
+    name: str
+    icon_url: str | None = None
+
+
+class WeaponDoc(BaseModel):
+    """
+    One weapon's art, by display name.
+
+    Nothing in a `.vrf` says which weapon anybody is holding -- the property
+    payload carries it and nothing here decodes it -- so this is a catalogue,
+    not a claim.  Whoever names a weapon owns saying where the name came from.
+    """
+
+    name: str
+    category: str = ""
+    cost: int | None = None
+    icon_url: str | None = None
+    killfeed_url: str | None = None
+
+
+class WeaponsDoc(BaseModel):
+    source: str
+    weapons: list[WeaponDoc]
+
+
 class PlayerDoc(BaseModel):
     actor_id: int
     team: str
@@ -198,6 +237,7 @@ class PlayerDoc(BaseModel):
     portrait_url: str | None = None
     role_icon_url: str | None = None
     role: str = ""
+    abilities: list[AbilityIconDoc] = []
 
 
 class LoadoutDoc(BaseModel):

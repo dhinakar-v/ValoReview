@@ -24,7 +24,8 @@
       "display": "A1 #101",
       "icon_url": null,
       "portrait_url": null,
-      "role_icon_url": null
+      "role_icon_url": null,
+      "abilities": []
     },
     {
       "actor_id": 102,
@@ -38,7 +39,8 @@
       "display": "A2 #102",
       "icon_url": null,
       "portrait_url": null,
-      "role_icon_url": null
+      "role_icon_url": null,
+      "abilities": []
     },
     {
       "actor_id": 201,
@@ -52,7 +54,8 @@
       "display": "B1 #201",
       "icon_url": null,
       "portrait_url": null,
-      "role_icon_url": null
+      "role_icon_url": null,
+      "abilities": []
     },
     {
       "actor_id": 202,
@@ -66,7 +69,8 @@
       "display": "B2 #202",
       "icon_url": null,
       "portrait_url": null,
-      "role_icon_url": null
+      "role_icon_url": null,
+      "abilities": []
     }
   ],
   "rounds": [

@@ -1,5 +1,5 @@
 """
-Download Valorant map, agent and ability art into a local assets/ cache.
+Download Valorant map, agent, ability and weapon art into a local assets/ cache.
 
 Why not valoplant.gg
 --------------------
@@ -50,7 +50,7 @@ RETRIES = 3
 BACKOFF_S = 1.5
 
 COMMANDS = ("list", "fetch")
-GROUPS = ("maps", "agents", "roles")
+GROUPS = ("maps", "agents", "roles", "weapons")
 
 # (JSON field on the API object, file name written inside the entry's folder).
 MAP_FILES = (
@@ -62,6 +62,18 @@ AGENT_FILES = (
     ("displayIcon", "icon.png"),
     ("fullPortrait", "portrait.png"),
     ("killfeedPortrait", "killfeed.png"),
+)
+# Two icons and not one.  `displayIcon` is the shop render -- wide, detailed,
+# and what a roster card wants; `killStreamIcon` is the flat silhouette Riot
+# puts between a killer and a victim, which is the shape the kill feed and the
+# round timeline are copying.  Neither substitutes for the other at those
+# sizes.  The field is `killStreamIcon` and not `killfeedIcon`: the endpoint
+# names it after the kill *stream*, and guessing the obvious name fetches
+# nothing and reports success, because `_files_for` skips a field that is not
+# there.
+WEAPON_FILES = (
+    ("displayIcon", "icon.png"),
+    ("killStreamIcon", "killfeed.png"),
 )
 
 # Public map name -> internal codename: the inverse of the viewer's table, so a
@@ -198,6 +210,36 @@ def plan_agents(agents: list[dict]) -> tuple[list[Download], dict]:
     return downloads, manifest
 
 
+def plan_weapons(weapons: list[dict]) -> tuple[list[Download], dict]:
+    """
+    Downloads and manifest fragment for the weapons endpoint.
+
+    `category` arrives as `EEquippableCategory::Rifle` and is kept as the leaf
+    only, because that is what a card and a kill feed have room to say.  The
+    melee entry has no `shopData` at all, so `cost` is null there rather than
+    zero -- a knife is not free, it is not purchasable, and those are different
+    claims.
+    """
+    downloads: list[Download] = []
+    manifest: dict = {}
+
+    for entry in sorted(weapons, key=lambda w: w.get("displayName") or ""):
+        name = entry.get("displayName") or ""
+        if not name or not entry.get("displayIcon"):
+            continue
+        folder = f"weapons/{safe_name(name)}"
+        files = _files_for(entry, WEAPON_FILES, folder)
+        downloads.extend(files)
+        shop = entry.get("shopData") or {}
+        manifest[name] = {
+            "uuid": entry.get("uuid"),
+            "category": str(entry.get("category") or "").rsplit("::", 1)[-1],
+            "cost": shop.get("cost"),
+            "files": _by_filename(files),
+        }
+    return downloads, manifest
+
+
 def plan_roles(agents: list[dict]) -> tuple[list[Download], dict]:
     """One icon per distinct agent role, deduplicated across the roster."""
     downloads: list[Download] = []
@@ -274,6 +316,10 @@ def collect(groups: tuple[str, ...]) -> tuple[list[Download], dict, list[str]]:
         if "roles" in groups:
             found, manifest["roles"] = plan_roles(agents)
             downloads.extend(found)
+
+    if "weapons" in groups:
+        found, manifest["weapons"] = plan_weapons(get_json("/weapons") or [])
+        downloads.extend(found)
 
     manifest["version"] = get_json("/version") or {}
     return downloads, manifest, warnings

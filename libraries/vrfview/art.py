@@ -134,6 +134,26 @@ class AbilityArt:
 
 
 @dataclass(frozen=True)
+class WeaponArt:
+    """
+    One weapon's two cached icons.
+
+    Nothing in a `.vrf` says which weapon anybody is holding -- the property
+    payload carries it and no decoder here reads it -- so this resolves art for
+    a *name*, and whoever supplies the name is responsible for saying where it
+    came from.  Keeping the resolution here anyway is the same split the rest of
+    this module makes: a file path is not a claim about the replay.
+    """
+
+    name: str = ""
+    uuid: str = ""
+    category: str = ""
+    cost: int | None = None
+    icon: Path | None = None
+    killfeed: Path | None = None
+
+
+@dataclass(frozen=True)
 class AgentArt:
     """Every cached file for one agent, plus its role badge and its abilities."""
 
@@ -182,6 +202,9 @@ class ArtCache:
     version: str = ""
     maps: dict[str, MapArt] = field(default_factory=dict)
     agents: dict[str, AgentArt] = field(default_factory=dict)
+    # Keyed by display name, because a weapon has no other join: no replay
+    # field, no UUID on the wire, nothing but the name a caller hands over.
+    weapons: dict[str, WeaponArt] = field(default_factory=dict)
     reason: str = ""
 
     @property
@@ -203,7 +226,8 @@ class ArtCache:
         version = f" {self.version}" if self.version else ""
         return (
             f"{self.source}{version} ({self.root}): "
-            f"{len(self.maps)} maps, {len(self.agents)} agents"
+            f"{len(self.maps)} maps, {len(self.agents)} agents, "
+            f"{len(self.weapons)} weapons"
         )
 
     def map_art(self, map_path: str) -> MapArt | None:
@@ -244,6 +268,24 @@ class ArtCache:
             return None
         for entry in self.maps.values():
             if entry.name == name:
+                return entry
+        return None
+
+    def weapon_art(self, name: str) -> WeaponArt | None:
+        """
+        Art for a weapon named rather than identified.
+
+        Case-folded, unlike `map_art_by_name` and `agent_art_by_name`: both of
+        those join two halves of the same published catalogue, where an exact
+        match is the stronger check.  A weapon name arrives from a caller
+        instead, so folding is the difference between resolving `Vandal` and
+        resolving nothing.
+        """
+        if not name:
+            return None
+        wanted = name.lower()
+        for entry in self.weapons.values():
+            if entry.name.lower() == wanted:
                 return entry
         return None
 
@@ -342,6 +384,21 @@ def _abilities(root: Path, entry: dict) -> dict[str, AbilityArt]:
     return out
 
 
+def _weapon_art(root: Path, name: str, entry: dict) -> WeaponArt:
+    files = entry.get("files") or {}
+    raw_cost = entry.get("cost")
+    return WeaponArt(
+        name=name,
+        uuid=str(entry.get("uuid") or "").lower(),
+        category=str(entry.get("category") or ""),
+        # None rather than 0: the melee slot is not purchasable, which is a
+        # different statement from costing nothing.
+        cost=int(raw_cost) if isinstance(raw_cost, int | float) else None,
+        icon=_resolve(root, files, "icon.png"),
+        killfeed=_resolve(root, files, "killfeed.png"),
+    )
+
+
 def _agent_art(root: Path, name: str, entry: dict, roles: dict) -> AgentArt:
     files = entry.get("files") or {}
     role = str(entry.get("role") or "")
@@ -372,8 +429,13 @@ def from_manifest(doc: dict, root: Path = ASSETS_DIR) -> ArtCache:
         art = _agent_art(root, name, entry, roles)
         if art.uuid:
             agents[art.uuid] = art
+    weapons = {}
+    for name, entry in (doc.get("weapons") or {}).items():
+        art = _weapon_art(root, name, entry)
+        if art.name:
+            weapons[art.name] = art
     version = str((doc.get("version") or {}).get("version") or "")
-    return ArtCache(root, SOURCE_MANIFEST, version, maps, agents)
+    return ArtCache(root, SOURCE_MANIFEST, version, maps, agents, weapons)
 
 
 def manifest_path(root: Path = ASSETS_DIR) -> Path:

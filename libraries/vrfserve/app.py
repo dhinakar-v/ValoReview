@@ -455,6 +455,19 @@ def _add_map_routes(app: FastAPI, config: Settings) -> None:
             raise HTTPException(status_code=404, detail=NO_SIGHT_MASK)
         return wire.sight_mask(mask, key)
 
+    @app.get(f"{API}/weapons", response_model=schema.WeaponsDoc)
+    def read_weapons() -> dict:
+        """
+        The weapon art catalogue.
+
+        Not a fact about any replay -- nothing decoded here says who is holding
+        what -- which is why it sits beside the map routes rather than under
+        one: it describes the game, the way a radar image and a callout list
+        describe a map.  A checkout with no `assets/weapons/` answers with an
+        empty list, and the client falls back to the weapon's name in text.
+        """
+        return wire.weapons(config.art)
+
 
 def _mount_static(app: FastAPI, config: Settings) -> None:
     """The art directory, then the built page -- in that order, always."""

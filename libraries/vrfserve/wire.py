@@ -132,17 +132,71 @@ def sight_mask(mask, map_key: str) -> dict:
     }
 
 
+# The order a card draws an agent's abilities in.  It is the manifest's own
+# order and carries no keybind: Grenade is C and Ultimate is X on every agent,
+# but Ability1 and Ability2 are Q and E in an order that varies, so a card shows
+# the icons and names nothing it cannot name.
+ABILITY_ORDER = ("Ability1", "Ability2", "Grenade", "Ultimate")
+
+_NO_AGENT_ART = {
+    "icon_url": None,
+    "portrait_url": None,
+    "role_icon_url": None,
+    "abilities": [],
+}
+
+
 def _agent_urls(cache: ArtCache | None, name: str) -> dict:
     if cache is None or not name:
-        return {"icon_url": None, "portrait_url": None, "role_icon_url": None}
+        return dict(_NO_AGENT_ART)
     found = cache.agent_art_by_name(name)
     if found is None:
-        return {"icon_url": None, "portrait_url": None, "role_icon_url": None}
+        return dict(_NO_AGENT_ART)
+    abilities = []
+    for slot in ABILITY_ORDER:
+        art = found.abilities.get(slot)
+        if art is None:
+            continue
+        abilities.append(
+            {
+                "slot": slot,
+                "name": art.name,
+                "icon_url": asset_url(art.icon, cache.root),
+            },
+        )
     return {
         "icon_url": asset_url(found.icon, cache.root),
         "portrait_url": asset_url(found.portrait, cache.root),
         "role_icon_url": asset_url(found.role_icon, cache.root),
         "role": found.role,
+        "abilities": abilities,
+    }
+
+
+def weapons(cache: ArtCache | None) -> dict:
+    """
+    The whole weapon catalogue, sorted by name.
+
+    Sent as one document rather than resolved per kill, because there are
+    twenty-odd of them and a client that asked per name would make one request
+    per row of a kill feed.  An `assets/` with no `weapons/` in it answers with
+    an empty list and its own `source` line, the same way a missing radar
+    answers with a sentence: the art is unavailable, and that is not an error.
+    """
+    if cache is None:
+        return {"source": "no art cache", "weapons": []}
+    return {
+        "source": cache.described,
+        "weapons": [
+            {
+                "name": art.name,
+                "category": art.category,
+                "cost": art.cost,
+                "icon_url": asset_url(art.icon, cache.root),
+                "killfeed_url": asset_url(art.killfeed, cache.root),
+            }
+            for art in sorted(cache.weapons.values(), key=lambda w: w.name)
+        ],
     }
 
 
