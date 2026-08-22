@@ -252,4 +252,4 @@ web/e2e/report/
 # README's own screenshots, which are committed on purpose. A `!docs/images/`
 # negation cannot fix that, because git does not descend into an excluded
 # directory and so never reaches the rule that would un-exclude it.
-/images/
+/features/
