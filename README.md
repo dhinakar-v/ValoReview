@@ -226,8 +226,10 @@ read the same model through `vrfview.pipeline`.
 Requires [uv](https://docs.astral.sh/uv/). The decoding pipeline is stdlib and stays
 that way; the interfaces on top of it are not. `customtkinter` is the desktop widget
 set, `Pillow` reads the radar PNG's alpha channel for the sight mask and draws the
-transport glyphs, and `fastapi`/`uvicorn` are the web interface (see
-`requirements.txt`). `python-dotenv` is deliberately not used — `libraries/envfile.py`
+transport glyphs, and `fastapi`/`uvicorn` are the web interface. `pyproject.toml`
+is the only dependency list — there is no `requirements.txt` mirroring it, because
+two lists drift. `pip install .` reads it as readily as `uv sync` does.
+`python-dotenv` is deliberately not used — `libraries/envfile.py`
 already reads `.env` with the same precedence and mutates nothing.
 
 Two things outside pip. Positions need the compiled decoder — "The decoder" above,
