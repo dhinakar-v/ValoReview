@@ -68,6 +68,16 @@ WEAPON_RANGE_UU = 5000.0
 # `Track.at` refuses to interpolate across a long gap: at a few plants the
 # planter has no sample at all and the nearest other player is a room away,
 # which is a fact about the 10 Hz thinning rather than about the coordinate.
+# The share of a derived build's kills that must land inside weapon range,
+# where the reference capture is held to a maximum instead.  13.04's transform
+# was recovered rather than ported, so this is the check that stands between it
+# and the registry -- and it is a share because one of the 200 kill pairs in the
+# first 13.04 capture spans 5,125 uu, 2.5% past a bound the reference capture
+# never reaches, which a 10 Hz track and a long-range weapon can produce and a
+# wrong transform cannot: a wrong transform places nobody near anybody.
+DERIVED_BUILD = "++Ares-Core+release-13.04"
+DERIVED_WEAPON_RANGE_SHARE = 0.95
+
 PLANT_NEAR_PLAYER_UU = 100.0
 PLANT_NEAR_PLAYER_SHARE = 0.85
 
@@ -103,6 +113,60 @@ SILHOUETTE_FALSE_BLOCK = 0.03
 # See `vrfview/walls.py` for the whole table.
 LINES_FALSE_BLOCK_FLOOR = 0.20
 LINES_FALSE_BLOCK_CEILING = 0.55
+
+
+def _captures_on(build: str) -> list:
+    """
+    Every capture in `Demos/` on one build, by the branch in its plain chunks.
+
+    By build rather than by filename, unlike the reference capture above: a
+    replay GUID names a real match with real players in it, and a check about a
+    *build* has no reason to carry one into the repository.  Reading the branch
+    costs one header chunk and no decompression.
+    """
+    from vrf_reader import VrfFile
+
+    return [
+        path
+        for path in sorted(Path("Demos").glob("*.vrf"))
+        if VrfFile(path).demo.build == build
+    ]
+
+
+def _kill_geometry(replay) -> tuple[list, list]:
+    """How far apart each killer and victim were, and how wrong the pitch was."""
+    separations = []
+    pitch_errors = []
+    for kill in replay.kills:
+        if kill.is_suicide:
+            continue
+        killer = replay.track(kill.killer)
+        victim = replay.track(kill.victim)
+        if killer is None or victim is None:
+            continue
+        here = killer.at(kill.t_ms)
+        there = victim.at(kill.t_ms)
+        if here is None or there is None:
+            continue
+        flat = math.hypot(there.x - here.x, there.y - here.y)
+        separations.append(flat)
+        if flat < POINT_BLANK_UU:
+            continue
+        truth = math.degrees(math.atan2(there.z - here.z, flat))
+        pitch_errors.append(abs(_signed(_signed(here.pitch) - truth)))
+    return separations, pitch_errors
+
+
+def _spawn_gaps(decoded) -> list:
+    """How far each actor's spawn location sits from its own first sample."""
+    return [
+        math.dist(
+            decoded.spawn_locations[actor],
+            (samples[0].x, samples[0].y, samples[0].z),
+        )
+        for actor, samples in decoded.samples.items()
+        if samples and actor in decoded.spawn_locations
+    ]
 
 
 def infer_with_positions():
@@ -322,6 +386,7 @@ class SpawnLocationsAreRealCoordinates(unittest.TestCase):
         )
 
 
+@pytest.mark.skipif(not DEMO_12_10.exists(), reason="needs the 12.10 capture")
 class SpikePlantsAreRealCoordinates(unittest.TestCase):
     """
     The check that let the spike have a place on the map for the first time.
@@ -361,6 +426,12 @@ class SpikePlantsAreRealCoordinates(unittest.TestCase):
     def setUpClass(cls):
         from vrfview import csharpdecode, infer, loader
 
+        # The decoder is checked for before it is run, and the capture is
+        # checked for by the decorator above.  Without that decorator this
+        # class was the one in the file with no `.vrf` gate, so on a machine
+        # with a built decoder and no reference capture it *errored* where
+        # every sibling skipped -- three red entries that say nothing about
+        # the code, in the suite whose whole job is being believable.
         try:
             csharpdecode.locate(None)
         except csharpdecode.DecodeError as exc:
@@ -734,3 +805,85 @@ class LandedIsTheThingNotTheThrower(unittest.TestCase):
                 inside += 1
         share = inside / len(landed)
         assert share >= LANDED_INSIDE_SHARE, f"only {share:.1%} land inside the map"
+
+
+@pytest.mark.skipif(not _captures_on(DERIVED_BUILD), reason="needs a 13.04 capture")
+class TheDerivedTransformDecodesRealMatches(unittest.TestCase):
+    """
+    The check that let a *derived* payload transform be registered.
+
+    Every other build's transform was ported from upstream, so a porting bug
+    was the only thing that could be wrong with it.  13.04's was recovered from
+    captured payloads by `csharp/TransformSearch` -- upstream has never
+    published one -- so the class in `vrfnet.payload_transform` and its twin in
+    the parser clone could both be faithful to a recovery that was simply
+    wrong, and the known-answer vectors would agree happily while every
+    coordinate was fiction.
+
+    This is what says otherwise, and it is the same evidence the reference
+    capture gets above: two people in a gunfight are within weapon range of
+    each other, and a player's first decoded position is where they spawned.
+    Measured over both 13.04 captures -- 200 kill pairs at a median of 1,796 uu
+    and 164 at 1,521, spawn locations a median 0.0 uu from their own first
+    sample, pitch inside ten degrees at 99.0% and 98.8% against a yaw control
+    of 0.42 and 0.46 degrees.
+
+    The share rather than the maximum, for the kills: one of the 200 spans
+    5,125 uu, which is 2.5% past the bound the reference capture never reaches.
+    A 10 Hz track and an Operator make that a plausible reading; what could not
+    be plausible is 99.5% of a match's kills landing inside weapon range under
+    a wrong transform, because a wrong transform does not place anybody
+    anywhere.
+    """
+
+    separations: ClassVar[list] = []
+    pitch_errors: ClassVar[list] = []
+    gaps: ClassVar[list] = []
+
+    @classmethod
+    def setUpClass(cls):
+        from vrfview import csharpdecode, pipeline, tracks
+
+        try:
+            csharpdecode.locate(None)
+        except csharpdecode.DecodeError as exc:
+            raise unittest.SkipTest(str(exc)) from exc
+
+        cls.separations = []
+        cls.pitch_errors = []
+        cls.gaps = []
+        for path in _captures_on(DERIVED_BUILD):
+            replay = pipeline.open_replay(path)
+            tracks.attach(replay, path, tracks.Options(decode=True, cache=False))
+            if not replay.has_positions:
+                raise unittest.SkipTest(replay.position_source)
+
+            separations, pitch_errors = _kill_geometry(replay)
+            cls.separations += separations
+            cls.pitch_errors += pitch_errors
+            cls.gaps += _spawn_gaps(csharpdecode.run(path))
+
+    def test_there_are_enough_kills_to_measure_anything(self):
+        assert len(self.separations) > 50
+
+    def test_almost_every_killer_and_victim_are_within_weapon_range(self):
+        inside = sum(1 for s in self.separations if s <= WEAPON_RANGE_UU)
+        share = inside / len(self.separations)
+        assert share >= DERIVED_WEAPON_RANGE_SHARE, f"only {share:.1%} within weapon range"
+
+    def test_the_typical_kill_is_a_gunfight_and_not_a_scatter(self):
+        # A wrong transform does not merely widen the tail: it puts the two
+        # players in unrelated places, and the median goes with them.
+        assert statistics.median(self.separations) <= WEAPON_RANGE_UU
+
+    def test_a_spawn_location_sits_on_the_actors_own_first_sample(self):
+        assert self.gaps, "no actor had both a spawn location and a sample"
+        worst = max(self.gaps)
+        assert worst <= SPAWN_GAP_UU, (
+            f"a spawn point is {worst:.0f} uu from its own first sample"
+        )
+
+    def test_the_killer_is_looking_at_the_victim(self):
+        inside = sum(1 for e in self.pitch_errors if e <= PITCH_TOLERANCE_DEGREES)
+        share = inside / len(self.pitch_errors)
+        assert share >= PITCH_AGREEMENT, f"only {share:.1%} of kills inside tolerance"

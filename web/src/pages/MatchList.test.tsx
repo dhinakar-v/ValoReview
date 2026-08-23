@@ -39,6 +39,7 @@ const CARD: Card = {
   error: "",
   readable: true,
   playable: true,
+  positions_note: "positions decode on this build",
   prewarm: null,
 };
 
@@ -108,6 +109,33 @@ describe("the match list", () => {
       cards: [{ ...CARD, readable: false, error: "unexpected chunk type 7" }],
     });
     expect(await screen.findByText("unexpected chunk type 7")).toBeTruthy();
+  });
+
+  /*
+    A capture on a build with no payload transform reaches this page now, and
+    the row has to say so itself: the list used to be filtered to playable, so
+    the only thing that could report an undrawable capture was the footer's
+    count of what had been held back.  The chip carries the scanner's own
+    sentence as its `title` rather than restating it, so there is one place the
+    reason is written.
+  */
+  it("says a capture cannot be drawn, and still lets it be opened", async () => {
+    const { container } = show({
+      ...LIBRARY,
+      cards: [
+        {
+          ...CARD,
+          playable: false,
+          positions_note: "no payload transform for this build; nothing to draw",
+        },
+      ],
+    });
+    const chip = await screen.findByText("NO POSITIONS");
+    expect(chip.getAttribute("title")).toContain("no payload transform");
+    // Still a link: the map, the rounds and the kill feed are all readable.
+    expect(container.querySelector("a.card")).toBeTruthy();
+    // But not the one the Playwright harness opens when it wants positions.
+    expect(container.querySelector("a.card.playable")).toBeNull();
   });
 
   it("says where it looked when the library is empty", async () => {

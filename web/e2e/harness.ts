@@ -65,11 +65,17 @@ async function api<T>(path: string): Promise<T> {
  * Deliberately the *first card* rather than a hard-coded id: an id is a digest
  * of a resolved path, so naming one would tie the suite to one machine's
  * `Demos/`.  What the suite needs is a capture the server itself considers
- * playable, which is exactly what the default filter leaves on the page.
+ * playable, and `a.card.playable` is the scanner's own word for that.
+ *
+ * It used to be `a.card`, which worked only because `/api/library` filtered to
+ * playable and every row on the page was one.  The list shows unsupported
+ * builds now, so the first row by date can be a capture with no positions --
+ * and this helper would then have opened it and left every layer spec
+ * asserting against a document that draws nothing.
  */
 export async function openFirstPlayable(page: Page): Promise<Opened> {
   await page.goto("/");
-  const card = page.locator("a.card").first();
+  const card = page.locator("a.card.playable").first();
   await expect(card).toBeVisible();
   await card.click();
   await page.waitForURL(/\/replay\/[0-9a-f]+/);

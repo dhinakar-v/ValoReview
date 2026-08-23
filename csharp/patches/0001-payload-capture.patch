@@ -1,0 +1,209 @@
+diff --git a/src/Replay.Encoding/PayloadEncryption/PayloadTransformRegistry.cs b/src/Replay.Encoding/PayloadEncryption/PayloadTransformRegistry.cs
+index 7ca3557..e981138 100644
+--- a/src/Replay.Encoding/PayloadEncryption/PayloadTransformRegistry.cs
++++ b/src/Replay.Encoding/PayloadEncryption/PayloadTransformRegistry.cs
+@@ -22,13 +22,37 @@ public sealed class PayloadTransformRegistry
+         }
+     }
+ 
+-    public static PayloadTransformRegistry CreateDefault() => new([
+-        new ValorantSeededTransform12_10(),
+-        new ValorantSeededTransform12_11(),
+-        new ValorantSeededTransform13_00(),
+-        new ValorantSeededTransform13_01(),
+-        new ValorantSeededTransform13_02(),
+-    ]);
++    public static PayloadTransformRegistry CreateDefault()
++    {
++        IPayloadTransform[] published =
++        [
++            new ValorantSeededTransform12_10(),
++            new ValorantSeededTransform12_11(),
++            new ValorantSeededTransform13_00(),
++            new ValorantSeededTransform13_01(),
++            new ValorantSeededTransform13_02(),
++        ];
++
++        // The capture transform is registered only while VRF_PAYLOAD_CAPTURE
++        // names a sink, and that condition is load-bearing rather than tidy:
++        // it passes payloads through untouched, so registering it
++        // unconditionally would turn an unsupported build from a refusal by
++        // name into a parse that succeeds and produces rubbish -- the one
++        // failure this registry is shaped to avoid.
++        if (ValorantPayloadCaptureTransform.SinkPath is null)
++        {
++            return new PayloadTransformRegistry(published);
++        }
++
++        // It *replaces* any published transform claiming the same branch, so a
++        // capture can be taken from a build whose answer is already known.
++        // That is the only way to calibrate a recovery attempt: with no
++        // known-good run to compare against, a 0% score on a new build says
++        // nothing about whether the method works.
++        var branch = ValorantPayloadCaptureTransform.CaptureBranch;
++        var kept = published.Where(t => !t.SupportedReplayVersions.Contains(branch, StringComparer.Ordinal));
++        return new PayloadTransformRegistry([.. kept, new ValorantPayloadCaptureTransform()]);
++    }
+ 
+     public IPayloadTransform GetRequired(string replayVersion)
+     {
+diff --git a/src/Replay.Encoding/PayloadEncryption/VersionedTransforms/ValorantPayloadCaptureTransform.cs b/src/Replay.Encoding/PayloadEncryption/VersionedTransforms/ValorantPayloadCaptureTransform.cs
+new file mode 100644
+index 0000000..df86c11
+--- /dev/null
++++ b/src/Replay.Encoding/PayloadEncryption/VersionedTransforms/ValorantPayloadCaptureTransform.cs
+@@ -0,0 +1,122 @@
++using System.Globalization;
++using Replay.Encoding.Archives;
++using static Replay.Encoding.PayloadEncryption.ValorantSeededTransformHelpers;
++
++namespace Replay.Encoding.PayloadEncryption.VersionedTransforms;
++
++/// <summary>
++/// Records every property payload for a branch instead of transforming it.
++///
++/// This exists to derive a transform for a build nobody has published one for.
++/// It is inert unless <c>VRF_PAYLOAD_CAPTURE</c> names a file to write, so a
++/// normal parse is unaffected even though the class is registered.
++///
++/// The passthrough is safe for the surrounding parse and that is not an
++/// accident: a bunch's framing, its content-block header and the payload's own
++/// bit count are all plaintext, and <c>ContentBlockFramer</c> advances the
++/// outer archive by exactly <c>bitCount</c> whatever the transform did with
++/// the bits. So the stream stays in sync and only the interior of each payload
++/// is garbage -- which is the whole point, because that garbage *is* the
++/// ciphertext being collected.
++///
++/// The seed is the caller's own <c>bitCount ^ actorNetGuid</c>, so recording
++/// the pair recovers both. Both are written because the seed is what keys the
++/// keystream and the bit count is what selects the block schedule.
++/// </summary>
++public sealed class ValorantPayloadCaptureTransform : IPayloadTransform
++{
++    /// <summary>Where to write, or null to do nothing at all.</summary>
++    public static string? SinkPath => Environment.GetEnvironmentVariable("VRF_PAYLOAD_CAPTURE");
++
++    /// <summary>
++    /// The branch to claim. Defaults to the build this was written for, and is
++    /// overridable so the *same* capture can be taken from a build whose
++    /// transform is already known -- which is the only way to calibrate what a
++    /// recovery attempt's success rate should look like.
++    /// </summary>
++    public static string CaptureBranch =>
++        Environment.GetEnvironmentVariable("VRF_PAYLOAD_CAPTURE_BRANCH") ?? "++Ares-Core+release-13.04";
++
++    /// <summary>A bound, because a full match is millions of payloads.</summary>
++    public static int Limit =>
++        int.TryParse(Environment.GetEnvironmentVariable("VRF_PAYLOAD_CAPTURE_LIMIT"),
++            NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) && parsed > 0
++            ? parsed
++            : 200_000;
++
++    private static readonly Lock Guard = new();
++    private static StreamWriter? _sink;
++    private static int _written;
++
++    public IReadOnlyCollection<string> SupportedReplayVersions { get; } = [CaptureBranch];
++
++    public int GetOutputByteCount(int bitCount) => ValorantSeededTransformHelpers.GetOutputByteCount(bitCount);
++
++    public void Apply(FBitArchive input, uint seed, Span<byte> output)
++    {
++        var bitCount = CopyInputToOutput(input, output);
++        Record(output[..GetOutputByteCount(bitCount)], bitCount, seed);
++    }
++
++    public void Apply(FBitArchive input, int bitCount, uint seed, Span<byte> output)
++    {
++        CopyInputToOutput(input, bitCount, output);
++        Record(output[..GetOutputByteCount(bitCount)], bitCount, seed);
++    }
++
++    private static void Record(ReadOnlySpan<byte> payload, int bitCount, uint seed)
++    {
++        var path = SinkPath;
++        if (path is null || bitCount == 0)
++        {
++            return;
++        }
++
++        // Hex outside the lock: the formatting is the expensive part and it
++        // touches nothing shared.
++        var hex = Convert.ToHexString(payload);
++
++        lock (Guard)
++        {
++            if (_written >= Limit)
++            {
++                return;
++            }
++
++            if (_sink is null)
++            {
++                _sink = new StreamWriter(path, append: false);
++                // The parser is a process that runs once and exits, so there
++                // is no natural place to close this from.  Without the hook
++                // the last buffer's worth of payloads -- thousands of lines --
++                // is silently missing from the end of the file.
++                AppDomain.CurrentDomain.ProcessExit += (_, _) => Close();
++            }
++
++            _sink.Write("{\"b\":");
++            _sink.Write(bitCount.ToString(CultureInfo.InvariantCulture));
++            _sink.Write(",\"s\":");
++            _sink.Write(seed.ToString(CultureInfo.InvariantCulture));
++            _sink.Write(",\"p\":\"");
++            _sink.Write(hex);
++            _sink.WriteLine("\"}");
++            _written++;
++
++            if (_written >= Limit)
++            {
++                _sink.Flush();
++            }
++        }
++    }
++
++    /// <summary>Flush and close.  The parser exits the process, so this is called from Program.</summary>
++    public static void Close()
++    {
++        lock (Guard)
++        {
++            _sink?.Flush();
++            _sink?.Dispose();
++            _sink = null;
++        }
++    }
++}
+diff --git a/src/Replay.Unreal/Bunches/ContentBlockFramer.cs b/src/Replay.Unreal/Bunches/ContentBlockFramer.cs
+index 8a9b95f..4fdd920 100644
+--- a/src/Replay.Unreal/Bunches/ContentBlockFramer.cs
++++ b/src/Replay.Unreal/Bunches/ContentBlockFramer.cs
+@@ -1,4 +1,5 @@
+ using Microsoft.Extensions.Logging;
++using Replay.Encoding.PayloadEncryption.VersionedTransforms;
+ using Replay.Encoding.Archives;
+ using Replay.Encoding.Net;
+ using Replay.Models.Descriptors;
+@@ -99,6 +100,21 @@ internal sealed class ContentBlockFramer
+                 return;
+             }
+ 
++            // While a payload capture is running the transform is a
++            // passthrough, so every payload interior is ciphertext and reading
++            // it as properties produces nonsense -- a bogus field length long
++            // enough to overflow, on the very first block, which then kills the
++            // whole parse. The interior is skipped instead. The outer stream
++            // stays exact either way: `DecodeContentPayload` advances the
++            // archive by `contentPayloadBitCount` whatever happens next,
++            // because the bit count is plaintext.
++            if (ValorantPayloadCaptureTransform.SinkPath is not null)
++            {
++                DecodeContentPayload(payload, contentPayloadBitCount, channel, replayVersionBranch);
++                stats.ContentBlockCount++;
++                continue;
++            }
++
+             if (header.HasRepLayout)
+             {
+                 FrameRepLayoutContentBlock(payload, contentPayloadBitCount, header, channel, timeSeconds, packetId,

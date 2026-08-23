@@ -71,6 +71,8 @@ export interface Card {
   error: string;
   readable: boolean;
   playable: boolean;
+  /** Why, when `playable` is false: the build has no payload transform. */
+  positions_note: string;
   prewarm: Prewarm | null;
 }
 

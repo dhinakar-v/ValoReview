@@ -138,6 +138,34 @@ VECTORS: tuple[tuple[str, int, str], ...] = (
         288,
         "0F926639D681FAB6D03122E222E923CCC987DA22625B2BFC077F432F912DBD96F2368E1E",
     ),
+    # release-13.04, and these eleven are a different kind of vector from the
+    # fifty-five above.  Upstream has no 13.04, so there is no reference
+    # implementation to copy an answer from: these were produced by *our* C#
+    # port in the parser clone, which the decoder actually runs.  So they prove
+    # the two ports of a derived transform agree byte for byte -- which is the
+    # failure this file exists to catch, because a disagreement would scatter
+    # coordinates with nothing complaining -- and they prove nothing about
+    # whether the transform is right.  What settles that is ground truth:
+    # docs/payload-transform-13-04.md carries it.
+    ("++Ares-Core+release-13.04", 0, ""),
+    ("++Ares-Core+release-13.04", 1, "00"),
+    ("++Ares-Core+release-13.04", 7, "62"),
+    ("++Ares-Core+release-13.04", 8, "58"),
+    ("++Ares-Core+release-13.04", 31, "401FF266"),
+    ("++Ares-Core+release-13.04", 32, "FF8A7E7E"),
+    ("++Ares-Core+release-13.04", 63, "40B87FB6C26BFE15"),
+    ("++Ares-Core+release-13.04", 64, "9810FC015D410C63"),
+    ("++Ares-Core+release-13.04", 65, "A610FC0171420C7301"),
+    (
+        "++Ares-Core+release-13.04",
+        287,
+        "84E03F1B100292AF828AEACE5D0296906D2C9A6B8E6FB68C5CBBFD3456336D094F1C8E2C",
+    ),
+    (
+        "++Ares-Core+release-13.04",
+        288,
+        "F40A38092699F880EEF8808AFFFF992BCFD4F45DE7C09B2FD84F63FF135765D4CA9FE1BD",
+    ),
 )
 
 

@@ -535,10 +535,14 @@ refuses by name rather than guessing:
 
 There is deliberately **no nearest-version fallback**: an unsupported build must
 raise, or a porting bug becomes indistinguishable from a version mismatch. On the
-reference library of 101 captures, 21 are playable. A capture whose build has no
-transform is not listed as playable at all, which costs one string comparison and
-no decompression, and nothing invents a coordinate when positions are absent: a
-player with no track is drawn with no track.
+reference library of 101 captures, 21 are playable — and the match list shows all
+101. A capture whose build has no transform is marked as such by one string
+comparison and no decompression, and its card carries `NO POSITIONS` with the
+reason; it still opens, because the map, the rounds and their outcomes, the kill
+feed and the player count all come out of the plain chunks. What is missing is
+missing rather than invented: no marker, no trail, no sight cone, and no agent
+either — a pawn states its own codename in the replication stream, so without the
+decode a card reads `A1` with no portrait.
 
 Player names, ranks and per-round economy live in `val-match-v1`, which is
 **403 on a personal development key** — every endpoint, including

@@ -77,8 +77,10 @@ def positions_note(build: str) -> str:
     return POSITIONS_AVAILABLE if positions_available(build) else POSITIONS_UNAVAILABLE
 
 
-# What the footer says about the captures the default filter holds back.
-HIDDEN_NOTE = "{n} hidden - no payload transform for their build"
+# What the footer says about the captures that will not draw on a map.  It was
+# `{n} hidden` while the match list filtered them away; they are listed now, so
+# the sentence counts a limitation rather than an omission.
+NO_POSITIONS_NOTE = "{n} without positions - no payload transform for their build"
 
 CACHE_VERSION = 1
 CACHE_FILENAME = "match-scan.json"
@@ -178,22 +180,39 @@ class ScanResult:
         return [c for c in self.cards if c.playable]
 
     @property
-    def hidden(self) -> list[MatchCard]:
-        """Everything the default filter holds back, counted rather than dropped."""
+    def without_positions(self) -> list[MatchCard]:
+        """
+        The captures that will open but not draw on a map.
+
+        This was `hidden`, back when the match list filtered them off the page.
+        Nothing is held back now, so the name would have been the last thing
+        still saying otherwise.
+        """
         return [c for c in self.cards if not c.playable]
 
     @property
     def described(self) -> str:
-        """One line the home page can show verbatim."""
+        """
+        One line the home page can show verbatim.
+
+        It used to open `{playable} of {total} replays` and close with a count
+        of what was `hidden`, which was true while the match list filtered to
+        playable captures.  It does not any more, so both halves were claims
+        the page disproved on the same screen -- `0 of 2 replays ... 2 hidden`
+        printed above a list showing two.  The count is now what is listed, and
+        the undecodable ones are still counted rather than passed over,
+        because a capture with no positions is a real limitation of the
+        library and not merely an absence.
+        """
         where = self.root.described if self.root is not None else "no directory"
         if not self.cards:
             return f"no replays in {where}"
         bad = len(self.failed)
         note = f", {bad} unreadable" if bad else ""
-        held = len(self.hidden)
-        back = f"; {HIDDEN_NOTE.format(n=held)}" if held else ""
+        held = len(self.without_positions)
+        back = f"; {NO_POSITIONS_NOTE.format(n=held)}" if held else ""
         return (
-            f"{len(self.playable)} of {len(self.cards)} replays in {where} "
+            f"{len(self.cards)} replays in {where} "
             f"({self.read} read, {self.cached} from cache{note}){back}"
         )
 
