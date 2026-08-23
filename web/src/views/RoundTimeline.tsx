@@ -7,28 +7,16 @@
  * actors they spawn, and it is available on any capture that parses -- a
  * replay with no decode at all still has kills, rounds and a side swap.
  *
- * What is on each row and where it came from
- * ------------------------------------------
- *   time      real, and shown as time *into the round* rather than into the
- *             match, because a round is what is being read
- *   agent     real -- read off the pawn's archetype, named through Riot's
- *             catalogue
- *   side      generated: `infer` two-colours the kill graph into A and B and
- *             stops, so which of them attacked is assigned, not read
- *   ability   real name for X and C, the internal name read out of the
- *             archetype path for Q and E, which vary by agent
- *   weapon    generated, from `model/synthetic.ts`
+ * The rows themselves are built by `roundevents.roundEvents`, which used to be
+ * a `rowsFor` in this file and moved out when the transport rail grew a hover
+ * tooltip.  Both now read one array, so a tick and a row cannot say different
+ * things about the same event.  What is real and what is generated per column,
+ * and why assists and orbs are absent, is written down there.
  *
- * Two rows the reference has that this does not: **assists**, because
- * `characterDeath` carries a killer, a victim and a time and nothing else; and
- * **orbs**, which are not among the seven event groups at all.  Two of its
- * filters go with them.  A checkbox that can never match anything is worse than
- * its absence -- the same argument that keeps `SIGHT` off a map with no mask.
- *
- * First blood is a second row at the same instant rather than a flag on the
- * first, which is the reference's own choice and a good one: it lets the
- * first-kill filter surface the moment in isolation instead of showing every
- * kill with one of them tinted.
+ * This file is what is left: the filters, the modal, and the row's own chrome.
+ * Two of the reference's filters are missing along with the rows they would
+ * match -- a checkbox that can never match anything is worse than its absence,
+ * the same argument that keeps `SIGHT` off a map with no mask.
  */
 
 import { useMemo, useState } from "react";
@@ -36,20 +24,10 @@ import { useMemo, useState } from "react";
 import type { Replay, Round, Weapon } from "../api/types";
 import { clockText, remainingMs } from "../model/roundclock";
 import type { Side } from "../model/synthetic";
-import { sideOf, weaponArt, weaponInRound } from "../model/synthetic";
 import { Icon, glyphs } from "./icons";
+import type { Kind } from "./roundevents";
+import { roundEvents } from "./roundevents";
 import { CheckRow, IconButton, Modal } from "./ui";
-
-type Kind = "kill" | "ability" | "ultimate" | "spike" | "first";
-
-interface Row {
-  key: string;
-  tMs: number;
-  kind: Kind;
-  side: Side | null;
-  /** Rendered content. Built here so the list stays a map over one array. */
-  body: React.ReactNode;
-}
 
 const FILTERS: Array<{ kind: Kind; label: string; icon: typeof glyphs.kills }> = [
   { kind: "kill", label: "Kills", icon: glyphs.kills },
@@ -59,158 +37,6 @@ const FILTERS: Array<{ kind: Kind; label: string; icon: typeof glyphs.kills }> =
   { kind: "first", label: "First Kill", icon: glyphs.firstBlood },
 ];
 
-const SPIKE_WORDS: Record<string, string> = {
-  planted: "Spike planted",
-  defused: "Spike defused",
-  exploded: "Spike detonated",
-};
-
-function Name({ text, side }: { text: string; side: Side | null }) {
-  return (
-    <span className={side ? `ev-name side-${side.toLowerCase()}` : "ev-name"}>
-      {text}
-    </span>
-  );
-}
-
-/** Everything in one round, in time order, with first blood duplicated. */
-function rowsFor(replay: Replay, round: Round, weapons: Weapon[] | undefined): Row[] {
-  const inRound = (t: number) => t >= round.start_ms && t < round.end_ms;
-  // The agent, not the inferred group: this interface says ATK and DEF, and a
-  // row already carries its side as a coloured left edge and a coloured name.
-  const nameOf = (actorId: number) => {
-    const player = replay.players.find((p) => p.actor_id === actorId);
-    if (player === undefined) {
-      return `#${actorId}`;
-    }
-    return player.agent || player.codename || player.label;
-  };
-  const sideAt = (actorId: number, tMs: number): Side | null => {
-    const player = replay.players.find((p) => p.actor_id === actorId);
-    return player ? sideOf(replay, player.team, tMs) : null;
-  };
-
-  const rows: Row[] = [];
-
-  const kills = replay.kills.filter((kill) => inRound(kill.t_ms));
-  for (const kill of kills) {
-    const gun = weaponArt(weapons, weaponInRound(replay, kill.killer, kill.round_no));
-    const side = sideAt(kill.killer, kill.t_ms);
-    const body = (
-      <>
-        <Name text={nameOf(kill.killer)} side={side} />
-        {gun?.killfeed_url ? (
-          <img className="ev-weapon" src={gun.killfeed_url} alt="killed" />
-        ) : (
-          <span className="ev-arrow">killed</span>
-        )}
-        <Name text={nameOf(kill.victim)} side={sideAt(kill.victim, kill.t_ms)} />
-      </>
-    );
-    rows.push({
-      key: `kill-${kill.t_ms}-${kill.victim}`,
-      tMs: kill.t_ms,
-      kind: "kill",
-      side,
-      body,
-    });
-  }
-
-  // The round's own first kill, repeated as its own tagged row.
-  const first = kills.reduce<(typeof kills)[number] | null>(
-    (earliest, kill) => (earliest === null || kill.t_ms < earliest.t_ms ? kill : earliest),
-    null,
-  );
-  if (first !== null) {
-    rows.push({
-      key: `first-${first.t_ms}`,
-      tMs: first.t_ms,
-      kind: "first",
-      side: sideAt(first.killer, first.t_ms),
-      body: (
-        <>
-          <Name text={nameOf(first.killer)} side={sideAt(first.killer, first.t_ms)} />
-          <span className="ev-arrow">killed</span>
-          <Name text={nameOf(first.victim)} side={sideAt(first.victim, first.t_ms)} />
-          <span className="ev-tag">FIRST BLOOD</span>
-        </>
-      ),
-    });
-  }
-
-  for (const cast of replay.ability_casts.filter((c) => inRound(c.t_ms))) {
-    /*
-      The **caster**, not `cast.actor_id`.
-
-      `actor_id` on a cast is the first ability actor it spawned, and no player
-      has that id -- so this resolved nobody and every ability row here was
-      drawn with no side: no coloured edge, and invisible to the Attackers and
-      Defenders filters two panels away.  Nothing failed, which is why it
-      lasted.  `player_actor_id` is the join `abilities.attribute` makes, and
-      it is null where two players share the agent rather than guessing one.
-    */
-    const side = cast.player_actor_id === null ? null : sideAt(cast.player_actor_id, cast.t_ms);
-    rows.push({
-      key: `cast-${cast.t_ms}-${cast.actor_id}-${cast.internal_name}`,
-      tMs: cast.t_ms,
-      kind: "ability",
-      side,
-      body: (
-        <>
-          <Name text={cast.identity || nameOf(cast.actor_id)} side={side} />
-          <span className="ev-verb">used</span>
-          {cast.icon_url ? <img className="ev-ability" src={cast.icon_url} alt="" /> : null}
-          {/* The published name where there is one and the name read out of
-              the archetype path where there is not -- but never annotated as
-              internal.  "(internal)" was a note to whoever built the decoder;
-              to somebody watching a replay it labels the ability as a piece of
-              plumbing rather than naming it. */}
-          <span className="ev-thing">{cast.published_name ?? cast.internal_name}</span>
-        </>
-      ),
-    });
-  }
-
-  for (const ult of replay.ultimates.filter((u) => inRound(u.t_ms))) {
-    const side = sideAt(ult.actor_id, ult.t_ms);
-    rows.push({
-      key: `ult-${ult.t_ms}-${ult.actor_id}`,
-      tMs: ult.t_ms,
-      kind: "ultimate",
-      side,
-      body: (
-        <>
-          <Name text={nameOf(ult.actor_id)} side={side} />
-          <span className="ev-verb">used their ultimate</span>
-        </>
-      ),
-    });
-  }
-
-  for (const event of replay.spike.filter((s) => inRound(s.t_ms))) {
-    rows.push({
-      key: `spike-${event.t_ms}-${event.kind}`,
-      tMs: event.t_ms,
-      kind: "spike",
-      // Deliberately null: a spike event carries no actor id, so it cannot be
-      // attributed to a side and must not be coloured as though it could.
-      side: null,
-      body: <span className="ev-thing">{SPIKE_WORDS[event.kind] ?? event.kind}</span>,
-    });
-  }
-
-  // Ties broken by kind, not by key: a kill and its first-blood twin share a
-  // millisecond, and sorting by key alphabetically put `first-` above `kill-`
-  // so the round opened with a tag for an event that had not been listed yet.
-  const rank: Record<Kind, number> = {
-    spike: 0,
-    ability: 1,
-    ultimate: 2,
-    kill: 3,
-    first: 4,
-  };
-  return rows.sort((a, b) => a.tMs - b.tMs || rank[a.kind] - rank[b.kind]);
-}
 
 export function RoundTimeline({
   replay,
@@ -237,7 +63,7 @@ export function RoundTimeline({
   const [sides, setSides] = useState<Side[]>(["ATK", "DEF"]);
 
   const rows = useMemo(
-    () => rowsFor(replay, round, weapons),
+    () => roundEvents(replay, round, weapons),
     [replay, round, weapons],
   );
   const shown = rows.filter(

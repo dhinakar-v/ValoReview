@@ -52,12 +52,15 @@ interface Entry {
   /**
    * Tints the row to match the mark it controls.
    *
-   * The rail is a 24px canvas, so it cannot carry a legend of its own and a
-   * tick cannot carry a `title`.  This menu already lists the four event kinds
-   * with a glyph and a sentence each, so it *is* the legend -- provided the
-   * colours agree with what the rail draws.
+   * This menu used to be the rail's whole legend, on the grounds that a 24px
+   * canvas can carry neither a key nor a `title` -- with the standing proviso
+   * that the colours agree with what the rail draws, which nothing could
+   * check.  The rail answers for itself now, by hover, and three of the four
+   * marks are drawn in the *side's* colour, so a swatch would name a colour
+   * they do not have.  Only the spike keeps one, because the plant really is
+   * this colour; its hint carries the other two.
    */
-  tone?: "kill" | "cast" | "ult" | "spike";
+  tone?: "spike";
   /**
    * Which canvases actually read this layer.
    *
@@ -148,31 +151,28 @@ export const EVENT_LAYERS: Entry[] = [
     key: "kills",
     label: "KILLS",
     icon: glyphs.kills,
-    hint: "A triangle per kill",
+    hint: "A skull on the rail per kill, in the killer's colour",
     drawnIn: [],
-    tone: "kill",
   },
   {
     key: "casts",
     label: "ABILITY CASTS",
     icon: glyphs.casts,
-    hint: "A bare stem per inferred ability cast",
+    hint: "A tick per inferred cast: above the rail for ATK, below for DEF",
     drawnIn: [],
-    tone: "cast",
   },
   {
     key: "ultimates",
     label: "ULTIMATES",
     icon: glyphs.ultimates,
-    hint: "A diamond per characterUltimateUsed event",
+    hint: "A taller tick in the same lane, per characterUltimateUsed event",
     drawnIn: [],
-    tone: "ult",
   },
   {
     key: "spike",
     label: "SPIKE",
     icon: glyphs.spike,
-    hint: "A square per plant, defuse and detonation",
+    hint: "A full-height line: gold to plant, green to defuse, orange to detonate",
     drawnIn: [],
     tone: "spike",
   },

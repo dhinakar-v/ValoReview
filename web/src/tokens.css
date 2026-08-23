@@ -97,8 +97,9 @@
      Each has exactly one job now.  Everything that sits *in* the page --
      panels, cards, the roster, the transport -- is separated by a 1px border
      and a step on the surface ramp, because a shadow under something that is
-     not floating is decoration.  `--shadow-1` is the kill toast and the hover
-     tooltip, `--shadow-2` the layers popover, `--shadow-3` the round-timeline
+     not floating is decoration.  `--shadow-1` is the clock pill and the kill
+     toast, `--shadow-2` the two hover tooltips -- the marker's and the rail's
+     -- and the layers popover, `--shadow-3` the round-timeline
      modal: the three things that genuinely hover over the map. */
   --shadow-1: 0 2px 10px color-mix(in srgb, black 50%, transparent);
   --shadow-2: 0 6px 20px color-mix(in srgb, black 55%, transparent);
@@ -126,10 +127,13 @@
   --page-max: 1440px;
   --bar-h: 40px;
 
-  /* The viewer's three bands and its two gutters, named because the grid, the
-     canvas sizing and four floating layers each depend on one of them. */
+  /* The viewer's top band and its two gutters, named because the grid, the
+     canvas sizing and the floating layers each depend on one of them.  There
+     was a `--viewer-foot-h` beside these and it is gone: nothing read it, so
+     it was a measurement of the transport that could not go stale visibly and
+     went stale silently the first time the rail changed height.  The transport
+     row is `auto` in the stage grid, which measures itself. */
   --viewer-bar-h: 40px;
-  --viewer-foot-h: 86px;
   --roster-w: clamp(228px, 17.5vw, 316px);
   /* A roster card floor, not its height: the cards stretch to fill the
      column, and this is the point below which one stops being legible. */

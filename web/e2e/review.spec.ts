@@ -67,7 +67,7 @@ test.describe("the rebuilt viewer", () => {
     expect(overflow.y, "the page is exactly the window").toBeLessThanOrEqual(0);
   });
 
-  test("is flat and square everywhere except the three floating layers", async ({
+  test("is flat and square everywhere except the floating layers", async ({
     page,
   }) => {
     await openFirstPlayable(page);
@@ -75,7 +75,18 @@ test.describe("the rebuilt viewer", () => {
       // The only elements allowed to float, and the only ones allowed a
       // shadow. Everything else separates with a 1px border and a step on the
       // surface ramp.
-      const floating = [".clock-pill", ".kill-chip", ".marker-tip", ".menu-panel", ".modal"];
+      //
+      // Six, and the title used to say three: the clock pill and the kill
+      // toast over the map, the marker tooltip beside a player, the rail's
+      // tooltip under the transport, the layers popover and the modal.
+      const floating = [
+        ".clock-pill",
+        ".kill-chip",
+        ".marker-tip",
+        ".rail-tip",
+        ".menu-panel",
+        ".modal",
+      ];
       const bad: string[] = [];
       for (const node of document.querySelectorAll("*")) {
         const style = getComputedStyle(node);

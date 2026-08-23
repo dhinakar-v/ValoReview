@@ -28,9 +28,11 @@
  * When everything is present this is not a panel on a page -- it is the page.
  * The canvas fills the window between a 40px bar and the transport, the two
  * rosters take a fixed gutter each side, and three things float over the canvas
- * itself: the round clock, the kill feed and the hover tooltip.  Those are the
- * only overlapping elements in the interface, and each keeps `--space-4` of
- * clearance from the canvas edge and from its neighbours.
+ * itself: the round clock, the kill feed and the hover tooltip.  Each keeps
+ * `--space-4` of clearance from the canvas edge and from its neighbours.  A
+ * fourth floats *below* the canvas rather than over it -- the rail's own
+ * tooltip, in `Transport` -- and it is the only overlapping element in this
+ * interface that is not one of these three.
  *
  * `.stage-canvas` holds **exactly one canvas** and `.panel.stage` stays the
  * outer node: `e2e/scene.spec.ts` locates the renderer through the first and

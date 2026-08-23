@@ -654,11 +654,13 @@ export function CheckRow({
   /**
    * Outlines the row in a colour that means something.
    *
-   * `a`/`b` are the team colours, as the reference does.  The four event tones
-   * are the rail's own tick colours, which is what makes the layers menu the
-   * legend for a 24px canvas that cannot carry one.
+   * `a`/`b` are the team colours, as the reference does.  `spike` is the last
+   * survivor of four event tones that made this menu the rail's legend back
+   * when the rail could carry neither a key nor a `title`.  Three of them went
+   * when their marks started being drawn in the *side's* colour, where one
+   * swatch on a row would state a colour the mark does not have.
    */
-  tone?: "a" | "b" | "kill" | "cast" | "ult" | "spike";
+  tone?: "a" | "b" | "spike";
   title?: string;
   disabled?: boolean;
   /**

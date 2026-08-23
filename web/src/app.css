@@ -877,10 +877,12 @@ option {
  * An edge only where there is something to say.
  *
  * Every card carried a 3px left edge, green when playable and red when not --
- * and `/api/library` filters to playable, so in practice every card on the
- * page had the green one.  An edge every row shares distinguishes nothing, and
- * the green was the only green in an interface whose two accents are the team
- * colours, so it fought every thumbnail it sat beside.
+ * and at the time `/api/library` filtered to playable, so in practice every
+ * card on the page had the green one.  An edge every row shares distinguishes
+ * nothing, and the green was the only green in an interface whose two accents
+ * are the team colours, so it fought every thumbnail it sat beside.  The list
+ * carries unplayable captures now, and what says so is the row's own chip
+ * rather than a returned second edge colour.
  *
  * What survives is the case that is actually a distinction: a capture that
  * could not be read gets a red edge, and everything else gets none.
@@ -1951,11 +1953,88 @@ main.viewer {
   padding: var(--space-2) var(--space-4);
 }
 
-.strip {
+/*
+ * The rail: a canvas, a layer of kill marks over it, and the hover tooltip.
+ *
+ * The wrapper is the flex item and the positioning context; the canvas is
+ * `width: 100%` inside it rather than `flex: 1`, because a canvas with no
+ * width rule falls back to its intrinsic 300px and every tick would compress
+ * into the left third of a rail the skulls were still spread across.
+ */
+.rail {
+  position: relative;
   flex: 1;
   min-width: 0;
+}
+
+.strip {
   display: block;
+  width: 100%;
   cursor: pointer;
+}
+
+/*
+ * The kills, as DOM rather than as ink.
+ *
+ * A skull is Riot's own idea of a kill and lucide's `Skull` is already the
+ * glyph this interface uses for one, in the layers menu and in the round
+ * timeline.  `lucide-react` publishes components and not path data, so drawing
+ * the same mark on the canvas would mean either a second dependency for one
+ * icon or a hand-copied outline that could drift from the one beside it.  A
+ * span costs nothing here -- a round holds at most ten kills, against dozens of
+ * casts -- and it is what makes the whole layer assertable under jsdom, where
+ * the canvas has no 2D context at all.
+ *
+ * Positioned as a percentage of the same box the canvas maps linearly, so the
+ * two coordinate systems agree by construction rather than by a shared
+ * measurement that could go stale on a resize.
+ */
+.rail-kills {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.rail-skull {
+  position: absolute;
+  transform: translateX(-50%);
+  display: block;
+  pointer-events: none;
+  /* The killer's side, through the same `--side` the roster and the timeline
+     rows set. A kill whose killer resolves to nobody falls back rather than
+     being drawn as one side or the other. */
+  color: var(--side, var(--team-unknown));
+}
+
+/*
+ * What a mark says when you point at it.
+ *
+ * It renders the round timeline's own rows, so `.ev-name`, `.ev-weapon` and
+ * `.ev-ability` below are doing the work and there is no second set of rules
+ * for the same sentences.  `--shadow-2` and not `--shadow-1`: this is the
+ * second hover tooltip in the interface and it matches the first, `.marker-tip`.
+ */
+.rail-tip {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  z-index: var(--z-tooltip);
+  width: 244px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--tooltip-bg);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-2);
+  font-size: var(--text-sm);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.rail-tip .ev-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .clock-readout {
@@ -2153,24 +2232,16 @@ main.viewer {
 }
 
 /*
- * The four event tones, which are the rail's own tick colours.
+ * The one event tone left, and why the other three went.
  *
- * The rail is a 24px canvas and cannot carry a legend, so this menu is the
- * legend: a row's glyph is the shape and its colour is the colour, and reading
- * the strip stops being a matter of hovering each tick.
+ * This menu used to be the rail's legend -- a row's glyph was the mark's shape
+ * and its colour was the mark's colour -- because a 24px canvas could carry
+ * neither a key nor a `title`.  The rail answers for itself now: a kill, a cast
+ * and an ultimate are all drawn in the *side's* colour, so a single swatch on
+ * a row would be a false legend rather than a helpful one.  The spike keeps its
+ * swatch because the plant really is this colour; the hint beside it carries
+ * the other two.
  */
-.check-row.is-kill {
-  color: var(--text-primary);
-}
-
-.check-row.is-cast {
-  color: var(--accent);
-}
-
-.check-row.is-ult {
-  color: var(--ult);
-}
-
 .check-row.is-spike {
   color: var(--spike-armed);
 }
