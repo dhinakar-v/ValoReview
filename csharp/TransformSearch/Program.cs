@@ -83,6 +83,7 @@ switch (mode)
               --seed-b N       the seed a survivor must also explain (default: the next one)
               --min-payloads N smallest seed constants will consider (default 40)
               --constants A:O:add|sub   the keystream constants the lane searches use
+              --check FILE     a second corpus a recovered 8-bit lane is scored against
 
             The vocabulary, the descending-operand prior and the scoring mask are
             explained in Ops.cs, Search.cs and Fingerprint.cs. What calibrates
@@ -745,23 +746,49 @@ void Lane8Command()
 
     var candidate = Parse(sequence);
     var lane = new Lane(candidate);
-    var cases = Lane8Search.Cases(path, lane, constants, OptionInt("rank-n", 60));
-    if (cases.Count < 8)
+    // Two quotas, because the two kinds of case do different jobs. A fitted
+    // case has its final byte slot solved from its plaintext, so it must be
+    // fully pinned; a masked one pins seven bits of eight and is what the
+    // held-out filter and the multiplier recovery run on, because those are the
+    // only cases whose plaintext is ever anything but zero.
+    var cases = Lane8Search.Cases(path, lane, constants, OptionInt("pinned", 24), OptionInt("rank-n", 1000));
+    var pinned = cases.Count(probe => probe.Mask == 0xFF);
+
+    // A fitted case has to be fully pinned, because the final byte slot is
+    // solved from its plaintext -- and it has to have an **odd** state, because
+    // solving that slot inverts a multiplication by it. An odd state names one
+    // multiplier per operand; an even one names up to 128, and every one of them
+    // is a separate candidate to test. Six even-state fitted cases turned a
+    // three-minute search into one that had not finished in twenty-two.
+    var fit = cases.Where(probe => probe.Mask == 0xFF && (probe.State & 1) == 1).Take(6).ToList();
+    if (fit.Count < 6)
     {
-        Console.WriteLine($"only {cases.Count} payloads pin their last byte; a longer corpus is needed");
+        Console.WriteLine($"only {fit.Count} payloads pin their last byte whole under an odd state "
+            + $"({pinned} pin it at all); a longer corpus is needed");
         return;
     }
 
-    var fit = cases.Take(6).ToList();
-    var held = cases.Skip(6).ToList();
+    // The held-out filter runs inside the search, once per surviving candidate,
+    // so it is a subset; the multiplier recovery runs a few dozen times in all
+    // and gets every case there is, because what it needs is distinct states.
+    var held = cases.Where(probe => !fit.Contains(probe)).Take(OptionInt("held", 60)).ToList();
     var shapes = Lane8Search.Shapes(candidate);
+    var searchable = shapes.Count(Lane8Search.Searchable);
 
     Console.WriteLine($"lane    {sequence}");
     Console.WriteLine($"const   {constants}");
-    Console.WriteLine($"cases   {cases.Count:N0} payloads pin their last byte to one value; "
-        + $"{fit.Count} fitted, {held.Count} held out");
-    Console.WriteLine($"shapes  {shapes.Count}, byte slots searched over 256 residues, "
-        + $"rotate slots over {Lane8Search.RotateMultipliers.Length} published multipliers\n");
+    Console.WriteLine($"cases   {cases.Count:N0} payloads pin their last byte -- {pinned} of them whole and "
+        + $"{cases.Count - pinned} to {Lane8Search.MinPinnedBits} bits of 8; {fit.Count} fitted, "
+        + $"{held.Count} held out, all {cases.Count:N0} used to recover the multipliers");
+    Console.WriteLine($"shapes  {searchable} of {shapes.Count}, byte slots searched over 256 residues, "
+        + $"rotate distances over all {Lane8Search.DistanceCount} values per case");
+    if (searchable < shapes.Count)
+    {
+        Console.WriteLine($"        {shapes.Count - searchable} skipped for carrying more than "
+            + $"{Lane8Search.MaxByteSlots} byte slots");
+    }
+
+    Console.WriteLine();
 
     var clock = Stopwatch.StartNew();
     var fits = Lane8Search.Run(shapes, fit, held, threads, OptionInt("shortlist", 20_000));
@@ -773,10 +800,80 @@ void Lane8Command()
         return;
     }
 
-    foreach (var found in fits.OrderByDescending(f => f.Held).Take(OptionInt("top", 8)))
+    Console.WriteLine($"fitted  {fits.Count:N0} sets of byte multipliers explain the {fit.Count} fitted cases "
+        + $"({clock.Elapsed.TotalSeconds:N1}s)\n");
+
+    // A lane that holds every case is not yet an answer: the fitting stage let
+    // each case choose its own rotate distances, so what remains is whether one
+    // multiplier per slot produces the distances they all needed. A lane whose
+    // distances no multiplier explains is discarded here rather than reported.
+    var top = OptionInt("top", 8);
+    var holders = fits.Where(f => f.Held == held.Count).ToList();
+    if (holders.Count == 0)
     {
-        Console.WriteLine($"holds {found.Held,3:N0} of {held.Count:N0}  {Lane8Search.Describe(found)}");
+        Console.WriteLine("nothing holds every held-out case, so nothing here is the lane. The best few:\n");
+        foreach (var found in fits.OrderByDescending(f => f.Held).Take(top))
+        {
+            Console.WriteLine($"holds {found.Held,3:N0} of {held.Count:N0}  "
+                + $"{Lane8Search.Describe(found.Shape, found.Bytes, null)}");
+        }
+
+        Console.WriteLine($"\n{clock.Elapsed.TotalSeconds:N1}s");
+        return;
     }
 
-    Console.WriteLine($"\n{clock.Elapsed.TotalSeconds:N1}s");
+    // A second corpus the search never saw. Its cases are scored against the
+    // recovered lane in its exact form -- multipliers and all -- which is a
+    // stricter question than the one the search answered, and the only one that
+    // is not fitted to the corpus it came from.
+    var check = options.TryGetValue("check", out var checkPath) && checkPath.Length > 0
+        ? Lane8Search.Cases(checkPath, lane, constants, OptionInt("pinned", 24), OptionInt("rank-n", 1000))
+        : null;
+
+    var recovering = Stopwatch.StartNew();
+    var attempts = OptionInt("recover", 64);
+    int explained = 0, unexplained = 0, loose = 0;
+    foreach (var found in holders.Take(attempts))
+    {
+        var recovery = Lane8Search.Recover(found.Shape, found.Bytes, cases, threads, 4);
+        if (recovery.Underconstrained)
+        {
+            loose++;
+            continue;
+        }
+
+        if (recovery.Multipliers.Count == 0)
+        {
+            unexplained++;
+            continue;
+        }
+
+        explained++;
+        if (explained > top)
+        {
+            continue;
+        }
+
+        foreach (var rotate in recovery.Multipliers)
+        {
+            var here = Lane8Search.Holds(found.Shape, found.Bytes, rotate, cases);
+            var elsewhere = check is null
+                ? string.Empty
+                : $", {Lane8Search.Holds(found.Shape, found.Bytes, rotate, check):N0} of {check.Count:N0} on the check corpus";
+            Console.WriteLine($"holds {here:N0} of {cases.Count:N0}{elsewhere}");
+            Console.WriteLine($"      {Lane8Search.Describe(found.Shape, found.Bytes, rotate)}");
+        }
+    }
+
+    recovering.Stop();
+    Console.WriteLine(
+        $"\nheld    {holders.Count:N0} of them hold every held-out case; {explained:N0} have a multiplier "
+        + $"per rotate slot, {unexplained:N0} have none and {loose:N0} left a slot unconstrained");
+    if (holders.Count > attempts)
+    {
+        Console.WriteLine($"        {holders.Count - attempts:N0} were not attempted (--recover to raise)");
+    }
+
+    Console.WriteLine($"\n{clock.Elapsed.TotalSeconds:N1}s searching, "
+        + $"{recovering.Elapsed.TotalSeconds:N1}s recovering multipliers");
 }

@@ -90,8 +90,9 @@ compositions a second on twelve threads.
     transform-search lane32 --corpus cap1304.jsonl --constants 076DC658:28:sub \
         --sequence rotr7,xornot6,sub5,swap,add3,add2,rotl1
 
-    # The 8-bit lane, the same way.
-    transform-search lane8 --corpus cap1304.jsonl --constants 076DC658:28:sub \
+    # The 8-bit lane, the same way, scored against a second capture as well.
+    transform-search lane8 --corpus cap1304.jsonl --check cap1304b.jsonl \
+        --constants 076DC658:28:sub \
         --sequence rotr7,xornot6,sub5,swap,add3,add2,rotl1
 
 `make-known-plaintext.sh <scratch> <demo-dir> <out>` builds the oracle's block
@@ -123,6 +124,11 @@ each at rank 1 of thousands of distinct surviving behaviours:
 | 12.10 | 6 | rank 1 | 14,177 behaviours |
 | 13.00 | 6 | rank 1 | 508 behaviours |
 | 12.11 | 8 | rank 1 | 9,611 behaviours |
+
+`constants`, `lane32` and `lane8` recover all three builds' published answers
+too, and `lane8` is the one to re-run first after any change here: it exercises
+the keystream, the 64-bit lane and the chain parser on the way to its own answer,
+so a fault anywhere upstream shows up as a lane that does not recover.
 
 `emit` output is checked against `vrfnet.payload_transform` bit for bit — all
 three published sequences plus synthetic ones covering all ten operation kinds,
@@ -178,34 +184,54 @@ bit count leaves exactly one lane's remainder has exactly one unknown.
   and `% 31` distances: sixteen of them, and the right one decodes 15 to 22
   payloads where every other variant decodes **zero**.
 
-- **8-bit** (`lane8`): a bit count 8 past a multiple of 64 runs one 8-bit block
-  and nothing else, and the rep layout pins its plaintext byte -- exactly one of
-  256 lets the payload consume to zero bits. Each such payload is a (state,
-  ciphertext, plaintext) triple, and a wrong lane has one chance in 256 per
-  triple. This lane is a search rather than a neighbourhood, because its
-  operands are arbitrary multipliers; what makes it tractable is that a chain of
-  multipliers is one multiplier, a byte operand only depends on its multiplier
-  modulo 256, and the last byte slot is solved rather than enumerated.
+- **8-bit** (`lane8`): a bit count 8 to 15 past a multiple of 64 runs one 8-bit
+  block and nothing else -- the 32-bit lane needs more than 31 bits, and the tail
+  XOR that runs on the spare bits needs no lane at all, only `tail_xor` and the
+  keystream byte. The rep layout then says what that one byte must be, and a
+  wrong lane has one chance in 256 (or 128, see the mask below) per case. This
+  lane is a search rather than a neighbourhood, because its operands are
+  arbitrary multipliers; four things make it tractable. A chain of multipliers is
+  one multiplier. A byte operand only depends on its multiplier modulo 256. The
+  last byte slot is solved rather than enumerated -- which is why a fitted case
+  must have an **odd** state, since solving it inverts a multiplication by the
+  state and an even one names up to 128 multipliers instead of one. And a rotate
+  slot's multiplier is not searched at all: a distance is one of seven values, so
+  each case picks its own, and the multiplier behind them is a 2^32 scan per slot
+  afterwards -- which is a **filter** as much as a recovery, because one
+  multiplier has to produce the distance every case needed.
+
+  **What a case can pin is measured, and it decided the shape of all of this.** A
+  payload whose bit count is a whole number of bytes pins its byte to `0x00`
+  every time -- it is the chain's terminating zero handle, byte-aligned -- so a
+  lane ending in a rotate has *no* evidence about that rotate, since every
+  distance rotates zero to zero. A payload with a partial byte pins seven bits of
+  eight and the eighth is real, which is what pins a distance; 13.00's corpus
+  holds 27 of the first kind and thousands of the second. So a case carries a
+  `Mask`, the fitted cases are the fully pinned ones and everything else is
+  held-out evidence. Cases are also deduplicated **by state**: two payloads under
+  one state say the same thing to a multiplier scan, and 13.00's 212 cases turned
+  out to carry 26 distinct states.
 
 Both are validated the same way as everything else here: 12.10, 12.11 and 13.00
-recover their published lanes, 13.00's including the `not` its 64-bit lane does
-not carry and the chained multipliers that collapse to 0x61 and 0x29.
+recover their published lanes -- every operation, every byte multiplier and every
+rotate multiplier, including 13.00's trailing `0x0B`, which the older search only
+ever got by having it in a list. 13.04's comes back holding all 349 cases of the
+capture it was searched on and **all 203 of a second capture it never saw**,
+which is what `--check` reports.
 
 **`lane8` stops on an answer, never on a count.** Six fitted cases are 2^48
 against a wrong lane and still admit lanes that fit those six and no others --
 13.00 produces three before the published one. What ends the search is a lane
-that reproduces every held-out case as well, which is what the `holds` column
-reports.
+that reproduces every held-out case as well *and* whose per-case distances one
+multiplier per slot explains.
 
 ## What this does not do
 
-It derives `_u64`, the four constants and the 32-bit lane. 13.04's 8-bit lane is
-**not** recovered: its rotate slots are enumerated over the ten multipliers the
-published builds use, and none of them fits. Solving the rotate distances
-directly -- there are only seven per slot -- rather than guessing their
-multipliers is the way past that, and `docs/payload-transform-13-04.md` carries
-the plan. The 32-bit and 8-bit lanes are *close* to structural
-mirrors of it but not exact — 13.00's 32-bit lane carries a `not` its 64-bit
+It derives `_u64`, the four constants and both narrower lanes, which is the whole
+transform. What it does not do is prove one: a transform is proved against ground
+truth, by decoding a match and checking positions, and nothing here decodes a
+match. The 32-bit and 8-bit lanes are *close* to structural
+mirrors of the 64-bit one but not exact — 13.00's 32-bit lane carries a `not` its 64-bit
 lane does not, and 12.10's operand complement appears in one lane and not the
 other — so they are not derivable from it for free -- which is why
 each is searched rather than copied. Nothing is registered until ground truth
