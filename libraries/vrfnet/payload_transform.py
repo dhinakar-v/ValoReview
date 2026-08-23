@@ -531,12 +531,15 @@ class Transform1304(_Transform):
         return _rotl8(value, (((state * 0x0B) & U32) % 7) + 1)
 
 
-# Transform1304 is defined above and is deliberately **not** here. Registering
-# a build unhides its captures for the whole pipeline and hands them to the C#
-# decoder, which carries its own copy of the transform -- so registering before
-# that copy exists and before `tests/test_positions.py` passes over a 13.04
-# capture would scatter coordinates with nothing complaining. The omission is
-# the rule in docs/payload-transform-13-04.md, not an oversight.
+# 13.04 is registered here only because both halves of the rule it was held
+# back for are now met: the parser clone carries the same transform, so the C#
+# decoder can read the build, and the ground-truth checks pass over both 13.04
+# captures -- killer and victim within weapon range at 200 of 201 kills and all
+# of the second capture's 167, every player pawn's spawn location within 0.1 uu
+# of its own first movement sample, pitch inside ten degrees at 99%.  Registering
+# before either would have unhidden the captures and handed them to a decoder
+# that could not read them, or to one that read them wrongly with nothing
+# complaining.  docs/payload-transform-13-04.md carries the numbers.
 TRANSFORMS: dict[str, _Transform] = {
     t.branch: t
     for t in (
@@ -545,6 +548,7 @@ TRANSFORMS: dict[str, _Transform] = {
         Transform1300(),
         Transform1301(),
         Transform1302(),
+        Transform1304(),
     )
 }
 

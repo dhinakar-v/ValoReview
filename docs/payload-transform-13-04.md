@@ -1,14 +1,17 @@
 # Deriving a payload transform for `++Ares-Core+release-13.04`
 
-Measured truth about an unfinished piece of work. What is written down here is
-what was established by running something, and the open questions at the end are
-stated as open questions.
+Measured truth about a transform nobody published, recovered from the captures
+it applies to. What is written down here is what was established by running
+something, and the open questions at the end are stated as open questions. The
+derivation is **finished** -- all three lanes, the four constants, ground truth
+and registration -- and it is written as a record of how, because Riot rotates
+the transform every patch and 13.05 will need this again.
 
 ## Why this exists at all
 
 The two captures in `Demos/` are both `++Ares-Core+release-13.04`, and
-`payload_transform.SUPPORTED_BRANCHES` holds 12.10, 12.11 and 13.00–13.02. So
-neither decodes.
+`payload_transform.SUPPORTED_BRANCHES` held 12.10, 12.11 and 13.00–13.02. So
+neither decoded.
 
 **There is nothing to port.** Upstream `ValorantReplayParser` tops out at 13.02
 (`7106d5a`, 2026-07-29) — no branch, tag or stash mentions 13.03 or 13.04, and
@@ -479,14 +482,40 @@ percentage above is interpretable. `csharp/TransformSearch/` is the searcher
 over that corpus, and it lives in the repo rather than in scratch because Riot
 rotates the transform every patch: 13.05 will need it again.
 
-## The rule that still stands
+## Ground truth, and the registration it allowed
 
-`vrfnet.payload_transform.Transform1304` now exists and is deliberately **not**
-in `TRANSFORMS`; the comment above that dict says so, so the omission cannot be
-read as an oversight and tidied away. Nothing is registered until it is proved
-against ground truth. The Python `decode` is never on the positions path —
+The transform is registered, and this is what it took. Both 13.04 captures were
+decoded by the C# decoder -- the parser clone carries
+`ValorantSeededTransform13_04`, derived the same way and cross-checked against
+the Python by eleven known-answer vectors -- and then measured the way
+`tests/test_positions.py` measures the reference capture:
+
+| | Lotus capture | second capture | 12.10 reference |
+|---|---|---|---|
+| kill pairs measured | 200 | 164 | 190 |
+| median killer-victim distance | 1,796 uu | 1,521 uu | ~2,000 uu |
+| inside weapon range (5,000 uu) | 99.5% | 100% | 100% |
+| pitch inside 10 degrees | 99.0% | 98.8% | 98.4% (library) |
+| yaw control, median error | 0.42 deg | 0.46 deg | -- |
+| spawn location vs own first sample | 0.1 uu max | 0.1 uu max | 91.7 uu max (library) |
+
+One kill of the 200 spans 5,125 uu, which is why
+`TheDerivedTransformDecodesRealMatches` holds a derived build to a **share**
+where the reference capture is held to a maximum. A 10 Hz track and a
+long-range weapon can produce that; a wrong transform cannot produce the other
+199, because a wrong transform places nobody near anybody -- the same reasoning
+that makes this the check `clean_packet_rate` could never be.
+
+**The rule that still stands.** Nothing is registered in
+`payload_transform.TRANSFORMS` until it is proved against ground truth. 13.04
+was held out of it until both halves were true -- a decoder that could read the
+build, and a measurement over a decoded match -- and the standing check is in
+the test suite now rather than in a session's scratch directory. The Python `decode` is never on the positions path —
 `tracks.py:266` discards `transform_for`'s return and uses it as a gate — so
-registering 13.04 there is enough to unhide the captures and hand them to the
-C# decoder. If the two implementations disagreed, nothing would complain and
-the coordinates would simply scatter. `tests/test_positions.py` is the only
-thing that would catch it.
+registering 13.04 there is what unhides the captures and hands them to the C#
+decoder. If the two implementations disagreed, nothing would complain and the
+coordinates would simply scatter, which is why the eleven vectors in
+`tests/test_payload_transform.py` come from the **C#** port rather than from the
+Python one: for every other build they are upstream's own answers, and for this
+one they are the only thing that compares the two halves of a derived
+transform.
