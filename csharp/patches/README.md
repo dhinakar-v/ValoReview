@@ -9,9 +9,15 @@ lives in this directory as a patch, or the next clean clone silently loses it.
 Apply with:
 
     cd ../ValorantReplayParser
-    git apply ../ValoReview/csharp/patches/0001-payload-capture.patch
+    git apply ../ValoReview/csharp/patches/0002-transform-13-04.patch
 
 Then rebuild with `runners\build-decoder.bat`.
+
+**Apply `0002` to a fresh clone; `0001` is a tool and most clones do not want
+it.** The two touch the same list of registered transforms, so applying `0001`
+afterwards fails on that one hunk -- resolve it by applying `0001` and adding
+`new ValorantSeededTransform13_04(),` back to the array it rewrites. Deriving a
+transform is the only reason to have both.
 
 ---
 
@@ -50,3 +56,27 @@ Environment:
 
 This patch is a **tool**, not a fix — it is not wanted upstream and should not
 be merged into a released decoder.
+
+---
+
+## `0002-transform-13-04.patch`
+
+`ValorantSeededTransform13_04`, and its line in the registry. Upstream stops at
+13.02, so unlike every other transform in that clone this one was **derived**
+rather than read off the client: `csharp/TransformSearch/` recovered all three
+lanes and the four keystream constants from captured payloads, and
+`docs/payload-transform-13-04.md` is the evidence for each one.
+
+It is here because the decoder cannot read a 13.04 capture without it and a
+clean clone would silently lose it -- and because it is half of a pair. The
+other half is `vrfnet.payload_transform.Transform1304`, and the eleven vectors
+in `tests/test_payload_transform.py` were generated from *this* file so that the
+two halves cannot drift: a disagreement between them would scatter coordinates
+with nothing complaining, which is the one failure mode a derived transform
+adds. Change one, regenerate the vectors, and run
+`tests/test_positions.py::TheDerivedTransformDecodesRealMatches`.
+
+Unlike `0001`, this one **is** upstreamable in principle, and the two
+equivalent forms it notes in comments are why it says so out loud: no capture
+can separate `init_a_offset` 0x28-with-a-subtraction from 0x58-with-an-addition,
+so the file names the pair rather than implying the client was read.
