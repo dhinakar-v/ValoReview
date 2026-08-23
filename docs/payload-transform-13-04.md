@@ -236,6 +236,40 @@ each scoring 15 to 22 payloads where every other variant scores **zero**.
 13.04's scores 16 of 84 on the swept capture and 33 of 46 on the held-out one,
 against zero for the rest.
 
+**13.04's 8-bit lane, recovered, and with it the whole transform:**
+
+    rotr8 by (state * 0x12959C3 % 7) + 1
+    xor  (state * 0x29) & 0xFF
+    sub  (state * 0x1B) & 0xFF
+    swap8
+    add  (state * 0xAC) & 0xFF
+    rotl8 by (state * 0x0B % 7) + 1
+
+Same skeleton as the other two lanes, with a multiplier where they take a
+rotated state. `0x0B` is in the published vocabulary; **`0x12959C3` is not**, and
+that single value is why ten minutes of enumerating the published multipliers
+found nothing. Sixteen spellings of the same function came back together and are
+reported as such -- a `not` commuted past an operation, and the pair
+`xor 0xA9 / sub 0x9B` for `xor 0x29 / sub 0x1B`, whose two extra `0x80`s cancel
+exactly.
+
+**The whole transform, scored end to end.** Not one lane against payloads shaped
+to isolate it, but every payload of a corpus decoded through all three lanes and
+the tail XOR, asking whether the result is a rep layout consuming to exactly zero
+bits -- the same measure that gave 12.10 its 66.59% at the top of this document:
+
+| corpus | 13.04's recovered transform | a published transform as control |
+|---|---|---|
+| 13.04 Lotus capture (swept) | **62.11%** of 20,000 | 12.10: 0.01%, 13.00: 0.00% |
+| 13.04 second capture (never seen) | **73.28%** of 20,000 | 12.10: 0.00%, 13.00: 0.00% |
+| 12.10 capture under 12.10's own transform | 68.86% | 13.00: 0.00% |
+| 13.00 capture under 13.00's own transform | 67.73% | 12.10: 0.03% |
+
+The rate is a property of the capture as much as of the transform -- the payloads
+that do not parse are ClassNetCache blobs, which carry no handle chain under any
+transform -- so what matters is that 13.04 sits inside the band its two solved
+neighbours set, and that every control is zero.
+
 **The 32-bit and 8-bit lanes are not structural mirrors of the 64-bit lane**,
 and that was checked rather than assumed, because it is nearly true and the
 temptation is real: 13.00's 32-bit lane carries a `not` its 64-bit lane does
@@ -314,6 +348,24 @@ published answer ranked below more than a million of them. A statistic that
 separates two populations by many sigma still says nothing about the extreme
 tail of four billion draws.
 
+**Enumerating the published multipliers for the 8-bit lane's rotate slots.** Ten
+minutes over all eighteen shapes and all 256 residues of both byte slots found
+nothing. The prior was simply wrong for this build -- 13.04's first rotate takes
+`0x12959C3`, which is in no published lane -- and it was wrong in the way a prior
+usually is: 12.10 and 12.11 use 0x0CC6DB61 and 0x2751B, 13.00 and 13.01 use 0x0B
+and 0x533, 13.02 uses 0x79, so Riot rotates these constants exactly as it rotates
+everything else. The seven distances a slot can take are the thing to search;
+the 2^32 multiplier behind them is the thing to *solve*.
+
+**Searching a shape where a `not` sits between two adds.** The fold that makes
+adjacent adds one slot stops at a `not`, so those variants carry a fourth byte
+slot -- 256 times the work, and 13.04's search did not finish in twenty-two
+minutes. It also buys nothing, which is algebra rather than luck:
+`~(v + a) + b` is `~v + (b - a)`, and the difference of two byte operands is a
+byte operand, so the `not` moves to the front of the run and the shape is one the
+variant list already carries. `Lane8Search.Shapes` performs that move, and the
+whole search dropped to two seconds.
+
 **Picking the seed to sweep by how busy it is.** The busiest seed in the 12.10
 corpus carries 89 whole payloads and every one is a ClassNetCache blob: the
 first block opens `handle 495, length 2` then `handle 72`, a handle that
@@ -327,66 +379,91 @@ block past the first, so a 22-block payload is twenty-one constraints and a
 payloads and overflows the survivor list; ranking by states picks one with five
 payloads of 1,408 bits and keeps 198,027.
 
-## What is open
+## How the 8-bit lane was recovered
 
-**The 8-bit lane**, which is the last piece and the only one that is not a
-neighbourhood of the 64-bit skeleton: it is where the arbitrary multipliers live
--- 0x31, 0x29, 0x533, 0x0CC6DB61 and the rest -- so its operands cannot be
-derived from the lane above it.
+It is the one lane that is not a neighbourhood of the 64-bit skeleton: it is
+where the arbitrary multipliers live -- 0x31, 0x29, 0x533, 0x0CC6DB61 and the
+rest -- so its operands could not be derived from the lane above it.
 
-Its oracle is settled and is the strongest of the three. A payload whose bit
-count is 8, 16 or 24 past a whole number of blocks runs only the 8-bit loop
-after its 64-bit blocks -- the 32-bit lane needs more than 31 bits left and the
-tail XOR needs a partial byte -- and for the single-block case the plaintext byte
-is *pinned*: of the 256 possible last bytes, the exact-consumption parse accepts
-**exactly one**, measured over 39 payloads of 12.10 and 41 of 13.04. Each such
-payload is therefore a (state, ciphertext, plaintext) triple the lane has to
-reproduce, and a wrong lane has one chance in 256 per triple.
+Its oracle is a payload that leaves the 8-bit loop exactly one byte and nothing
+else: 8 to 15 bits past a whole number of 64-bit blocks, so the 32-bit lane never
+runs (it needs more than 31 bits) and the tail XOR, which does run when the count
+is not a whole number of bytes, needs no lane at all -- only `tail_xor` and the
+keystream byte, both known once the constants are. Of the 256 possible values for
+that one lane byte, few let the rep layout consume the payload, and the bits every
+survivor agrees on are the evidence.
 
-The search is `transform-search lane8`, and three reductions make it cheap: a
-chain of multipliers is one multiplier, since `(state * a) * b` is
-`state * (a * b)`; a byte operand depends on its multiplier only **modulo 256**,
-so a byte slot has 256 candidates rather than 2^32; and the last byte slot is
-not searched at all, because running a case forward through the slots before it
-and backward through the operations after it leaves the operand between them as
-arithmetic, which a case with an odd state turns into a multiplier outright. It
-recovers all three published 8-bit lanes in under a second each, every one
-reproducing every held-out case -- including 13.00's, whose operands are the
-chained `mix_byte * 0x1B` and `mix_byte * 0x33` that collapse to single
-multipliers 0x61 and 0x29.
+Four reductions make the search cheap: a chain of multipliers is one multiplier,
+since `(state * a) * b` is `state * (a * b)`; a byte operand depends on its
+multiplier only **modulo 256**, so a byte slot has 256 candidates rather than
+2^32; the last byte slot is not searched at all, because running a case forward
+through the slots before it and backward through the operations after it leaves
+the operand between them as arithmetic; and **a rotate slot's multiplier is not
+searched either** -- a distance is one of seven values, so a case admits 49
+distance pairs whatever multiplier produced them, and fitting the byte
+multipliers against per-case distances costs 49 x 256^2 per shape and assumes
+nothing. The multiplier behind the distances is then one 2^32 scan per slot,
+whose first case rejects six candidates in seven.
 
-**It does not recover 13.04's, and the reason is named.** Only the rotate slots
-still take a whole 32-bit multiplier, because a rotate distance is
-`(product % 7) + 1` rather than a masked byte, and those are enumerated over the
-ten multipliers the published builds use. Ten minutes over all eighteen shapes
-and all 256 residues of both byte slots found nothing, which says the prior is
-wrong for this build -- unsurprising, since Riot rotates these constants too:
-12.10 and 12.11 use 0x0CC6DB61 and 0x2751B, 13.00 and 13.01 use 0x0B and 0x533,
-13.02 uses 0x79.
+**That last step is a filter and not merely a recovery.** The fitting stage lets
+each case choose its own distance, which is weaker per case than a fixed
+multiplier; what puts it back is that one 32-bit multiplier per slot has to
+produce the distance *every* case needed. For 13.04, sixteen sets of byte
+multipliers hold every held-out case and all sixteen are the same function; for a
+wrong lane, nothing survives both halves.
 
-The way past it is to stop guessing the rotate multipliers and solve them. A
-rotate distance is one of **seven** values, so a case admits 49 distance pairs;
-fitting the byte multipliers against per-case distances rather than against a
-guessed multiplier costs 49 x 256^2 per shape and assumes nothing. What comes
-out is a distance *vector* per slot -- one value per case -- and the multiplier
-that produces it is then a single 2^32 scan per slot, rejecting seven candidates
-in eight on the first case. That is the next thing to build, and it belongs in
-`Lane8Search` beside the search that is there.
+**Three payload facts had to be measured before any of it worked**, and each was
+a surprise:
+
+- **A payload whose bit count is a whole number of bytes pins its lane byte to
+  `0x00`, always.** It is the chain's terminating zero handle, byte-aligned by
+  construction: all 39 such cases of 12.10 and all 27 of 13.00 carry the same
+  plaintext. A lane whose last operation is a rotate then has *no* evidence about
+  that rotate, because every distance rotates zero to zero -- 13.00's final
+  `0x0B` is unidentifiable from those payloads, and 13.04's `0x0B` sits in
+  exactly the same position. The tool reports that rather than picking whichever
+  multiplier it tried first.
+- **The partial byte is what breaks that tie.** With a tail the terminator
+  straddles a byte boundary, so the lane byte carries seven zero bits and one
+  real one: 2,443 payloads of the 13.00 corpus pin seven bits of eight where 27
+  pin all eight, and a case whose real bit is set pins a rotate distance
+  outright. Hence a case carries a **mask**, and hence the search fits on the
+  fully pinned ones -- the final byte slot is solved from a plaintext -- while the
+  held-out filter and the multiplier scan run on all of them.
+- **A fitted case must have an odd state.** Solving the last byte slot inverts a
+  multiplication by the state: an odd state names one multiplier per operand, an
+  even one names up to 128, and every one is a separate candidate. Six
+  even-state fitted cases turned a three-minute search into one that had not
+  finished in twenty-two.
+
+Two more measurements shaped the search itself. **One state, one case**: 13.00's
+212 cases carried 26 distinct states, and a multiplier scan learns nothing from a
+repeat, so cases are deduplicated by state -- without that the scan kept 75
+multipliers where it now keeps one. And **the scan is ordered by how much each
+case constrains it**, most first, skipping the cases that admit every distance:
+that is an early-exit loop rather than a walk over a thousand cases per
+candidate, and it took 13.00 from 36 seconds a slot to under four.
 
 **One stop rule is load-bearing and was got wrong first.** Six fitted cases are
 2^48 against a wrong lane and still admit lanes that fit those six and nothing
 else: 13.00 produces three of them before the published one. A search that
 returns after the first few fits reports one of those as the answer. What ends
-the search is a lane that also reproduces **every held-out case**, and the
-held-out column is printed for exactly that reason.
+the search is a lane that also reproduces **every held-out case** and whose
+distances a multiplier explains.
+
+## What is open
 
 **Is the recovered 64-bit lane exactly right, or right on ~96% of states?** The
 collapse evidence put *f* between 0.96 and 1.0 and could not distinguish
 further, and the constants recovery narrows it: a lane wrong on a few per cent
 of states would not decode 58 payloads of 22 blocks each to the exact bit,
-because one wrong state anywhere in a payload breaks its chain. It does not
-close the question -- the seeds that decode whole are a sample rather than the
-library -- and ground truth still settles it.
+because one wrong state anywhere in a payload breaks its chain. The end-to-end
+score narrows it again -- 62% and 73% of *all* payloads consuming exactly, inside
+the band the two solved builds set on their own captures, where a lane wrong on a
+few per cent of states would lose a payload every time one of those states came
+up. What is still not closed is the same gap as before: these are the payloads
+that parse, which is a sample rather than the library, and ground truth over a
+decoded match settles it.
 
 **Does the descending-operand prior hold for 13.04?** The recovered lane uses
 7,6,5,3,2,1 -- descending, consistent -- but it was *found under* the
@@ -404,7 +481,9 @@ rotates the transform every patch: 13.05 will need it again.
 
 ## The rule that still stands
 
-Nothing is registered in `payload_transform.TRANSFORMS` until it is proved
+`vrfnet.payload_transform.Transform1304` now exists and is deliberately **not**
+in `TRANSFORMS`; the comment above that dict says so, so the omission cannot be
+read as an oversight and tidied away. Nothing is registered until it is proved
 against ground truth. The Python `decode` is never on the positions path —
 `tracks.py:266` discards `transform_for`'s return and uses it as a gate — so
 registering 13.04 there is enough to unhide the captures and hand them to the

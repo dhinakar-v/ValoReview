@@ -472,6 +472,71 @@ class Transform1302(_Transform):
         return _rotr8(value, (mix_a % 7) + 1)
 
 
+class Transform1304(_Transform):
+    """
+    13.04, and the one class here that was **derived rather than ported**.
+
+    Upstream stops at 13.02, so there was nothing to port: every constant below
+    was recovered from the captures themselves by ``csharp/TransformSearch``,
+    and ``docs/payload-transform-13-04.md`` carries the evidence for each one --
+    what was measured, what it was measured against, and what a wrong answer
+    scores.  The equivalent forms are noted where a capture cannot separate
+    them: ``init_a_offset = 0x58`` with ``init_a_adds = True`` is the same
+    function as the pair below, because only the low seven bits of
+    ``seed -+ offset`` survive the shift left by 25.
+    """
+
+    branch = "++Ares-Core+release-13.04"
+    seed_addend = 0x076DC658
+    init_a_offset = 0x28
+    init_a_adds = False
+    tail_xor = 0x58
+
+    def _u64(self, value: int, state: int) -> int:
+        ror1 = _rotr32(state, 1)
+        ror2 = _rotr32(state, 2)
+        ror3 = _rotr32(state, 3)
+        ror5 = _rotr32(state, 5)
+        ror6 = _rotr32(state, 6)
+        ror7 = _rotr32(state, 7)
+        value = _rotr64(value, (ror7 % 63) + 1)
+        value ^= (~ror6) & U64
+        value = (value - ror5) & U64
+        value = _swap64(value)
+        value = (value + ror3) & U64
+        value = (value + ror2) & U64
+        return _rotl64(value, (ror1 % 63) + 1)
+
+    def _u32(self, value: int, state: int) -> int:
+        rol1 = _rotl32(state, 1)
+        rol2 = _rotl32(state, 2)
+        rol3 = _rotl32(state, 3)
+        rol5 = _rotl32(state, 5)
+        rol6 = _rotl32(state, 6)
+        rol7 = _rotl32(state, 7)
+        value = _rotr32(value, (rol7 % 31) + 1)
+        value ^= rol6
+        value = (value - rol5) & U32
+        value = _swap32(value)
+        value = (value + rol3) & U32
+        value = (value + rol2) & U32
+        return _rotl32(value, (rol1 % 31) + 1)
+
+    def _u8(self, value: int, state: int) -> int:
+        value = _rotr8(value, (((state * 0x12959C3) & U32) % 7) + 1)
+        value ^= (state * 0x29) & U8
+        value = (value - ((state * 0x1B) & U8)) & U8
+        value = _swap8(value)
+        value = (value + ((state * 0xAC) & U8)) & U8
+        return _rotl8(value, (((state * 0x0B) & U32) % 7) + 1)
+
+
+# Transform1304 is defined above and is deliberately **not** here. Registering
+# a build unhides its captures for the whole pipeline and hands them to the C#
+# decoder, which carries its own copy of the transform -- so registering before
+# that copy exists and before `tests/test_positions.py` passes over a 13.04
+# capture would scatter coordinates with nothing complaining. The omission is
+# the rule in docs/payload-transform-13-04.md, not an oversight.
 TRANSFORMS: dict[str, _Transform] = {
     t.branch: t
     for t in (
