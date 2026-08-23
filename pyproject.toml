@@ -49,8 +49,14 @@ vrf-to-json = "vrf_to_json:main"
 # httpx2 is not the server's dependency, it is the test client's: Starlette's
 # TestClient drives the ASGI app through it in-process, so the API tests need
 # no port, no uvicorn and no network.
+# pyinstaller freezes scripts/vrf_desktop.py into the desktop app's backend
+# sidecar (desktop/packaging/). It is dev-only on purpose: nothing in the
+# running application imports it, and a checkout that never packages anything
+# still installs it -- which is the price of one dependency list rather than
+# two that drift.
 dev = [
     "httpx2>=0.28.0",
+    "pyinstaller>=6.11.0",
     "pytest>=9.1.1",
     "ruff>=0.16.4",
 ]

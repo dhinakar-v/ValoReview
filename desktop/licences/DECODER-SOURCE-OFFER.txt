@@ -1,0 +1,57 @@
+ValoReview: the position decoder, and how to get its source
+===========================================================
+
+This folder's sibling, decoder\, holds vrf-positions.exe. That program is
+conveyed to you under the GNU General Public License, version 3 -- the full
+text of which is in GPLv3.txt beside this file -- and NOT under the licence
+covering the rest of ValoReview.
+
+Why it is separate
+------------------
+
+vrf-positions.exe is built from ValoReview's own csharp/VrfPositions and a
+vendored copy of michel-giehl/ValorantReplayParser (MIT). Beneath those it
+links OozSharp, a NuGet package distributed under an MIT LICENSE file whose
+Kraken.cs nevertheless carries a GPLv3 header. Taking the stricter reading, the
+compiled binary is a GPLv3 work, so it is shipped in its own folder, under that
+licence, with this notice and a source offer.
+
+The rest of ValoReview -- the application you launched, its Python backend and
+its web interface -- is conveyed under the Apache License 2.0, whose text is in
+LICENSE.txt beside this file. The two communicate only by one process starting the
+other with command-line arguments and reading a JSON file it writes, and that
+process boundary is the licence boundary.
+
+Written offer of source
+-----------------------
+
+The complete corresponding source for vrf-positions.exe, and the scripts used
+to control its compilation and installation, are available at:
+
+    https://github.com/dhinakar-v/ValoReview
+
+specifically:
+
+    csharp/VrfPositions/          the emitter
+    csharp/parser/                the replay parser it compiles against,
+                                  with csharp/parser/README.md recording the
+                                  upstream revision and every local change
+    runners/publish-decoder.bat   the exact command that produced this binary
+
+OozSharp's own source is at:
+
+    https://github.com/Shiqan/FortniteReplayDecompressor   (src/OozSharp/)
+
+If for any reason you cannot obtain the source from those locations, you may
+request a copy on a physical medium, for no more than the cost of performing
+the distribution, by opening an issue at the ValoReview repository above. This
+offer is valid for as long as this version of the program is distributed, and
+for at least three years after.
+
+What the decoder does
+---------------------
+
+It reads one .vrf replay container and writes one JSON file holding thinned
+movement samples and the transforms actors spawned at. It opens no network
+socket, reads nothing but the file it is given, and writes nothing but the
+file it is told to write.

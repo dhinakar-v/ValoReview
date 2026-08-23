@@ -1,0 +1,35 @@
+[package]
+name = "valoreview-desktop"
+version = "0.1.0"
+description = "ValoReview, as a Windows application"
+authors = ["v-dhinakar"]
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# There is no folder picker, and therefore no dialog crate: Valorant writes its
+# captures to one directory and `main.rs:demo_dir` names it.
+# Readiness polling and the art fetch have no other HTTP need, so this is the
+# smallest thing that answers "is the port open and does /api/config say 200".
+ureq = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  # Two features for things this code never names: CreateJobObjectW takes a
+  # SECURITY_ATTRIBUTES pointer (always null here) and the extended limit
+  # struct embeds IO_COUNTERS, and both are gated out without them.
+  "Win32_Security",
+  "Win32_System_Threading",
+] }
+
+[features]
+# Tauri's own release-build convention: this is what `tauri build` turns on.
+custom-protocol = ["tauri/custom-protocol"]
