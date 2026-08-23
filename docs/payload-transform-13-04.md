@@ -162,6 +162,57 @@ runner-up shows and precisely what the candidate does not. 13.04 is four patches
 past the newest solved capture, on maps and with agents the older captures never
 held.
 
+**The four keystream constants, recovered and cross-checked:**
+
+    seed_addend = 0x076DC658, init_a_offset = 0x28, init_a_adds = False, tail_xor = 0x58
+
+`init_a_offset = 0x58` with `init_a_adds = True` is the same function and is
+reported beside it: only the low seven bits of `seed -+ init_a_offset` survive
+the shift left by 25, and 0x28 and 0x58 differ by 0x80, so no capture can tell
+the two forms apart. `tail_xor` is the low byte of `seed_addend`, as it is in
+all five published builds -- a cross-check that agreed, never a derivation.
+
+**How they were recovered, and why it is not the route the previous session
+planned.** That route was to enumerate 32-bit-lane variants and brute-force
+`state2` alongside them, because `state2` cannot be observed directly. It does
+not need to be. `prng_a` is `mixed * MULTIPLIER` for a **32-bit** `mixed`, and
+`prng_b` depends on the seed alone, so a single 2^32 sweep over `mixed` -- for
+one seed -- produces *every* state that seed's payloads use, and it needs no
+lane but the 64-bit one. What makes that testable without the other two lanes is
+the payloads whose bit count is a whole multiple of 64: `apply` runs 64-bit
+blocks while more than 63 bits remain, so those never reach the 32-bit lane, the
+8-bit lane or the tail XOR.
+
+Two seeds then pin the constants. One cannot: a keystream that decodes a seed's
+payloads is consistent with 128 offsets per sign, and the sweep keeps every
+keystream that seed cannot tell apart -- 198,027 of them for 13.04. But the
+constants each survivor implies predict the keystream of *every other* seed, and
+predicting a seed the sweep never saw is a far stronger claim than fitting the
+one it was fitted to. Six check seeds leave one answer.
+
+**Validated on all three published builds this library holds captures for**,
+each recovering the published constants and nothing else but its own mirror
+image: 12.10 (explaining 3 of its 4 check seeds), 12.11 (2 of 2), 13.00 (3 of
+3).
+
+**What the recovered transform decodes.** Scored over the payloads the 64-bit
+lane decodes whole -- a complete rep layout consuming to exactly zero bits:
+
+| corpus | 13.04's recovered transform | a published transform as control |
+|---|---|---|
+| 13.04 Lotus capture (swept) | **58 of 167, 34.7%**, across 38 seeds | 12.10: 0 of 167 |
+| 13.04 second capture (never seen) | **62 of 173, 35.8%**, across 58 seeds | 12.10 and 13.00: 0 of 173 |
+| 12.10 capture under 12.10's own transform | 12 of 141, 8.5% | -- |
+| 12.11 capture under 12.11's own transform | 20 of 179, 11.2% | -- |
+| 13.00 capture under 13.00's own transform | 15 of 135, 11.1% | -- |
+
+The recovered transform scores *above* the published baselines because what a
+capture's whole-block payloads are is a property of the capture -- the rest are
+ClassNetCache blobs, which carry no handle chain and parse under no transform at
+all. What matters is the control column: a wrong transform is 0.0%, and 58
+payloads over 38 seeds terminating on exactly the right bit is not something a
+wrong keystream does once.
+
 **The 32-bit and 8-bit lanes are not structural mirrors of the 64-bit lane**,
 and that was checked rather than assumed, because it is nearly true and the
 temptation is real: 13.00's 32-bit lane carries a `not` its 64-bit lane does
@@ -217,47 +268,66 @@ was too small.
 
 **Validating a whole payload without the constants.** Only payloads with
 `bit_count == 64` are decoded by `_u64` alone, and each 13.04 corpus holds
-exactly **one**. Everything longer needs `state₂`, hence the constants. There is
-no shortcut.
+exactly **one**. That is true, and it was read as "nothing longer can be checked
+until the constants are known", which does not follow: a payload of *any* whole
+multiple of 64 bits is decoded by `_u64` alone once a keystream is proposed, and
+the 167 of them in the first 13.04 corpus are what recovered the constants.
+
+**Two oracles for the keystream that do not work, and both look reasonable.** A
+prefix parse -- decode the blocks of a longer payload and ask whether the chain
+so far contradicts a rep layout -- cannot contradict enough. One seed's payloads
+are one actor replicating one property layout, so they agree with each other
+rather than constraining each other: measured on 12.10 seed 75, a wrong
+keystream keeps 37% of the payloads individually and **2%** of them together,
+where independence would have given 10^-11. Two per cent of 2^32 is eighty-six
+million survivors, and staging more payloads of that seed does not move it.
+
+The bias mask is worse than useless here. It is calibrated on first blocks and
+it does hold in the interior -- over one seed's blocks the published keystream
+scores 4.57 masked bits per block against a wrong one's 10.55, best of thirty
+wrong draws 6.91 -- but it rewards decoded blocks with *few set bits*, and across
+2^32 candidates the winners are keystreams that drive the lane toward zeros. The
+published answer ranked below more than a million of them. A statistic that
+separates two populations by many sigma still says nothing about the extreme
+tail of four billion draws.
+
+**Picking the seed to sweep by how busy it is.** The busiest seed in the 12.10
+corpus carries 89 whole payloads and every one is a ClassNetCache blob: the
+first block opens `handle 495, length 2` then `handle 72`, a handle that
+descends, so it is not a chain and no keystream makes it one. A sweep over it
+keeps nothing after three minutes, correctly. A seed is chosen instead by
+whether every one of its payloads opens *cleanly* -- ascending handles, no field
+longer than the payload -- which the first block answers before any candidate is
+tried, and then by how many keystream states its payloads exercise: one per
+block past the first, so a 22-block payload is twenty-one constraints and a
+128-bit payload is one. Ranking 13.04 by payload count picks a seed of 128-bit
+payloads and overflows the survivor list; ranking by states picks one with five
+payloads of 1,408 bits and keeps 198,027.
 
 ## What is open
 
-**The constants, and the 32-bit and 8-bit lanes — jointly.** The algebra below
-assumes `state₂` can be observed, and it cannot be directly: it has to be
-recovered alongside the 32-bit lane. The cheapest route found so far is to
-enumerate 32-bit-lane variants from the recovered 64-bit skeleton (same op
-order, same k order, varying only complement placement — `xor` versus `xor ~`,
-an inserted `not` — with width 32 and `% 31` in the rotate distance; expect
-fewer than about sixteen), then for one seed carrying many payloads with
-`bit_count >= 96`, brute-force `state₂` over 2³² and keep the value whose
-block-2 decode continues the handle chain across all of them. That is roughly
-ten seconds per variant on twelve threads.
+**The 32-bit and 8-bit lanes.** They are what stands between the recovered
+keystream and a payload of arbitrary length: a payload whose bit count is not a
+multiple of 64 ends in a 32-bit block, some 8-bit blocks and a tail XOR, and
+those need lanes nothing has recovered yet. The states are no longer the
+obstacle -- with the constants in hand every state of every seed is computable,
+so each lane can be searched on its own against the payloads whose bit count
+leaves exactly that lane's remainder, under the same exact-consumption oracle.
+They are a small neighbourhood around the 64-bit skeleton rather than a free
+derivation, for the reason stated above.
 
-`_initial_prng_a` computes
-
-    mixed = ((sp >> 15) ^ sp) >> 12  ^  ((seed ∓ off) * 0x02000000)  ^  sp
-
-with `sp = seed + seed_addend`. The middle term is a `<< 25`, so only the low
-**seven** bits of `(seed ∓ off)` survive it — 128 possible values for that whole
-term, not 2³². Recover `prng_a` for one seed (`prng_b` depends on the seed
-alone, so `state₂ = hi32(prng_b + prng_a)` pins it, and `prng_a = mixed *
-MULTIPLIER` then leaves about one candidate `mixed`), then for each of the 128
-values XOR it out and invert `x ↦ ((x >> 15) ^ x) >> 12 ^ x` to get `sp`, hence
-`seed_addend`. A second seed pins `init_a_offset` and the sign. `tail_xor` is
-the low byte of `seed_addend` in all five known builds — a cross-check, never a
-licence to invent one. The ~331 payloads with `bit_count` in 65..71 are a second
-check on the result: past the first block their only unknown is the single tail
-byte `(state₂ & 0xFF) ^ tail_xor`.
-
-**Is the recovered lane exactly right, or right on ~96% of states?** The
-collapse evidence puts *f* between 0.96 and 1.0 and cannot distinguish further.
-Ground truth settles it and nothing else will. If the constants are recovered
-and a full decode *almost* works, suspect this before suspecting the constants.
+**Is the recovered 64-bit lane exactly right, or right on ~96% of states?** The
+collapse evidence put *f* between 0.96 and 1.0 and could not distinguish
+further, and the constants recovery narrows it: a lane wrong on a few per cent
+of states would not decode 58 payloads of 22 blocks each to the exact bit,
+because one wrong state anywhere in a payload breaks its chain. It does not
+close the question -- the seeds that decode whole are a sample rather than the
+library -- and ground truth still settles it.
 
 **Does the descending-operand prior hold for 13.04?** The recovered lane uses
-7,6,5,3,2,1 — descending, consistent — but it was *found under* the constraint,
-so this is not independent confirmation. The hill-climb that ignores the prior
-did not move off it, which is weak support.
+7,6,5,3,2,1 -- descending, consistent -- but it was *found under* the
+constraint, so this is not independent confirmation. The hill-climb that ignores
+the prior did not move off it, which is weak support.
 
 ## The tooling
 

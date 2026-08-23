@@ -14,6 +14,19 @@ var known = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     ["13.02"] = "sbox,reverse,sub6,not,reverse,rotl3,rotr2",
 };
 
+// The four keystream constants of every published build, which `constants`
+// checks itself against. `tail_xor` is the low byte of `seed_addend` in all
+// five, which is a cross-check on a recovered pair and never a licence to
+// invent one.
+var Published = new Dictionary<string, BuildConstants>(StringComparer.OrdinalIgnoreCase)
+{
+    ["12.10"] = new(0x12FD0EE5, 0x1B, false, 0xE5),
+    ["12.11"] = new(0x409D36A3, 0x23, true, 0xA3),
+    ["13.00"] = new(0x2949B6EF, 0x11, false, 0xEF),
+    ["13.01"] = new(0xE62FCD5C, 0x24, false, 0x5C),
+    ["13.02"] = new(0x9E81A37C, 0x04, false, 0x7C),
+};
+
 var mode = args.Length > 0 ? args[0] : "help";
 var options = ParseOptions(args);
 
@@ -29,6 +42,12 @@ switch (mode)
     case "refine":
         Refine();
         break;
+    case "constants":
+        Constants();
+        break;
+    case "solve":
+        SolveConstants();
+        break;
     default:
         Console.WriteLine(
             """
@@ -37,6 +56,8 @@ switch (mode)
               validate --corpus <jsonl> --expect <build>   recover a known answer
               search   --corpus <jsonl>                    hunt an unknown one
               emit     --corpus <jsonl> --sequence <ops>   print decoded first blocks
+              constants --corpus <jsonl> --sequence <ops>  sweep one seed's keystream
+              solve    --pairs <seed:mixed,...>         the four constants from two seeds
 
             Options:
               --depth N        maximum composition length (default 7)
@@ -50,6 +71,9 @@ switch (mode)
               --shortlist N    behaviours re-ranked over the full corpus (default 4000)
               --known FILE     known plaintext blocks, one hex per line, as the ranking oracle
               --count N        rows for emit (default 200)
+              --seed N         the seed constants sweeps (default: the one with most payloads)
+              --seed-b N       the seed a survivor must also explain (default: the next one)
+              --min-payloads N smallest seed constants will consider (default 40)
 
             The vocabulary, the descending-operand prior and the scoring mask are
             explained in Ops.cs, Search.cs and Fingerprint.cs. What calibrates
@@ -422,3 +446,205 @@ int OptionInt(string name, int fallback) =>
     options.TryGetValue(name, out var value) && value.Length > 0
         ? int.Parse(value, CultureInfo.InvariantCulture)
         : fallback;
+
+/// <summary>
+/// Recover one seed's keystream, and with it the build's four constants.
+///
+/// The 64-bit lane is keyed by the seed for the first block only; every block
+/// after it is keyed by a state derived from `prng_a`, which is `mixed *
+/// MULTIPLIER` for a 32-bit `mixed` that the four constants produce. So this
+/// sweeps `mixed` over 2^32 for one seed and keeps the values under which that
+/// seed's payloads still read as rep layout past their first block.
+///
+/// It is a search over a keystream rather than over four constants, and it is
+/// what the algebra in docs/payload-transform-13-04.md needs before it can run:
+/// `state2` cannot be observed directly, and a `mixed` for two seeds pins
+/// `seed_addend`, `init_a_offset` and its sign between them.
+/// </summary>
+void Constants()
+{
+    var path = Require("corpus");
+    var threads = OptionInt("threads", Environment.ProcessorCount);
+    var stageN = OptionInt("stage-n", SeedCorpus.StagedPayloads);
+    var limit = OptionInt("rank-n", 200);
+    var expect = options.TryGetValue("expect", out var build) ? build : null;
+
+    var sequence = options.TryGetValue("sequence", out var spec)
+        ? spec
+        : expect is not null && known.TryGetValue(expect, out var published)
+            ? published
+            : throw new ArgumentException("--sequence or a known --expect is required");
+    var lane = new Lane(Parse(sequence));
+
+    var ranked = SeedCorpus.RankSeeds(path, lane, MixedSweep.MinExact);
+    if (ranked.Length < 2)
+    {
+        throw new InvalidOperationException(
+            "two seeds are needed, each with payloads of a whole number of 64-bit blocks");
+    }
+
+    Console.WriteLine("seed      whole payloads    keystream states they exercise");
+    foreach (var row in ranked.Take(6))
+    {
+        Console.WriteLine($"{row.Seed,8}  {row.Count,15:N0}  {row.States,29:N0}");
+    }
+
+    Console.WriteLine();
+    var seedA = options.TryGetValue("seed", out var wantedA) && wantedA.Length > 0
+        ? uint.Parse(wantedA, CultureInfo.InvariantCulture)
+        : ranked[0].Seed;
+    var seedB = options.TryGetValue("seed-b", out var wantedB) && wantedB.Length > 0
+        ? uint.Parse(wantedB, CultureInfo.InvariantCulture)
+        : ranked.First(r => r.Seed != seedA).Seed;
+
+    var corpusA = SeedCorpus.Load(path, seedA, limit);
+    var stage = Math.Min(stageN, corpusA.Payloads.Length);
+
+    // Several check seeds rather than one, because a seed that opens cleanly
+    // can still fail to decode whole under the right keystream -- on 12.10 the
+    // second-ranked seed does exactly that, and checking against it alone
+    // rejects the published constants while keeping 160 wrong ones. What a
+    // candidate is ranked by is how many check seeds it explains, and the
+    // answer explains all the ones that are chains.
+    var checkSeeds = ranked
+        .Select(r => r.Seed)
+        .Where(seed => seed != seedA)
+        .Take(OptionInt("check-seeds", 4))
+        .ToArray();
+    var checks = checkSeeds.Select(seed => SeedCorpus.Load(path, seed, limit)).ToArray();
+
+    Console.WriteLine($"lane    {sequence}");
+    Console.WriteLine($"sweep   seed {seedA} -- {corpusA.Payloads.Length:N0} whole payloads, {stage} swept "
+        + $"({string.Join(", ", corpusA.Payloads.Take(stage).Select(p => p.Bits))} bits)");
+    Console.WriteLine($"check   seeds {string.Join(", ", checkSeeds)}");
+
+    BuildConstants? truth = null;
+    if (expect is not null && Published.TryGetValue(expect, out var published2))
+    {
+        truth = published2;
+        Console.WriteLine($"expect  {expect} -- {truth}");
+    }
+
+    var clock = Stopwatch.StartNew();
+    var survivors = MixedSweep.Run(corpusA, lane, stage, threads);
+    clock.Stop();
+    Console.WriteLine($"swept   2^32 in {clock.Elapsed.TotalSeconds:N1}s -- {survivors.Count:N0} keystreams kept");
+
+    // One seed cannot name the constants: a keystream that decodes its payloads
+    // is consistent with 128 offsets per sign, and the sweep keeps every
+    // keystream that seed cannot tell apart. The check seeds settle both at
+    // once, because the constants a survivor implies predict *their* keystreams
+    // too -- and predicting a seed the sweep never saw is a far stronger claim
+    // than agreeing with the one it was fitted to.
+    var confirmed = new List<(BuildConstants Constants, uint MixedA, int Explains)>();
+    Parallel.ForEach(
+        survivors,
+        new ParallelOptions { MaxDegreeOfParallelism = threads },
+        () => new List<(BuildConstants, uint, int)>(),
+        (survivor, loop, local) =>
+        {
+            var buffer = new byte[SeedCorpus.MaxBits / 8];
+            foreach (var candidate in Solve.Candidates(seedA, survivor.Mixed))
+            {
+                var explains = 0;
+                foreach (var check in checks)
+                {
+                    var mixed = Keystream.Mixed(
+                        check.Seed, candidate.SeedAddend, candidate.InitAOffset, candidate.InitAAdds);
+                    var states = new uint[check.Payloads.Max(p => p.Blocks)];
+                    if (MixedSweep.Exact(mixed, check.Seed, lane, check.Payloads, states, buffer)
+                        >= MixedSweep.MinExact)
+                    {
+                        explains++;
+                    }
+                }
+
+                if (explains > 0)
+                {
+                    local.Add((candidate, survivor.Mixed, explains));
+                }
+            }
+
+            return local;
+        },
+        local =>
+        {
+            lock (confirmed)
+            {
+                confirmed.AddRange(local);
+            }
+        });
+
+    var best = confirmed.Count == 0 ? 0 : confirmed.Max(c => c.Explains);
+    Console.WriteLine($"checked {confirmed.Count:N0} explain at least one check seed; "
+        + $"the best explain {best} of {checks.Length}\n");
+
+    foreach (var (constants, mixedA, explains) in confirmed
+        .Where(c => c.Explains == best)
+        .DistinctBy(c => c.Constants)
+        .Take(OptionInt("top", 10)))
+    {
+        var mark = truth is not null && constants == truth ? "  <- expected" : "";
+        Console.WriteLine($"{constants}{mark}");
+        Console.WriteLine($"    explains {explains} of {checks.Length} check seeds; "
+            + $"mixed at seed {seedA} = 0x{mixedA:X8}");
+    }
+
+    if (truth is not null)
+    {
+        var hit = confirmed.FirstOrDefault(c => c.Constants == truth);
+        Console.WriteLine(hit.Constants is null
+            ? "\nNOT RECOVERED -- the published constants did not survive"
+            : $"\nrecovered, explaining {hit.Explains} of {checks.Length} check seeds");
+    }
+}
+
+
+/// <summary>
+/// The four constants, from the `mixed` two seeds resolved to.
+///
+/// One seed leaves 128 candidates per sign, because the only part of
+/// `seed -+ init_a_offset` that survives the shift left by 25 is its low seven
+/// bits. A second seed picks out the pair that explains both, and a third would
+/// only repeat the check.
+/// </summary>
+void SolveConstants()
+{
+    var observations = new List<(uint Seed, uint Mixed)>();
+    foreach (var pair in Require("pairs").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        var halves = pair.Split(':');
+        if (halves.Length != 2)
+        {
+            throw new ArgumentException($"expected seed:mixed, got '{pair}'");
+        }
+
+        var mixedText = halves[1].StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? halves[1][2..] : halves[1];
+        observations.Add((
+            uint.Parse(halves[0], CultureInfo.InvariantCulture),
+            uint.Parse(mixedText, NumberStyles.HexNumber, CultureInfo.InvariantCulture)));
+    }
+
+    foreach (var (seed, mixed) in observations)
+    {
+        Console.WriteLine($"seed {seed,8} -- mixed 0x{mixed:X8}");
+    }
+
+    var solutions = Solve.FromMixed(observations);
+    Console.WriteLine();
+    if (solutions.Count == 0)
+    {
+        Console.WriteLine("no constants explain both seeds -- one of the keystreams is wrong");
+        return;
+    }
+
+    foreach (var solution in solutions)
+    {
+        Console.WriteLine(solution.ToString());
+    }
+
+    if (solutions.Count > 1)
+    {
+        Console.WriteLine("\nmore than one solution: a third seed decides between them");
+    }
+}

@@ -1,7 +1,7 @@
 # transform-search
 
-Derives the 64-bit lane of a Valorant payload transform for a build nobody has
-published one for.
+Derives the 64-bit lane and the four keystream constants of a Valorant payload
+transform for a build nobody has published one for.
 
 Riot rotates the whitening applied to replicator bunch payloads every patch, and
 `libraries/vrfnet/payload_transform.py` carries one class per build, each ported
@@ -76,6 +76,15 @@ compositions a second on twelve threads.
     # Print decoded first blocks, for checking against the Python.
     transform-search emit --corpus cap1210.jsonl --expect 12.10 --count 500
 
+    # Recover the four keystream constants, once the lane is known.
+    transform-search constants --corpus cap1304.jsonl --sequence rotr7,xornot6,sub5,swap,add3,add2,rotl1
+
+    # The same, against a build whose constants are published.
+    transform-search constants --corpus cap1210.jsonl --expect 12.10
+
+    # The constants two seeds' recovered `mixed` imply, without a corpus.
+    transform-search solve --pairs <seed>:<mixed>,<seed>:<mixed>
+
 `make-known-plaintext.sh <scratch> <demo-dir> <out>` builds the oracle's block
 set by decoding every capture in a library whose build is already solved.
 
@@ -110,12 +119,51 @@ each at rank 1 of thousands of distinct surviving behaviours:
 three published sequences plus synthetic ones covering all ten operation kinds,
 because the five published sequences never exercise `not` or `rotl`.
 
+## The constants, and why they need no second search
+
+`_initial_prng_a` mixes the four constants into a 32-bit value and multiplies it
+by `MULTIPLIER`; `prng_b` needs no constants at all. So the whole keystream of
+one seed follows from a single 32-bit `mixed`, and `constants` sweeps all 2^32
+of them.
+
+What makes a candidate testable without the other two lanes is the payloads
+whose **bit count is a whole multiple of 64**: `apply` runs 64-bit blocks while
+more than 63 bits remain, so those never reach the 32-bit lane, the 8-bit lane
+or the tail XOR, and a candidate keystream either decodes one to a rep layout
+that consumes to exactly zero bits or it does not. A wrong keystream manages
+that for 6 payloads in 100,000.
+
+Two things about the seed decide whether the sweep ends, and both are read off
+the first block, which needs no keystream:
+
+- **Its payloads must open cleanly** -- ascending handles, no field longer than
+  the payload. The busiest seed in the 12.10 corpus carries 89 whole payloads
+  that open `handle 495, length 2` then `handle 72`, which is not a chain, and a
+  sweep over it correctly keeps nothing.
+- **Its payloads must be long.** A candidate must survive one state per block
+  past the first, so a 22-block payload is twenty-one constraints and a 128-bit
+  payload is one.
+
+One seed still cannot name the constants -- only the low seven bits of
+`seed -+ init_a_offset` survive the shift left by 25, so 128 offsets per sign
+fit any recovered keystream. The constants each survivor implies predict the
+keystream of every *other* seed, and that is what settles it: `--check-seeds`
+decodes those seeds' payloads under each candidate and keeps the ones that
+explain the most.
+
+Validated the same way as the lane search, on the three published builds this
+library holds captures for -- 12.10, 12.11 and 13.00 -- each recovering the
+published constants and nothing else but its own mirror image (an offset and a
+sign that differ by 0x80 are the same function).
+
 ## What this does not do
 
-It derives `_u64` only. The 32-bit and 8-bit lanes are *close* to structural
+It derives `_u64` and the four constants only. The 32-bit and 8-bit lanes are *close* to structural
 mirrors of it but not exact — 13.00's 32-bit lane carries a `not` its 64-bit
 lane does not, and 12.10's operand complement appears in one lane and not the
-other — so they are not derivable from it for free. Those, and the four
-keystream constants, are what stands between a recovered `_u64` and a registered
-transform. Nothing is registered until ground truth passes; see
-`docs/payload-transform-13-04.md`.
+other — so they are not derivable from it for free. They are what
+stands between a recovered `_u64` and a payload of arbitrary length, and the
+states are no longer in the way: with the constants in hand every state of every
+seed is computable, so each lane can be searched against the payloads whose bit
+count leaves exactly that lane's remainder. Nothing is registered until ground
+truth passes; see `docs/payload-transform-13-04.md`.
