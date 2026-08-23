@@ -48,6 +48,12 @@ switch (mode)
     case "solve":
         SolveConstants();
         break;
+    case "lane32":
+        Lane32Command();
+        break;
+    case "lane8":
+        Lane8Command();
+        break;
     default:
         Console.WriteLine(
             """
@@ -58,6 +64,8 @@ switch (mode)
               emit     --corpus <jsonl> --sequence <ops>   print decoded first blocks
               constants --corpus <jsonl> --sequence <ops>  sweep one seed's keystream
               solve    --pairs <seed:mixed,...>         the four constants from two seeds
+              lane32   --corpus <jsonl> --sequence <ops>   the 32-bit lane, given the constants
+              lane8    --corpus <jsonl> --sequence <ops>   the 8-bit lane, given the constants
 
             Options:
               --depth N        maximum composition length (default 7)
@@ -74,6 +82,7 @@ switch (mode)
               --seed N         the seed constants sweeps (default: the one with most payloads)
               --seed-b N       the seed a survivor must also explain (default: the next one)
               --min-payloads N smallest seed constants will consider (default 40)
+              --constants A:O:add|sub   the keystream constants the lane searches use
 
             The vocabulary, the descending-operand prior and the scoring mask are
             explained in Ops.cs, Search.cs and Fingerprint.cs. What calibrates
@@ -647,4 +656,127 @@ void SolveConstants()
     {
         Console.WriteLine("\nmore than one solution: a third seed decides between them");
     }
+}
+
+
+/// <summary>
+/// The keystream constants a lane search runs under: either a published build's
+/// or a recovered pair, written seed_addend:offset:add|sub.
+/// </summary>
+BuildConstants ConstantsFrom(string? expect)
+{
+    if (options.TryGetValue("constants", out var spec) && spec.Length > 0)
+    {
+        var parts = spec.Split(':');
+        if (parts.Length != 3)
+        {
+            throw new ArgumentException($"expected seed_addend:offset:add|sub, got '{spec}'");
+        }
+
+        var addend = uint.Parse(parts[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        var offset = uint.Parse(parts[1], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        var adds = parts[2].Equals("add", StringComparison.OrdinalIgnoreCase);
+        return new BuildConstants(addend, offset, adds, (byte)(addend & 0xFF));
+    }
+
+    if (expect is not null && Published.TryGetValue(expect, out var published))
+    {
+        return published;
+    }
+
+    throw new ArgumentException("--constants or a known --expect is required");
+}
+
+/// <summary>
+/// The 32-bit lane, scored over the payloads that reach it exactly once.
+///
+/// Every candidate is a complement variant of the recovered 64-bit skeleton, and
+/// the score is how many payloads decode to a rep layout that consumes every
+/// bit. The published lanes score 15 to 22 payloads where every other variant
+/// scores zero, so this reads as an answer rather than as a ranking.
+/// </summary>
+void Lane32Command()
+{
+    var path = Require("corpus");
+    var expect = options.TryGetValue("expect", out var build) ? build : null;
+    var constants = ConstantsFrom(expect);
+    var sequence = options.TryGetValue("sequence", out var spec)
+        ? spec
+        : expect is not null && known.TryGetValue(expect, out var published)
+            ? published
+            : throw new ArgumentException("--sequence or a known --expect is required");
+
+    var lane = new Lane(Parse(sequence));
+    var payloads = Tail32.Load(path, OptionInt("rank-n", 800));
+    Console.WriteLine($"lane    {sequence}");
+    Console.WriteLine($"const   {constants}");
+    Console.WriteLine($"corpus  {payloads.Count:N0} payloads of a whole number of blocks plus 32 bits\n");
+
+    var rows = Lane32Search.Variants(Parse(sequence))
+        .Select(variant => (Variant: variant, Score: Lane32Search.Score(variant, lane, constants, payloads)))
+        .OrderByDescending(r => r.Score)
+        .ToList();
+
+    foreach (var (variant, score) in rows.Take(OptionInt("top", 8)))
+    {
+        Console.WriteLine($"{score,5:N0} of {payloads.Count:N0}  {Lane32Search.Describe(variant)}");
+    }
+}
+
+/// <summary>
+/// The 8-bit lane, from payloads whose last byte the rep layout pins.
+///
+/// Unlike the other two lanes this one is a search rather than a neighbourhood,
+/// because its operands are arbitrary multipliers. What makes it tractable is in
+/// Lane8Search: a byte operand only depends on its multiplier modulo 256, a run
+/// of adds is one slot, and the final slot is solved rather than enumerated.
+/// </summary>
+void Lane8Command()
+{
+    var path = Require("corpus");
+    var threads = OptionInt("threads", Environment.ProcessorCount);
+    var expect = options.TryGetValue("expect", out var build) ? build : null;
+    var constants = ConstantsFrom(expect);
+    var sequence = options.TryGetValue("sequence", out var spec)
+        ? spec
+        : expect is not null && known.TryGetValue(expect, out var published)
+            ? published
+            : throw new ArgumentException("--sequence or a known --expect is required");
+
+    var candidate = Parse(sequence);
+    var lane = new Lane(candidate);
+    var cases = Lane8Search.Cases(path, lane, constants, OptionInt("rank-n", 60));
+    if (cases.Count < 8)
+    {
+        Console.WriteLine($"only {cases.Count} payloads pin their last byte; a longer corpus is needed");
+        return;
+    }
+
+    var fit = cases.Take(6).ToList();
+    var held = cases.Skip(6).ToList();
+    var shapes = Lane8Search.Shapes(candidate);
+
+    Console.WriteLine($"lane    {sequence}");
+    Console.WriteLine($"const   {constants}");
+    Console.WriteLine($"cases   {cases.Count:N0} payloads pin their last byte to one value; "
+        + $"{fit.Count} fitted, {held.Count} held out");
+    Console.WriteLine($"shapes  {shapes.Count}, byte slots searched over 256 residues, "
+        + $"rotate slots over {Lane8Search.RotateMultipliers.Length} published multipliers\n");
+
+    var clock = Stopwatch.StartNew();
+    var fits = Lane8Search.Run(shapes, fit, held, threads, OptionInt("shortlist", 20_000));
+    clock.Stop();
+
+    if (fits.Count == 0)
+    {
+        Console.WriteLine($"nothing explains the fitted cases ({clock.Elapsed.TotalSeconds:N1}s)");
+        return;
+    }
+
+    foreach (var found in fits.OrderByDescending(f => f.Held).Take(OptionInt("top", 8)))
+    {
+        Console.WriteLine($"holds {found.Held,3:N0} of {held.Count:N0}  {Lane8Search.Describe(found)}");
+    }
+
+    Console.WriteLine($"\n{clock.Elapsed.TotalSeconds:N1}s");
 }

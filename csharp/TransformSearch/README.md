@@ -1,7 +1,8 @@
 # transform-search
 
-Derives the 64-bit lane and the four keystream constants of a Valorant payload
-transform for a build nobody has published one for.
+Derives a Valorant payload transform for a build nobody has published one for:
+the 64-bit lane, the four keystream constants, and the 32-bit and 8-bit lanes
+that follow from them.
 
 Riot rotates the whitening applied to replicator bunch payloads every patch, and
 `libraries/vrfnet/payload_transform.py` carries one class per build, each ported
@@ -85,6 +86,14 @@ compositions a second on twelve threads.
     # The constants two seeds' recovered `mixed` imply, without a corpus.
     transform-search solve --pairs <seed>:<mixed>,<seed>:<mixed>
 
+    # The 32-bit lane, once the constants are known.
+    transform-search lane32 --corpus cap1304.jsonl --constants 076DC658:28:sub \
+        --sequence rotr7,xornot6,sub5,swap,add3,add2,rotl1
+
+    # The 8-bit lane, the same way.
+    transform-search lane8 --corpus cap1304.jsonl --constants 076DC658:28:sub \
+        --sequence rotr7,xornot6,sub5,swap,add3,add2,rotl1
+
 `make-known-plaintext.sh <scratch> <demo-dir> <out>` builds the oracle's block
 set by decoding every capture in a library whose build is already solved.
 
@@ -156,14 +165,48 @@ library holds captures for -- 12.10, 12.11 and 13.00 -- each recovering the
 published constants and nothing else but its own mirror image (an offset and a
 sign that differ by 0x80 are the same function).
 
+## The other two lanes
+
+Each has an oracle of its own, and both come from the same observation: with the
+keystream recovered, every state of every seed is computable, so a payload whose
+bit count leaves exactly one lane's remainder has exactly one unknown.
+
+- **32-bit** (`lane32`): a bit count 32 past a multiple of 64 runs the 64-bit
+  blocks and then one 32-bit block -- the 8-bit loop needs eight bits left and
+  the tail XOR needs a partial byte, so neither runs. The candidates are the
+  complement variants of the recovered 64-bit skeleton with `rotl32` operands
+  and `% 31` distances: sixteen of them, and the right one decodes 15 to 22
+  payloads where every other variant decodes **zero**.
+
+- **8-bit** (`lane8`): a bit count 8 past a multiple of 64 runs one 8-bit block
+  and nothing else, and the rep layout pins its plaintext byte -- exactly one of
+  256 lets the payload consume to zero bits. Each such payload is a (state,
+  ciphertext, plaintext) triple, and a wrong lane has one chance in 256 per
+  triple. This lane is a search rather than a neighbourhood, because its
+  operands are arbitrary multipliers; what makes it tractable is that a chain of
+  multipliers is one multiplier, a byte operand only depends on its multiplier
+  modulo 256, and the last byte slot is solved rather than enumerated.
+
+Both are validated the same way as everything else here: 12.10, 12.11 and 13.00
+recover their published lanes, 13.00's including the `not` its 64-bit lane does
+not carry and the chained multipliers that collapse to 0x61 and 0x29.
+
+**`lane8` stops on an answer, never on a count.** Six fitted cases are 2^48
+against a wrong lane and still admit lanes that fit those six and no others --
+13.00 produces three before the published one. What ends the search is a lane
+that reproduces every held-out case as well, which is what the `holds` column
+reports.
+
 ## What this does not do
 
-It derives `_u64` and the four constants only. The 32-bit and 8-bit lanes are *close* to structural
+It derives `_u64`, the four constants and the 32-bit lane. 13.04's 8-bit lane is
+**not** recovered: its rotate slots are enumerated over the ten multipliers the
+published builds use, and none of them fits. Solving the rotate distances
+directly -- there are only seven per slot -- rather than guessing their
+multipliers is the way past that, and `docs/payload-transform-13-04.md` carries
+the plan. The 32-bit and 8-bit lanes are *close* to structural
 mirrors of it but not exact — 13.00's 32-bit lane carries a `not` its 64-bit
 lane does not, and 12.10's operand complement appears in one lane and not the
-other — so they are not derivable from it for free. They are what
-stands between a recovered `_u64` and a payload of arbitrary length, and the
-states are no longer in the way: with the constants in hand every state of every
-seed is computable, so each lane can be searched against the payloads whose bit
-count leaves exactly that lane's remainder. Nothing is registered until ground
-truth passes; see `docs/payload-transform-13-04.md`.
+other — so they are not derivable from it for free -- which is why
+each is searched rather than copied. Nothing is registered until ground truth
+passes; see `docs/payload-transform-13-04.md`.

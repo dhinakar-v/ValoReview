@@ -213,6 +213,29 @@ all. What matters is the control column: a wrong transform is 0.0%, and 58
 payloads over 38 seeds terminating on exactly the right bit is not something a
 wrong keystream does once.
 
+**13.04's 32-bit lane, recovered from the constants:**
+
+    rotr7,xor6,sub5,swap,add3,add2,rotl1
+
+which is the 64-bit skeleton with `xor rol6` where the 64-bit lane has
+`xor ~ror6` -- the same difference 12.10 carries between its two lanes, and the
+reason the lanes are a neighbourhood rather than a copy.
+
+With the constants known, every state of every seed is computable, so the lane
+has an oracle of its own: a payload whose bit count is **32 past a whole number
+of 64-bit blocks** is decoded by whole 64-bit blocks and then exactly one 32-bit
+block -- the 8-bit loop needs eight bits left and the tail XOR needs a partial
+byte, so neither runs. The unknown in such a payload is the 32-bit lane and
+nothing else, and the same exact-consumption parse scores it. The candidates are
+the complement variants of the recovered skeleton with `rotl32` operands and
+`% 31` rotate distances: sixteen of them, and one is right.
+
+Validated by recovering all three published 32-bit lanes the same way -- 12.10
+and 12.11 exactly, 13.00 including the `not` its 64-bit lane does not carry --
+each scoring 15 to 22 payloads where every other variant scores **zero**.
+13.04's scores 16 of 84 on the swept capture and 33 of 46 on the held-out one,
+against zero for the rest.
+
 **The 32-bit and 8-bit lanes are not structural mirrors of the 64-bit lane**,
 and that was checked rather than assumed, because it is nearly true and the
 temptation is real: 13.00's 32-bit lane carries a `not` its 64-bit lane does
@@ -306,15 +329,56 @@ payloads of 1,408 bits and keeps 198,027.
 
 ## What is open
 
-**The 32-bit and 8-bit lanes.** They are what stands between the recovered
-keystream and a payload of arbitrary length: a payload whose bit count is not a
-multiple of 64 ends in a 32-bit block, some 8-bit blocks and a tail XOR, and
-those need lanes nothing has recovered yet. The states are no longer the
-obstacle -- with the constants in hand every state of every seed is computable,
-so each lane can be searched on its own against the payloads whose bit count
-leaves exactly that lane's remainder, under the same exact-consumption oracle.
-They are a small neighbourhood around the 64-bit skeleton rather than a free
-derivation, for the reason stated above.
+**The 8-bit lane**, which is the last piece and the only one that is not a
+neighbourhood of the 64-bit skeleton: it is where the arbitrary multipliers live
+-- 0x31, 0x29, 0x533, 0x0CC6DB61 and the rest -- so its operands cannot be
+derived from the lane above it.
+
+Its oracle is settled and is the strongest of the three. A payload whose bit
+count is 8, 16 or 24 past a whole number of blocks runs only the 8-bit loop
+after its 64-bit blocks -- the 32-bit lane needs more than 31 bits left and the
+tail XOR needs a partial byte -- and for the single-block case the plaintext byte
+is *pinned*: of the 256 possible last bytes, the exact-consumption parse accepts
+**exactly one**, measured over 39 payloads of 12.10 and 41 of 13.04. Each such
+payload is therefore a (state, ciphertext, plaintext) triple the lane has to
+reproduce, and a wrong lane has one chance in 256 per triple.
+
+The search is `transform-search lane8`, and three reductions make it cheap: a
+chain of multipliers is one multiplier, since `(state * a) * b` is
+`state * (a * b)`; a byte operand depends on its multiplier only **modulo 256**,
+so a byte slot has 256 candidates rather than 2^32; and the last byte slot is
+not searched at all, because running a case forward through the slots before it
+and backward through the operations after it leaves the operand between them as
+arithmetic, which a case with an odd state turns into a multiplier outright. It
+recovers all three published 8-bit lanes in under a second each, every one
+reproducing every held-out case -- including 13.00's, whose operands are the
+chained `mix_byte * 0x1B` and `mix_byte * 0x33` that collapse to single
+multipliers 0x61 and 0x29.
+
+**It does not recover 13.04's, and the reason is named.** Only the rotate slots
+still take a whole 32-bit multiplier, because a rotate distance is
+`(product % 7) + 1` rather than a masked byte, and those are enumerated over the
+ten multipliers the published builds use. Ten minutes over all eighteen shapes
+and all 256 residues of both byte slots found nothing, which says the prior is
+wrong for this build -- unsurprising, since Riot rotates these constants too:
+12.10 and 12.11 use 0x0CC6DB61 and 0x2751B, 13.00 and 13.01 use 0x0B and 0x533,
+13.02 uses 0x79.
+
+The way past it is to stop guessing the rotate multipliers and solve them. A
+rotate distance is one of **seven** values, so a case admits 49 distance pairs;
+fitting the byte multipliers against per-case distances rather than against a
+guessed multiplier costs 49 x 256^2 per shape and assumes nothing. What comes
+out is a distance *vector* per slot -- one value per case -- and the multiplier
+that produces it is then a single 2^32 scan per slot, rejecting seven candidates
+in eight on the first case. That is the next thing to build, and it belongs in
+`Lane8Search` beside the search that is there.
+
+**One stop rule is load-bearing and was got wrong first.** Six fitted cases are
+2^48 against a wrong lane and still admit lanes that fit those six and nothing
+else: 13.00 produces three of them before the published one. A search that
+returns after the first few fits reports one of those as the answer. What ends
+the search is a lane that also reproduces **every held-out case**, and the
+held-out column is printed for exactly that reason.
 
 **Is the recovered 64-bit lane exactly right, or right on ~96% of states?** The
 collapse evidence put *f* between 0.96 and 1.0 and could not distinguish
