@@ -54,7 +54,7 @@ import { activeRound } from "../model/roundclock";
 import { SIMULATED_LABEL, SIMULATED_NOTE, sideInRound } from "../model/synthetic";
 import { useWeapons } from "./catalogue";
 import { ClockPill } from "./ClockPill";
-import { Icon, Spinner, glyphs } from "./icons";
+import { Icon, glyphs } from "./icons";
 import { KillToast } from "./KillToast";
 import { LayersMenu } from "./LayersMenu";
 import { useLiveSnapshot } from "./live";
@@ -62,6 +62,7 @@ import { MarkerTip } from "./MarkerTip";
 import { MinimapCanvas } from "./MinimapCanvas";
 import { RosterPanel } from "./RosterPanel";
 import { Failed } from "./Shell";
+import { RendererSkeleton, StageSkeleton } from "./skeleton";
 import { Transport } from "./Transport";
 import { Button, Chip, EmptyState, Panel, Segmented } from "./ui";
 import { useImages } from "./images";
@@ -232,14 +233,21 @@ export function MapStage({
     );
   }
 
+  /*
+    The arena's own shape, not a sentence in a panel.
+
+    This branch used to be a `Panel` holding one line of grey text, which drew
+    the *wrong* head -- a `.panel-head` where the real stage has a `.stage-head`
+    -- and left the other three rows of the grid empty, so the page jumped twice
+    on every open.  `StageSkeleton` is those four rows with blocks in them, and
+    it says the same sentence to a reader.
+
+    It is safe to assume the arena here: the guards above have already returned
+    for a capture with no positions and for a map in no art entry, so whatever
+    replaces this is the stage.
+  */
   if (art.isPending || positions.isPending) {
-    return (
-      <Panel title="Map" icon={glyphs.map} className="stage">
-        <p className="muted">
-          <Spinner /> Reading the decoded tracks…
-        </p>
-      </Panel>
-    );
+    return <StageSkeleton what="the decoded tracks" />;
   }
 
   if (!art.data || !radarUrl) {
@@ -289,6 +297,17 @@ export function MapStage({
           {SIMULATED_LABEL}
         </Chip>
         <div className="spacer" />
+        {/*
+          The round clock, and it used to float over the top of the map.  On a
+          map whose playable area reaches the top of its own radar image -- and
+          several do -- it sat on the callouts and the markers under them, which
+          is an overlay covering the thing it is an overlay on.  There is a row
+          across the top of the stage with two controls in it and room for a
+          third, so the clock is a cell in it: nothing is covered, and the
+          number does not move when the map does.
+        */}
+        <ClockPill round={round} snap={snap} />
+        <div className="spacer" />
         <Segmented
           label="Which view"
           options={["2D", "3D"] as const}
@@ -322,17 +341,10 @@ export function MapStage({
           {mode === "2d" ? (
             <MinimapCanvas model={model} art={art.data} radar={radar} mask={maskDoc} />
           ) : (
-            <Suspense
-              fallback={
-                <p className="stage-loading">
-                  <Spinner /> Loading the renderer…
-                </p>
-              }
-            >
+            <Suspense fallback={<RendererSkeleton />}>
               <Scene3D model={model} art={art.data} radar={radar} mask={maskDoc} />
             </Suspense>
           )}
-          <ClockPill round={round} snap={snap} />
           <KillToast model={model} snap={snap} weapons={weapons} />
           <MarkerTip model={model} snap={snap} weapons={weapons} />
         </div>

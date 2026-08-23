@@ -21,10 +21,11 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { api } from "../api/client";
-import type { Card } from "../api/types";
+import type { Card, CardTeam } from "../api/types";
 import { formatDay, formatDuration, formatTimeOfDay } from "../model/format";
 import { glyphs } from "../views/icons";
-import { Failed, Loading, Page } from "../views/Shell";
+import { Failed, Page } from "../views/Shell";
+import { MatchListSkeleton } from "../views/skeleton";
 import { Chip, EmptyState, IconButton, Select, Toolbar } from "../views/ui";
 
 function Thumbnail({ card }: { card: Card }) {
@@ -48,6 +49,93 @@ function Thumbnail({ card }: { card: Card }) {
       width={200}
       height={52}
     />
+  );
+}
+
+/**
+ * The two teams, five agents each, in the card's own middle column.
+ *
+ * Three separate claims are drawn here and only two of them are always
+ * available, which is the whole reason this reads the way it does.
+ *
+ *   * **Who played.** An agent UUID per loadout slot, out of the plain chunks,
+ *     joined to Riot's published art.  Every readable capture has it -- no
+ *     decoder, no supported build -- so the portraits are on every row.
+ *   * **Which five were a team.** The roster's own first-five/last-five, which
+ *     `vrfhome.scan.team_ids` measured rather than assumed (103 of 103 against
+ *     duplicated agents, 23 of 23 against the kill graph).  A *set*-level
+ *     claim: nothing joins a slot to a player, and nothing here says it does.
+ *   * **How many rounds each won.** Derived by `infer`, and attributable to a
+ *     row only where a decode has said which half is its team A.  Where it has
+ *     not, `rounds_won` is null and **no number is drawn at all** -- a score
+ *     against the wrong five agents is a wrong claim that looks like a right
+ *     one, and this is the one of the three that could be silently wrong.
+ *
+ * What is deliberately absent is ATK/DEF.  Which team attacked is not
+ * recoverable -- spike events carry no actor id -- and over a whole match each
+ * team plays both sides anyway, so the colours name the two teams and claim no
+ * side.  See `vrfview/theme.py`.
+ */
+function TeamStrip({ card }: { card: Card }) {
+  if (card.teams === null) {
+    return null;
+  }
+  // Only ever drawn beside a number, and only when the numbers are real: it
+  // explains a scoreline that falls short of the round count, which is the
+  // ordinary case rather than the exceptional one.
+  const scored = card.teams.some((team) => team.rounds_won !== null);
+  return (
+    <div className="match-teams">
+      {card.teams.map((team, index) => (
+        <TeamRow key={index} team={team} tone={index === 0 ? "is-a" : "is-b"} />
+      ))}
+      {scored && card.rounds_undecided > 0 ? (
+        <span
+          className="match-undecided"
+          title={
+            `${card.rounds_undecided} of ${card.rounds} rounds ended in a defuse, ` +
+            "an explode or nothing at all. Spike events carry no actor id, so " +
+            "no side can be credited and these are in neither total."
+          }
+        >
+          +{card.rounds_undecided} undecided
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function TeamRow({ team, tone }: { team: CardTeam; tone: string }) {
+  return (
+    <div className={`match-team ${tone}`}>
+      {/* The cell is drawn either way so the two rows' portraits line up
+          whether or not a score could be attributed to them. */}
+      <span className="match-score">{team.rounds_won ?? ""}</span>
+      <span className="match-agents">
+        {team.agents.map((agent, index) =>
+          // Same rule as the thumbnail: where there is no picture the slot says
+          // so in letters rather than standing a drawing in for one.  An
+          // `<img>` with no `src` renders as the browser's broken-image glyph,
+          // which reads as a failed load rather than as art nobody fetched.
+          agent.icon_url === null ? (
+            <span key={index} className="match-agent absent" title={agent.name}>
+              {agent.name.slice(0, 2) || "?"}
+            </span>
+          ) : (
+            <img
+              key={index}
+              className="match-agent"
+              src={agent.icon_url}
+              alt={agent.name}
+              title={agent.name}
+              loading="lazy"
+              width={28}
+              height={28}
+            />
+          ),
+        )}
+      </span>
+    </div>
   );
 }
 
@@ -144,6 +232,7 @@ function CardRow({ card, index }: { card: Card; index: number }) {
         </span>
         {card.error ? <span className="card-line error">{card.error}</span> : null}
       </div>
+      <TeamStrip card={card} />
       <div className="card-badges">
         {/*
           One chip, and the two cases cannot both apply: `vrfhome/prewarm.py`
@@ -206,7 +295,7 @@ export function MatchListPage() {
   if (query.isPending) {
     return (
       <Page title="Replays">
-        <Loading what="the replay library" />
+        <MatchListSkeleton />
       </Page>
     );
   }

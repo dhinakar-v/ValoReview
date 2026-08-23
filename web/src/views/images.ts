@@ -89,6 +89,7 @@ export function palette(element: HTMLElement): Record<string, string> {
     spikeArmed: read("--spike-armed", "#ff9f45"),
     spikeSafe: read("--spike-safe", "#3ecf8e"),
     spikeBoom: read("--spike-boom", "#ff7043"),
+    hover: read("--marker-hover", "#e935ff"),
   };
 }
 

@@ -60,12 +60,13 @@
   /* -- type ------------------------------------------------------------ */
   /* The fallback tails are the old stacks, so a checkout with the woff2
      files stripped still looks deliberate rather than broken. */
-  --font-display: "Barlow Condensed", Tungsten, Impact, "Arial Narrow Bold",
+  --font-display:
+    "Barlow Condensed", Tungsten, Impact, "Arial Narrow Bold", sans-serif;
+  --font-ui:
+    "Plus Jakarta Sans", "Segoe UI Variable Text", "Segoe UI", system-ui, Arial,
     sans-serif;
-  --font-ui: "Plus Jakarta Sans", "Segoe UI Variable Text", "Segoe UI",
-    system-ui, Arial, sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "SF Mono", Menlo,
-    monospace;
+  --font-mono:
+    "JetBrains Mono", "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
 
   --text-2xs: 10px;
   --text-xs: 11px;
@@ -97,9 +98,10 @@
      Each has exactly one job now.  Everything that sits *in* the page --
      panels, cards, the roster, the transport -- is separated by a 1px border
      and a step on the surface ramp, because a shadow under something that is
-     not floating is decoration.  `--shadow-1` is the clock pill and the kill
-     toast, `--shadow-2` the two hover tooltips -- the marker's and the rail's
-     -- and the layers popover, `--shadow-3` the round-timeline
+     not floating is decoration.  `--shadow-1` is the kill toast -- the
+     clock pill had it too, until the clock moved off the map and into the
+     stage head -- `--shadow-2` the two hover tooltips -- the marker's and the
+     rail's -- and the layers popover, `--shadow-3` the round-timeline
      modal: the three things that genuinely hover over the map. */
   --shadow-1: 0 2px 10px color-mix(in srgb, black 50%, transparent);
   --shadow-2: 0 6px 20px color-mix(in srgb, black 55%, transparent);
@@ -125,7 +127,14 @@
      and a 1440px column inside a 2560px window is the dead space this layout
      was rebuilt to remove. */
   --page-max: 1440px;
-  --bar-h: 40px;
+  /* The document bar, and it is 56px because of what it carries: a two-line
+     lockup is 32px of type set solid, and 40px -- the viewer bar's height,
+     which this reused -- left 4px above and below it.  That is not breathing
+     room, it is a rounding error, and it is what made the mark read as jammed
+     into the corner.  12px either side is `--space-4`, the same step as the
+     row's own gap.  The viewer's bar is `--viewer-bar-h` and stays 40px: it
+     carries one line. */
+  --bar-h: 56px;
 
   /* The viewer's top band and its two gutters, named because the grid, the
      canvas sizing and the floating layers each depend on one of them.  There

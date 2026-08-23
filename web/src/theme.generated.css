@@ -47,6 +47,7 @@
   --spike-safe: #3ecf8e;
   --spike-boom: #ff7043;
   --playhead: #ffffff;
+  --marker-hover: #e935ff;
 
   /* Team A and team B, inferred; never attacker and defender. */
   --team-unknown: #8a90a2;

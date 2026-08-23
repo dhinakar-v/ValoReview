@@ -26,10 +26,10 @@
  * tick and a row cannot say different things about one event.
  *
  * The kills are the exception and are DOM rather than ink: a skull is the glyph
- * this interface already uses for a kill, `lucide-react` publishes components
- * and not path data, and a hand-copied outline could drift from the one in the
- * menu beside it.  Ten spans a round is nothing, and it is what makes the layer
- * testable under jsdom, which gives a canvas no 2D context at all.
+ * this interface already uses for a kill, and painting one on the canvas would
+ * mean a hand-copied outline that could drift from the one in the menu beside
+ * it.  Ten spans a round is nothing, and it is what makes the layer testable
+ * under jsdom, which gives a canvas no 2D context at all.
  *
  * The tooltip is hover-only and deliberately has no keyboard equivalent here,
  * because it already has one: the round-timeline dialog lists the same array,
@@ -74,7 +74,7 @@ import { roundEvents } from "./roundevents";
 import { RoundStrip } from "./RoundStrip";
 import { RoundTimeline } from "./RoundTimeline";
 import { SHORTCUTS, useTransportKeys } from "./shortcuts";
-import { IconButton, Segmented, Toggle } from "./ui";
+import { IconButton, Modal, Segmented, Toggle } from "./ui";
 
 const RAIL_HEIGHT = 40;
 /** The rail line's own top edge. It is a centre line: there is a lane either side. */
@@ -375,15 +375,29 @@ export function Transport({
         {children}
       </div>
 
+      {/*
+        The key list is a dialog, not a drawer.
+
+        It used to unfold *under* the bar, which pushed the whole transport up
+        and left ten rows of hint text spread across a two-thousand-pixel
+        window -- a legend as wide as the map it was explaining, with the
+        stage's own caption stranded below it.  It is a reference somebody
+        reads once and dismisses, which is what `ui.Modal` is for, and `fit`
+        because ten rows is ten rows however wide the window is.
+      */}
       {showKeys ? (
-        <div className="shortcuts">
-          {SHORTCUTS.map((entry) => (
-            <Fragment key={entry.keys}>
-              <span className="kbd">{entry.keys}</span>
-              <span>{entry.does}</span>
-            </Fragment>
-          ))}
-        </div>
+        <Modal title="Keyboard Shortcuts" size="fit" onClose={() => setShowKeys(false)}>
+          <dl className="shortcuts">
+            {SHORTCUTS.map((entry) => (
+              <Fragment key={entry.keys}>
+                <dt>
+                  <span className="kbd">{entry.keys}</span>
+                </dt>
+                <dd>{entry.does}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        </Modal>
       ) : null}
 
       {showTimeline && round !== null ? (

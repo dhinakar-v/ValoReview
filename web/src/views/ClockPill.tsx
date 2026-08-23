@@ -1,5 +1,11 @@
 /**
- * The round clock, floating over the middle of the map.
+ * The round clock, in the row across the top of the stage.
+ *
+ * It floated over the middle of the map until a capture on a radar whose
+ * playable area runs to the top of its own image showed what that cost: the
+ * pill sat on the map, over the markers and callouts up there.  An overlay is
+ * worth having only where there is nothing under it worth reading, and the
+ * stage head already had room beside the view switch, so this is a cell in it.
  *
  * It counts **down**, because that is the number a player was looking at, and
  * an analysis tool that shows elapsed time makes the viewer do the subtraction

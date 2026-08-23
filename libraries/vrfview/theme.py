@@ -100,6 +100,32 @@ SPIKE_BOOM = "#ff7043"
 PLAYHEAD = "#ffffff"
 ACCENT = "#7c8cff"
 
+# What the pointer is on, and it is a colour rather than a size.
+#
+# A hovered marker used to be drawn at PICKED_SCALE -- three times across --
+# which is right for a marker somebody *pinned* and wrong for one the mouse
+# merely passed over: sweeping a five-man stack inflated one portrait after
+# another to 104px, each one covering the neighbours the reader was trying to
+# tell apart, and the roster raises the same state, so pointing at a card blew
+# up a marker somewhere else on the map.  An outline says the same thing and
+# moves nothing.
+#
+# It is magenta because it has to contrast with *both* sides at once and with
+# the map under them, and the warm end of this palette cannot: an orange ring
+# around an attacker is a ring drawn in nearly the marker's own hue, which is
+# exactly what it was on the first attempt.  Magenta is the farthest this
+# canvas has room for -- 172 RGB from TEAM_COLOURS["A"] and 191 from ["B"],
+# 182 from TEXT (which is what a *pinned* ring is drawn in), and 161 from the
+# nearest thing on the whole canvas, which is TEAM_COLOURS["?"].  Every one of
+# those is far outside the 36 `minimap.spec.ts` counts as "this pixel is a
+# player".
+#
+# It is also the one colour `sight.py` refuses to produce: compositing the two
+# side washes additively would give magenta, which is why SIDE_ORDER makes one
+# side win outright instead.  That was written when magenta meant nothing here.
+# It now means "the pointer is on this", so the rule holds harder than before.
+HOVER = "#e935ff"
+
 # The wordmark, and the one red on the page that is not a claim about a match.
 #
 # It is Valorant's own red rather than a fifth hue because the product is named

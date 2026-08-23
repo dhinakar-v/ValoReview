@@ -51,9 +51,10 @@ import {
  *
  * The same precaution `readCanvas` takes, and for the same reason: a Playwright
  * screenshot clips the page rather than isolating an element, so a marker left
- * hovered draws at three times the size and names itself.  In a picture that is
- * about to sit on the front page that is not a measurement error, it is a
- * screenshot of the interface doing something nobody asked it to.
+ * hovered draws a magenta ring and names itself, and the roster card under the
+ * pointer is outlined to match.  In a picture that is about to sit on the front
+ * page that is not a measurement error, it is a screenshot of the interface
+ * doing something nobody asked it to.
  */
 async function park(page: Page): Promise<void> {
   await page.mouse.move(2, 2);

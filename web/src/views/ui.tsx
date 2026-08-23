@@ -16,13 +16,12 @@
  * `aria-label`, and `IconButton` is the only one that takes one.
  */
 
-import type { ComponentType, KeyboardEvent, ReactNode, SVGProps } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 
+import type { Glyph } from "./icons";
 import { Icon, ICON_ALONE, Spinner, glyphs } from "./icons";
 import { Sentence } from "./Shell";
-
-type Glyph = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
 
 type ButtonProps = {
   label: string;
@@ -811,12 +810,23 @@ export function Modal({
   onClose,
   children,
   actions,
+  size = "full",
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   /** Anything that belongs beside the title -- a stepper, a legend. */
   actions?: ReactNode;
+  /*
+    How much of the window the box claims.
+
+    `full` is the round timeline's shape -- a scrolling list whose length is a
+    property of the round, so it takes a fixed 88vh and does not resize as the
+    filters change.  `fit` is for a dialog whose content is a *fixed* short
+    list: the keyboard help is ten rows and always ten rows, and a fixed-height
+    box around it is six hundred pixels of empty card.
+  */
+  size?: "full" | "fit";
 }) {
   const box = useRef<HTMLDivElement | null>(null);
   const returnTo = useRef<HTMLElement | null>(null);
@@ -855,7 +865,7 @@ export function Modal({
   return (
     <div className="scrim" onMouseDown={onClose}>
       <div
-        className="modal"
+        className={size === "fit" ? "modal is-fit" : "modal"}
         role="dialog"
         aria-modal="true"
         aria-label={title}

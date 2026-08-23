@@ -39,10 +39,8 @@
 import type { LayerKey } from "./playback";
 import { usePlayback } from "./playback";
 import { CheckRow, Menu } from "./ui";
+import type { Glyph } from "./icons";
 import { glyphs } from "./icons";
-import type { ComponentType, SVGProps } from "react";
-
-type Glyph = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
 
 interface Entry {
   key: LayerKey;

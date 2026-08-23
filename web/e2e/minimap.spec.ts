@@ -18,7 +18,7 @@
  * keeps saying it will not make and which looks entirely plausible on screen.
  */
 
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 import type { Transform } from "../src/api/types";
 import type { ReplayModel } from "../src/model/replay";
@@ -107,48 +107,6 @@ function largestPatch(pixels: Array<[number, number]>): number {
     biggest = Math.max(biggest, size);
   }
   return biggest;
-}
-
-interface Rect {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
-function inside(rect: Rect, x: number, y: number): boolean {
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
-
-/**
- * Where the clock pill covers the canvas, in the screenshot's own pixels.
- *
- * `.clock-pill` is `position: absolute` over the map, and while the spike is
- * down it carries a `SPIKE DOWN` badge whose text *and* 1px border are
- * `currentcolor` -- which is `--spike-armed`.  A Playwright element screenshot
- * clips the page to the element's box rather than isolating it, so those ~210
- * amber pixels are in the read of the canvas without a single one of them
- * having been drawn on it.  They are the DOM saying the same true thing the
- * marker says, so the count below steps over them rather than budgeting for
- * them -- which is what let the budget tighten from 200 to 20.
- */
-async function pillRect(page: Page, canvas: Locator): Promise<Rect | null> {
-  const pill = page.locator(".clock-pill");
-  if ((await pill.count()) === 0) {
-    return null;
-  }
-  const [over, under] = await Promise.all([pill.boundingBox(), canvas.boundingBox()]);
-  if (over === null || under === null) {
-    return null;
-  }
-  // A pixel of slack each way: both boxes are fractional and the screenshot is
-  // whole pixels, so a glyph's edge can land just outside the rounded box.
-  return {
-    left: over.x - under.x - 1,
-    top: over.y - under.y - 1,
-    right: over.x - under.x + over.width + 1,
-    bottom: over.y - under.y + over.height + 1,
-  };
 }
 
 /**
@@ -489,13 +447,17 @@ test.describe("the 2D minimap", () => {
 
     const colours = await palette(page);
     const amber = parseColour(colours.spikeArmed!);
-    const overlay = await pillRect(page, canvas);
+    /*
+      Nothing is stepped over any more.  While the clock floated over the map it
+      carried a `SPIKE DOWN` badge whose text and 1px border are `currentcolor`
+      -- `--spike-armed` -- and an element screenshot clips the page rather than
+      isolating it, so ~210 amber pixels were in the read of the canvas without
+      one of them having been drawn on it.  The clock is in the stage head now
+      and outside this box entirely, so every amber pixel below was painted here.
+    */
     let near = 0;
     const stray: Array<[number, number]> = [];
     for (const [px, py] of colouredPixels(image, [amber])) {
-      if (overlay !== null && inside(overlay, px, py)) {
-        continue;
-      }
       if (Math.hypot(px - x, py - y) <= MARKER_REACH) {
         near += 1;
       } else {

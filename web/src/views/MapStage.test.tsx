@@ -202,6 +202,22 @@ describe("where a map cannot be drawn", () => {
     expect(container.querySelector("canvas")).toBeNull();
   });
 
+  /*
+    Between the guards above and a drawn map there is a wait, and it used to be
+    one line of grey text in a panel whose head was not even the stage's own.
+    It is the arena's four rows now -- but with none of the three things the
+    Playwright suite treats as signals: `canvas.minimap` is how `harness.ts`
+    decides the replay page is ready, and `.player-card` and `.round-chip` are
+    how `review.spec.ts` finds a card and picks a round.
+  */
+  it("holds the arena's shape while the tracks are arriving, and draws no canvas", () => {
+    // Synchronous: the fetch stub resolves, but not before this render returns.
+    const { container } = show({ has_positions: true });
+    expect(container.querySelector(".skel-gutter")).toBeTruthy();
+    expect(container.querySelector("canvas, .player-card, .round-chip")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("the decoded tracks");
+  });
+
   it("says the radar image is missing rather than drawing something else", async () => {
     const { container } = show({ has_positions: true }, DECODER, {
       ...ART,

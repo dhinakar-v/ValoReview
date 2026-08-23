@@ -74,8 +74,33 @@ const UTILITY_HALF = 8;
 const FACING_LENGTH = 11;
 const FACING_HALF = 6;
 
-/** How much larger a hovered or pinned marker is drawn. */
+/**
+ * How much larger a *pinned* marker is drawn.
+ *
+ * A pin and a hover are not the same act and no longer draw the same way.  A
+ * pin is a decision -- somebody clicked this player and wants to keep hold of
+ * them in a five-man stack -- so it earns the reference's own treatment, about
+ * 104px against a 26px base.  A hover is the pointer passing over, and
+ * inflating a portrait to three times its size for that covered the very
+ * neighbours the reader was sweeping the stack to tell apart; worse, the
+ * roster raises the same state, so pointing at a card three hundred pixels
+ * away silently blew up a marker on the map.  Hover is `HOVER_RING` instead:
+ * the same mark, ringed in `--marker-hover`, moving nothing.  That colour is
+ * magenta and not the warm hue this started as: a ring has to contrast with
+ * both sides at once, and an orange one around an attacker is drawn in very
+ * nearly the marker's own colour.
+ */
 const PICKED_SCALE = 3;
+
+/**
+ * The hovered marker's outline, in CSS pixels before the zoom scale.
+ *
+ * Three rather than the ordinary ring's two, because the ring it replaces is
+ * already the team colour and a hover has to be legible as a *change* to a
+ * mark whose size is now fixed.  It is drawn proud of the portrait like every
+ * other ring here, so an agent icon with a pale border cannot swallow it.
+ */
+const HOVER_RING = 3;
 
 /*
  * The death X's arm, in CSS pixels before the zoom scale.
@@ -326,8 +351,26 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
       drawSpike(context, { model, snap, world, colours, scale });
 
       const hits: Hit[] = [];
+      // Two questions, not one.  `chosenId` is whoever is being pointed at --
+      // pinned, else hovered -- and decides who is *named*; `pinnedId` is the
+      // narrower one and is the only thing that changes a marker's size.
       const chosenId = selectedActor(state);
-      for (const player of model.replay.players) {
+      const pinnedId = state.selected;
+      /*
+        And the pointer's own player is painted last.
+
+        A ring is no use underneath the four markers stacked on top of it, and
+        a five-man spawn is exactly where somebody is pointing at one to find
+        out who it is.  `sort` is stable, so this moves one player to the end
+        and leaves the rest in the replay's own order -- which is what keeps
+        the picture steady while the pointer is somewhere else entirely.
+      */
+      const order = model.replay.players
+        .slice()
+        .sort(
+          (a, b) => Number(a.actor_id === chosenId) - Number(b.actor_id === chosenId),
+        );
+      for (const player of order) {
         if (!teamShown(state, player.team)) {
           continue;
         }
@@ -351,10 +394,11 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
         // does not is the one inconsistency a viewer would actually notice.
         const colour = sideColour(colours, sideOf(model.replay, player.team, snap.t_ms));
         const chosen = chosenId === player.actor_id;
-        // The picked-out marker is three times the size, which is the
-        // reference's own treatment: about 104px against a 26px base. It is
-        // what makes one player findable inside a five-man stack.
-        const radius = (AVATAR_PX * scale * (chosen ? PICKED_SCALE : 1)) / 2;
+        const pinned = pinnedId === player.actor_id;
+        // Only a pin grows the marker -- see `PICKED_SCALE`.  A hover keeps
+        // the size and takes the magenta ring below, so nothing on the canvas
+        // moves under a pointer that is only passing through.
+        const radius = (AVATAR_PX * scale * (pinned ? PICKED_SCALE : 1)) / 2;
 
         if (alive) {
           drawFacing(context, { x, y, position, world, colour, radius });
@@ -363,7 +407,8 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
             y,
             radius,
             colour,
-            ring: chosen ? colours.text! : colour,
+            ring: pinned ? colours.text! : chosen ? colours.hover! : colour,
+            ringWidth: chosen && !pinned ? HOVER_RING : 2,
             icon: iconFor.get(player.actor_id),
             background: colours.background!,
           });
@@ -402,6 +447,17 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
         }
         hits.push({ x, y, radius, player });
       }
+      /*
+        Reversed, so the hit test answers with whatever is on *top*.
+
+        `at` returns the first hit within reach and the list is built in paint
+        order, so it used to answer with the bottom-most marker of a stack --
+        the one drawn first and covered by every other.  Harmless while nothing
+        depended on it; not harmless now that the answer decides which marker
+        comes to the front, because pointing at the player on top would ring
+        the one buried underneath them.
+      */
+      hits.reverse();
       hitsRef.current = hits;
     },
     [art, iconFor, model, radar, settings, silhouette],
@@ -992,11 +1048,12 @@ function drawAlive(
     radius: number;
     colour: string;
     ring: string;
+    ringWidth: number;
     icon: HTMLImageElement | undefined;
     background: string;
   },
 ): void {
-  const { x, y, radius, colour, ring, icon, background } = args;
+  const { x, y, radius, colour, ring, ringWidth, icon, background } = args;
   if (icon) {
     // The ring is drawn first and slightly proud of the portrait, so the team
     // colour survives an agent icon with a pale border.
@@ -1005,7 +1062,7 @@ function drawAlive(
     context.fillStyle = colour;
     context.fill();
     context.strokeStyle = ring;
-    context.lineWidth = 2;
+    context.lineWidth = ringWidth;
     context.stroke();
 
     context.save();
@@ -1023,7 +1080,7 @@ function drawAlive(
   context.fillStyle = colour;
   context.fill();
   context.strokeStyle = ring === colour ? background : ring;
-  context.lineWidth = 2;
+  context.lineWidth = ringWidth;
   context.stroke();
 }
 
