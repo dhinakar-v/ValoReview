@@ -9,7 +9,7 @@
     mixing function against a corpus captured by csharp/patches (see
     docs/payload-transform-13-04.md for the method and what calibrates it).
 
-    It references nothing: no parser clone, no ValoReview code. Its whole input
+    It references nothing: not csharp/parser, not ValoReview code. Its whole input
     is a JSONL corpus of {bit count, seed, payload hex}, so it builds and runs
     on a machine that has neither.
   -->

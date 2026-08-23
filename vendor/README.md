@@ -16,8 +16,12 @@ README, "The decoder". Publish a self-contained one with:
     dotnet publish csharp/VrfPositions -c Release -r win-x64 --self-contained
 
 Before handing that binary to anyone else, read the OozSharp section of
-`THIRD_PARTY.md`: it links GPLv3-headed code shipped under an MIT package file,
-which is fine to build and run locally and not obviously fine to redistribute.
+`THIRD_PARTY.md`: it links GPLv3-headed code shipped under an MIT package file.
+That is fine to build and run locally, and redistributing it is fine on the
+terms the same file's **Distribution** section sets out -- the decoder conveyed
+under GPLv3 in its own folder, with a written offer of source, beside an
+Apache-2.0 application it only ever talks to over argv. `runners\publish-decoder.bat`
+is what produces the binary that offer refers to.
 
 `.gitignore` keeps everything in this directory out of the repository except
 this file. The DLL is Epic's intellectual property, licensed for redistribution

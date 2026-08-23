@@ -14,10 +14,9 @@
     is an ability, how casts group) stays in Python, where the tests are. See
     libraries/vrfview/csharpdecode.py.
 
-    VrpRoot points at a clone of michel-giehl/ValorantReplayParser. Override it
-    when the clone lives somewhere else:
-
-        dotnet build csharp/VrfPositions -c Release -p:VrpRoot=D:\src\ValorantReplayParser
+    The parser it references is vendored at csharp/parser/, not cloned beside
+    this repository: a build needs nothing but this checkout and the .NET SDK.
+    csharp/parser/README.md is the provenance and the list of local changes.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -29,12 +28,8 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(VrpRoot)' == ''">
-    <VrpRoot>$(MSBuildThisFileDirectory)..\..\..\ValorantReplayParser</VrpRoot>
-  </PropertyGroup>
-
   <ItemGroup>
-    <ProjectReference Include="$(VrpRoot)\src\Replay.Valorant\Replay.Valorant.csproj" />
+    <ProjectReference Include="..\parser\src\Replay.Valorant\Replay.Valorant.csproj" />
   </ItemGroup>
 
 </Project>

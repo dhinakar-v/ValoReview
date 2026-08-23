@@ -188,7 +188,6 @@ git clone https://github.com/dhinakar-v/ValoReview.git
 cd ValoReview
 uv sync                                    # .venv, the project and the dev tools
 
-git clone https://github.com/michel-giehl/ValorantReplayParser.git ../ValorantReplayParser
 runners\build-decoder.bat                  # positions; needs the .NET 10 SDK
 
 runners\fetch-assets.bat fetch             # ~85 MB of Riot's art into assets/
@@ -431,8 +430,9 @@ corrected twice without invalidating a single cached decode.
 
 ### The decoder
 
-Positions come from `csharp/VrfPositions`, a small C# program that references
-[`michel-giehl/ValorantReplayParser`](https://github.com/michel-giehl/ValorantReplayParser)
+Positions come from `csharp/VrfPositions`, a small C# program that compiles
+against [`michel-giehl/ValorantReplayParser`](https://github.com/michel-giehl/ValorantReplayParser)
+-- vendored at `csharp/parser`, so the build needs nothing beside this checkout --
 and writes the thinned movement samples and actor spawns this project consumes.
 It exists because the same decode is about four seconds there and about four
 minutes in Python — the cost was never the decompression, it was three million
@@ -440,11 +440,12 @@ movement records through a bit reader backed by a Python int.
 
 Build it once:
 
-    git clone https://github.com/michel-giehl/ValorantReplayParser.git ..\ValorantReplayParser
     runners\build-decoder.bat
 
-That needs the .NET 10 SDK. `runners\build-decoder.bat -p:VrpRoot=<path>` if
-the clone lives somewhere other than beside this repository.
+That needs the .NET 10 SDK and nothing else. `csharp/parser/README.md` records
+where that copy of the parser came from and the four things that differ from
+upstream.
+
 `libraries/vrfview/csharpdecode.py` then looks in this order:
 
     --parser-exe PATH     an argument beats everything

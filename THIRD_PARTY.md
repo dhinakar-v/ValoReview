@@ -12,11 +12,11 @@ that are **in this repository**, not fetched at run time, so their licence
 travels with them and is recorded below.
 
 Since the positions decoder moved to `csharp/VrfPositions`, there is also a
-third relationship, and it is neither of those: this repository contains a
-small C# program that **compiles against** ValorantReplayParser's libraries.
-Nothing of theirs is copied in, but the resulting binary links their code and
-the code beneath it, so the section on OozSharp below matters before that
-binary is given to anybody.
+third relationship: four of ValorantReplayParser's projects are **vendored**
+into `csharp/parser/`, so their source is in this repository and their licence
+travels with it exactly as a port's does. The binary built from them also links
+OozSharp, which is why the section on that below matters before the binary is
+given to anybody.
 
 Each ported module names its upstream source file in its own docstring; this
 file is the licence record, not the index.
@@ -29,10 +29,13 @@ file is the licence record, not the index.
 
 This project reaches that work in two ways.
 
-**Referenced, not vendored.** `csharp/VrfPositions` is a small C# program that
-references the upstream project as a library and is where every position in
-this project now comes from. Nothing of it is copied here; `runners\
-build-decoder.bat` builds against a clone. **Do not take its decompressor** --
+**Vendored.** `csharp/parser/` holds four of upstream's projects --
+`Replay.Models`, `Replay.Encoding`, `Replay.Unreal`, `Replay.Valorant` -- copied
+from `main` at `99d9646` and modified in the four places
+`csharp/parser/README.md` lists. `csharp/VrfPositions` compiles against them and
+is where every position in this project now comes from. The MIT licence below
+covers that copy, and `csharp/parser/LICENSE` is the same text sitting beside
+the code it applies to. **Do not take its decompressor** --
 `OozSharpOodleDecompressor` wraps OozSharp, which carries a GPLv3 header under
 an MIT package.
 
@@ -82,7 +85,8 @@ FieldPayloadParser.cs` and `Replay.Unreal/Parsing/ArchiveVectorReaders.cs`.
 
 The Python pipeline still resolves a native Oodle DLL (`libraries/oodlefind.py`)
 and uses **no** OozSharp. But `csharp/VrfPositions` references
-`Replay.Valorant`, which references `Replay.Encoding`, which takes a NuGet
+`csharp/parser`'s `Replay.Valorant`, which references `Replay.Encoding`, which
+takes a NuGet
 dependency on **`OozSharp 3.0.1`** -- so a built `vrf-positions.exe` contains
 it. That is why this section exists.
 
@@ -154,6 +158,36 @@ Icons*, verified from `node_modules/@phosphor-icons/react/LICENSE` rather than
 assumed -- and the glyphs it draws are inlined into `web/dist/static/` at build
 time. Only the forty-five `views/icons.tsx` imports by name are, each from its
 own module: the package ships some three thousand.
+
+---
+
+## Distribution
+
+Everything above is about a repository. This section is about the **installer**
+`desktop/` builds, which is the only artefact anybody else receives, and it
+exists because the OozSharp section stops one step short of saying what to do.
+
+The installer conveys two works under two licences:
+
+* **ValoReview** -- the Python backend, the web interface, the Rust shell and
+  `csharp/VrfPositions`'s own emitter code -- under the **Apache License 2.0**.
+* **`vrf-positions.exe`** -- the built decoder, which links `Replay.Encoding`,
+  which links OozSharp -- under the **GNU GPL version 3**, taking the stricter
+  of the two readings above rather than relying on the package's MIT `LICENSE`
+  file to override a source header.
+
+They are separated in the bundle rather than only on paper. The decoder is its
+own resource folder with `GPLv3.txt` and a written offer of source beside it
+(`desktop/licences/DECODER-SOURCE-OFFER.txt`, which names this repository, the
+vendored parser's upstream revision and the exact `runners/publish-decoder.bat`
+command that produced the binary). The two programs communicate only by one
+starting the other with command-line arguments and reading a JSON file it
+writes: **that process boundary is the licence boundary**, which is why the
+Apache-2.0 half is not itself a GPLv3 derivative.
+
+`vendor/README.md`'s warning -- that this "is fine to build and run locally and
+not obviously fine to redistribute" -- is answered here rather than left open.
+Redistributing it is fine on these terms, and only on these terms.
 
 ---
 

@@ -1,0 +1,138 @@
+using Replay.Encoding.Archives;
+using static Replay.Encoding.PayloadEncryption.ValorantSeededTransformHelpers;
+
+namespace Replay.Encoding.PayloadEncryption.VersionedTransforms;
+
+/// <summary>
+/// 13.04, and the one transform here that was derived rather than read off the
+/// client: every constant below was recovered from captured payloads, by the
+/// search in the ValoReview repo's csharp/TransformSearch, and each is backed by
+/// a measurement written down in that repo's docs/payload-transform-13-04.md.
+///
+/// Two of them cannot be pinned further by any capture and are noted rather than
+/// silently chosen: InitAOffset 0x58 with an addition is the same function as
+/// 0x28 with a subtraction, because only the low seven bits of the sum survive
+/// the shift left by 25; and the 8-bit lane's xor/sub pair may equally be
+/// 0xa9/0x9b, whose two extra 0x80s cancel.
+/// </summary>
+public sealed class ValorantSeededTransform13_04 : IPayloadTransform
+{
+    private const uint SeedAddend = 0x076dc658u;
+    private const uint InitAOffset = 0x28u;
+    private const byte TailXor = 0x58;
+
+    public IReadOnlyCollection<string> SupportedReplayVersions { get; } = ["++Ares-Core+release-13.04"];
+
+    public int GetOutputByteCount(int bitCount) => ValorantSeededTransformHelpers.GetOutputByteCount(bitCount);
+
+    public void Apply(FBitArchive input, uint seed, Span<byte> output)
+    {
+        var bitCount = CopyInputToOutput(input, output);
+        Transform(output[..GetOutputByteCount(bitCount)], bitCount, seed);
+    }
+
+    public void Apply(FBitArchive input, int bitCount, uint seed, Span<byte> output)
+    {
+        CopyInputToOutput(input, bitCount, output);
+        Transform(output[..GetOutputByteCount(bitCount)], bitCount, seed);
+    }
+
+    private static void Transform(Span<byte> output, int bitCount, uint seed)
+    {
+        if (bitCount == 0)
+        {
+            return;
+        }
+
+        var state = seed;
+        var streamByte = (byte)seed;
+        var prngA = InitialPrngA(seed);
+        var prngB = InitialPrngB(seed);
+        var byteOffset = 0;
+        var bitsRemaining = bitCount;
+
+        unchecked
+        {
+            while (bitsRemaining > 63)
+            {
+                var value = ReadUInt64(output, byteOffset);
+                var ror1 = RotateRight(state, 1);
+                var ror2 = RotateRight(state, 2);
+                var ror3 = RotateRight(state, 3);
+                var ror5 = RotateRight(state, 5);
+                var ror6 = RotateRight(state, 6);
+                var ror7 = RotateRight(state, 7);
+
+                value = RotateRight(value, (int)(ror7 % 63) + 1);
+                value ^= ~(ulong)ror6;
+                value -= ror5;
+                value = SwapAdjacentBits(value);
+                value += ror3;
+                value += ror2;
+                value = RotateLeft(value, (int)(ror1 % 63) + 1);
+
+                WriteUInt64(output, byteOffset, value);
+                AdvanceTransformState(ref state, ref prngA, ref prngB, out streamByte);
+                byteOffset += 8;
+                bitsRemaining -= 64;
+            }
+
+            while (bitsRemaining > 31)
+            {
+                var value = ReadUInt32(output, byteOffset);
+                var rol1 = RotateLeft(state, 1);
+                var rol2 = RotateLeft(state, 2);
+                var rol3 = RotateLeft(state, 3);
+                var rol5 = RotateLeft(state, 5);
+                var rol6 = RotateLeft(state, 6);
+                var rol7 = RotateLeft(state, 7);
+
+                value = RotateRight(value, (int)(rol7 % 31) + 1);
+                value ^= rol6;
+                value -= rol5;
+                value = SwapAdjacentBits(value);
+                value += rol3;
+                value += rol2;
+                value = RotateLeft(value, (int)(rol1 % 31) + 1);
+
+                WriteUInt32(output, byteOffset, value);
+                AdvanceTransformState(ref state, ref prngA, ref prngB, out streamByte);
+                byteOffset += 4;
+                bitsRemaining -= 32;
+            }
+
+            while (bitsRemaining > 7)
+            {
+                var value = output[byteOffset];
+
+                value = RotateRight(value, (int)((state * 0x12959c3u) % 7) + 1);
+                value ^= (byte)(state * 0x29u);
+                value -= (byte)(state * 0x1bu);
+                value = SwapAdjacentBits(value);
+                value += (byte)(state * 0xacu);
+                value = RotateLeft(value, (int)((state * 0x0bu) % 7) + 1);
+
+                output[byteOffset] = value;
+                AdvanceTransformState(ref state, ref prngA, ref prngB, out streamByte);
+                byteOffset++;
+                bitsRemaining -= 8;
+            }
+
+            if (bitsRemaining != 0)
+            {
+                var mask = (byte)(0xff >> (7 - ((bitCount - 1) & 7)));
+                output[byteOffset] ^= (byte)(mask & (streamByte ^ TailXor));
+            }
+        }
+    }
+
+    private static ulong InitialPrngA(uint seed)
+    {
+        unchecked
+        {
+            var seedPlus = seed + SeedAddend;
+            var mixed = ((seedPlus >> 15) ^ seedPlus) >> 12 ^ ((seed - InitAOffset) * 0x02000000u) ^ seedPlus;
+            return mixed * Multiplier;
+        }
+    }
+}

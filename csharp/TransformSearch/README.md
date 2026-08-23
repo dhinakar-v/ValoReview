@@ -9,7 +9,7 @@ Riot rotates the whitening applied to replicator bunch payloads every patch, and
 from upstream. When a capture arrives on a build upstream has not reached,
 there is nothing to port. This searches for the answer instead.
 
-It references nothing — not the parser clone, not `libraries/` — because its
+It references nothing — not `csharp/parser`, not `libraries/` — because its
 whole input is a JSONL corpus of `{bit count, seed, payload hex}` written by
 `csharp/patches/0001-payload-capture.patch`.
 
