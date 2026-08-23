@@ -35,9 +35,26 @@ directory would recreate the `out/` bug; falling back to %LOCALAPPDATA% would
 recreate the directory this module exists to retire.  So callers catch the
 refusal and degrade: every cache in this project is an optimisation whose
 absence costs time and nothing else, and each one already had that path.
-`project_root()` is the non-raising half, for the one caller that needs a
-directory rather than a cache -- `vrfview.csharpdecode`, whose scratch file is
-deleted the moment it is read and must not fail a decode for want of a home.
+`root_or_none()` is the non-raising half, for the two callers that would rather
+have no cache than an exception -- `vrfhome.scan`, which simply rescans, and
+`vrfview.csharpdecode`, whose scratch file is deleted the moment it is read and
+must not fail a decode for want of a home.
+
+A *configured* root is not a fallback
+-------------------------------------
+`VRF_CACHE_ROOT` names the cache directory outright, and is read before the
+search runs.  That is the opposite of a fallback: a fallback guesses when it
+was not told, and this is being told.  It exists for the packaged desktop app,
+where there is no checkout for the argument above to be about -- the data still
+belongs to one installation rather than to a machine, and the installer is what
+knows where that installation keeps things.  With the variable unset nothing
+changes, the refusal included: an installed copy that was never told where to
+cache still caches nothing and simply redoes the work.
+
+Note what it names.  `VRF_CACHE_ROOT` is the cache directory *itself*, not a
+project root to append `.cache/` to, because the thing an installer has to hand
+is somewhere to put files rather than somewhere a `pyproject.toml` pretends to
+be.
 
 A note on which root is found
 -----------------------------
@@ -68,14 +85,19 @@ MARKER = "pyproject.toml"
 
 CACHE_DIRNAME = ".cache"
 
+# The one way to name the cache directory from outside.  Read through envfile,
+# so it obeys the same "real environment first, nearest .env second" order as
+# DEMO_PATH, VRF_OODLE_DLL and VRF_PARSER_EXE.
+ROOT_ENV = "VRF_CACHE_ROOT"
+
 NO_ROOT = (
-    f"no {MARKER} above this code, so there is no project root to cache in "
-    "(an installed copy caches nothing and simply redoes the work)"
+    f"no {MARKER} above this code and no {ROOT_ENV}, so there is nowhere to "
+    "cache (an installed copy caches nothing and simply redoes the work)"
 )
 
 
 class NoProjectRootError(Exception):
-    """No project root above this code, so there is nowhere to cache."""
+    """Nowhere to cache: no configured root and no project root."""
 
 
 def project_root() -> Path | None:
@@ -84,12 +106,29 @@ def project_root() -> Path | None:
     return None if found is None else found.parent
 
 
+def configured_root() -> Path | None:
+    """The cache directory `VRF_CACHE_ROOT` names, or None if none does."""
+    value = envfile.get(ROOT_ENV)
+    return None if not value else Path(value.strip('"')).expanduser()
+
+
 def root() -> Path:
     """The cache directory, or raise saying why there is not one."""
+    named = configured_root()
+    if named is not None:
+        return named
     base = project_root()
     if base is None:
         raise NoProjectRootError(NO_ROOT)
     return base / CACHE_DIRNAME
+
+
+def root_or_none() -> Path | None:
+    """The cache directory, or None -- for a caller that must not raise."""
+    try:
+        return root()
+    except NoProjectRootError:
+        return None
 
 
 def subdir(*parts: str) -> Path:

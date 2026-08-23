@@ -189,6 +189,7 @@ def run(
             capture_output=True,
             text=True,
             check=False,
+            creationflags=_quiet_flags(),
         )
     except OSError as exc:
         msg = f"could not run {decoder}: {exc}"
@@ -210,6 +211,19 @@ def run(
 
 SCRATCH_DIRNAME = "decode"
 
+# Windows gives a console-less parent's child a console of its own, so a decode
+# launched from a GUI host flashes a black window up and away again.  One would
+# be a blemish; vrfhome.prewarm decodes a library back to back, so it is a
+# stream of them over somebody's screen.  0x08000000 is CREATE_NO_WINDOW, named
+# here rather than reached for through subprocess because that constant only
+# exists on Windows and this module is imported everywhere.
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _quiet_flags() -> int:
+    """Creation flags that keep a console off the screen; 0 off Windows."""
+    return _CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 def _scratch_for(vrf: Path) -> Path:
     """
@@ -218,19 +232,15 @@ def _scratch_for(vrf: Path) -> Path:
     Never beside the capture: `Demos/` is the user's directory, and the game
     deletes from it.
 
-    The project's `.cache/decode/` when there is a project root, and the system
-    temp directory when there is not.  This is the one place in the project
-    that keeps that fallback, and it is not a cache: `run` unlinks the file the
-    moment it has read it.  A decode failing for want of somewhere to put a
-    scratch file would be a worse answer than putting it where every other
-    program puts one.
+    The cache's own `decode/` when there is a cache directory at all, and the
+    system temp directory when there is not.  This is the one place in the
+    project that keeps that fallback, and it is not a cache: `run` unlinks the
+    file the moment it has read it.  A decode failing for want of somewhere to
+    put a scratch file would be a worse answer than putting it where every
+    other program puts one.
     """
-    root = vrfcache.project_root()
-    base = (
-        root / vrfcache.CACHE_DIRNAME / SCRATCH_DIRNAME
-        if root is not None
-        else Path(tempfile.gettempdir())
-    )
+    root = vrfcache.root_or_none()
+    base = root / SCRATCH_DIRNAME if root is not None else Path(tempfile.gettempdir())
     return base / f"{vrf.stem}.vrf-decode.json"
 
 
