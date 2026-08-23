@@ -219,6 +219,7 @@ __marimo__/
 
 # Valorant Replay Demo Folder
 Demos/
+Demos1/
 # fetch_assets.py output
 assets/
 # Oodle runtime drop-in. The DLL is Epic's; it is never redistributed here.
