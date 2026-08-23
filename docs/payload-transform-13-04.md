@@ -1,8 +1,8 @@
 # Deriving a payload transform for `++Ares-Core+release-13.04`
 
 Measured truth about an unfinished piece of work. What is written down here is
-what was established by running something, and the open question at the end is
-stated as an open question.
+what was established by running something, and the open questions at the end are
+stated as open questions.
 
 ## Why this exists at all
 
@@ -86,6 +86,93 @@ bit swap, substitution table, NOT, add/subtract/xor a rotated state, and rotate
 by `(rotated state % 63) + 1` — with eight operand choices each. Large, but
 enumerable, and nothing like the space the arbitrary constants would have made.
 
+**Operands descend, and that is what makes the space affordable.** Across all
+five published 64-bit lanes — 35 operand uses — each successive
+`rotr32(state, k)` uses a strictly smaller k: 8,6,5,4 then 8,6,4,3,2 then
+8,6,3,1 then 5,4,1 then 6,3,2. Never a repeat, never an ascent. That turns the
+operand choice for m operand ops from 8^m into C(8,m) and collapses depth seven
+from about 10^12 compositions to 5×10^8. It is a **prior** read off five
+transforms, not a fact about the sixth, so the searcher's `--loose` relaxes it
+and `validate` is what proves a run under it still recovers a known answer.
+
+**The searcher exists and is validated.** `csharp/TransformSearch/` is a
+standalone .NET 10 console project whose only input is a JSONL corpus from the
+capture patch; its method, oracles and commands are documented in its own
+README. `validate` recovers all three published builds this library holds
+captures for, each at rank 1 of thousands of surviving behaviours — 12.10 at
+depth 6 (1 of 14,177), 13.00 at depth 6 (1 of 508), 12.11 at depth **8** (1 of
+9,611) — and `emit` is checked against `vrfnet.payload_transform` bit for bit
+over all ten operation kinds, because the published sequences never exercise
+`not` or `rotl` and an untested op in the vocabulary is worse than a missing
+one.
+
+**Four oracles, each calibrated on a solved build before being believed about an
+unsolved one**, and deliberately independent so that agreement is evidence
+rather than one measurement counted twice:
+
+| measure | correct decode | wrong transform |
+|---|---|---|
+| bit-bias fingerprint — set bits at 21 positions biased by UE framing | 3.5–3.7 per payload | 10.5 |
+| framing — the block opens as a rep-layout handle chain | 81% | ~9% |
+| known plaintext — the block appears in another capture's correct decode | 12–13% | **0.00%** |
+| **collapse** — distinct ciphertexts decoding to one plaintext, within one capture | **8.0–9.0%** | **0.00%** |
+
+The fingerprint is the cheap one and is scored at every node; it separates
+right from wrong by many sigma, but its wrong-answer floor is *near* zero rather
+than zero. The last two have a floor of **exactly** 0.00%, which is what makes a
+single hit evidence in a way a bias score never is. **Collapse is the strongest
+and is the first thing to reach for.** It counts distinct ciphertexts within one
+capture that decode to the same plaintext — the same property update replicated
+to many actors, so different net GUIDs, different seeds, different ciphertext —
+and only a correct decode brings them back together. Because it compares a
+capture against itself it is the only one of the four that cannot be confounded
+by how much content two builds share, and a transform correct on a fraction *f*
+of payloads degrades it by roughly *f²*, so it is sensitive to a nearly-right
+answer rather than only to a wrong one.
+
+**13.04's 64-bit lane, with high confidence:**
+
+    rotr7,xornot6,sub5,swap,add3,add2,rotl1
+
+Spelled out: `rotr64(v, (ror7 % 63) + 1)`, then `v ^ ~ror6`, then `v - ror5`,
+then `swap64`, then `v + ror3`, then `v + ror2`, then
+`rotl64(v, (ror1 % 63) + 1)` — where `ror_k = rotr32(state, k)` and, for the
+first block, `state = seed`.
+
+The evidence, with the three solved builds as the calibration band:
+
+| measure | correct decodes (12.10 / 12.11 / 13.00) | **13.04 candidate** | runner-up | any wrong transform |
+|---|---|---|---|---|
+| bias, set bits per payload | 3.49 / 3.67 / 3.69 | 4.26 | 4.96 | 10.5 |
+| opens as a handle chain | 81.9% / 81.2% / 80.9% | 78.0% | 73.8% | ~9% |
+| known plaintext (held out) | 12.21% / 13.16% / 12.89% | 7.85% | 4.15% | **0.00%** |
+| **collapse (within capture)** | **8.67% / 8.98% / 8.05%** | **8.29%** | 3.65% | **0.00%** |
+| collapse, largest group | 128 / 102 / 100 | 116 | 66 | 1 |
+
+Replicated on the *second* 13.04 capture, which the search never saw: collapse
+9.60% and known-plaintext 6.74%, against 0.00% / 0.00% for a control decode
+using 12.10's transform.
+
+**The known-plaintext row is the one that misleads, and the reason is content
+drift.** It sits well below the solved-build baseline, which reads as "partially
+correct" — but collapse, which has no cross-build content confound, sits
+squarely inside the correct band. A transform correct on only ~62% of payloads
+would show collapse near 0.62² × 8.3% ≈ 3.2%, which is precisely what the
+runner-up shows and precisely what the candidate does not. 13.04 is four patches
+past the newest solved capture, on maps and with agents the older captures never
+held.
+
+**The 32-bit and 8-bit lanes are not structural mirrors of the 64-bit lane**,
+and that was checked rather than assumed, because it is nearly true and the
+temptation is real: 13.00's 32-bit lane carries a `not` its 64-bit lane does
+not, and 12.10's 64-bit lane has `xor ~ror4` where its 32-bit lane has plain
+`xor rol4`. Same operation skeleton, same k order, but complement placement
+differs — almost certainly because a `~` applies to a 32-bit intermediate and
+the widening to 64 bits differs. So the other lanes are a small neighbourhood
+around the recovered skeleton, not a free derivation. Note also that
+`rotl32(state, k) == rotr32(state, 32 - k)`, so a lane reaching for the
+left-handed operand needs k in 24..31.
+
 ## What was tried and did not work
 
 **Anchoring on a known plaintext bit.** Every operation in the u64 lane moves
@@ -101,16 +188,52 @@ is zero in **48.00%** of payloads with a 64-bit first block, and **38.90%** of
 those that frame correctly. So the first payload bit is not a `bDoChecksum`
 that replays leave off, and there is no free algebraic anchor here.
 
+**Measuring overlap as distinct-values-in-common over distinct-set-size.** This
+is the error that cost the most and nearly buried a correct answer: it made
+correct-vs-correct read 6.0% and the candidate 2.5%, i.e. "clearly wrong". The
+right denominator is *payloads*, not distinct values — how often does a decode
+produce something recognisable — which moved the candidate to 6.04% against a
+correct decode's 10%. Do not compare decodes by set-overlap ratios; count
+payload hits.
+
+**Concluding from a scalar that a candidate is wrong.** Two candidates each
+produced hundreds of exact known-plaintext hits, which seemed impossible for
+wrong answers, and the same top shared values appeared under both. The
+explanation was that the two compositions are *the same function on 53% of
+inputs*: they differ by `sub ror5` versus `add ror5, sub ror4`, which are equal
+exactly when `ror4 == 2·ror5`, i.e. when bit 4 of the seed is clear. When two
+candidates behave alike, check where they agree before theorising.
+
+**Searching deeper.** Depth 9 under the descending prior with k ≤ 8 walked
+**24.2 billion** compositions in 10.5 minutes and found nothing better than the
+depth-8 leader — which is itself only 7 ops, so the space had room. Depth is not
+the missing ingredient.
+
+**Widening the operand range.** Hill-climbing with k up to 31, covering every
+`rotl32` the 32-bit lanes use, is still a local maximum: none of 2,850 single
+edits improves the candidate. Together with the depth result, this is now
+evidence that the candidate *is* the answer rather than evidence that the space
+was too small.
+
+**Validating a whole payload without the constants.** Only payloads with
+`bit_count == 64` are decoded by `_u64` alone, and each 13.04 corpus holds
+exactly **one**. Everything longer needs `state₂`, hence the constants. There is
+no shortcut.
+
 ## What is open
 
-Recovering the three mixing functions. The next step is a search over the
-bounded composition space above, run in C# because Python is two orders of
-magnitude too slow for it, and **validated by first re-deriving 12.10's own
-`_u64` from the 12.10 corpus** — a searcher that cannot recover a known answer
-says nothing about an unknown one.
+**The constants, and the 32-bit and 8-bit lanes — jointly.** The algebra below
+assumes `state₂` can be observed, and it cannot be directly: it has to be
+recovered alongside the 32-bit lane. The cheapest route found so far is to
+enumerate 32-bit-lane variants from the recovered 64-bit skeleton (same op
+order, same k order, varying only complement placement — `xor` versus `xor ~`,
+an inserted `not` — with width 32 and `% 31` in the rotate distance; expect
+fewer than about sixteen), then for one seed carrying many payloads with
+`bit_count >= 96`, brute-force `state₂` over 2³² and keep the value whose
+block-2 decode continues the handle chain across all of them. That is roughly
+ten seconds per variant on twelve threads.
 
-After that the four constants are cheap, and worth writing down now because the
-reduction is not obvious. `_initial_prng_a` computes
+`_initial_prng_a` computes
 
     mixed = ((sp >> 15) ^ sp) >> 12  ^  ((seed ∓ off) * 0x02000000)  ^  sp
 
@@ -122,14 +245,28 @@ MULTIPLIER` then leaves about one candidate `mixed`), then for each of the 128
 values XOR it out and invert `x ↦ ((x >> 15) ^ x) >> 12 ^ x` to get `sp`, hence
 `seed_addend`. A second seed pins `init_a_offset` and the sign. `tail_xor` is
 the low byte of `seed_addend` in all five known builds — a cross-check, never a
-licence to invent one.
+licence to invent one. The ~331 payloads with `bit_count` in 65..71 are a second
+check on the result: past the first block their only unknown is the single tail
+byte `(state₂ & 0xFF) ^ tail_xor`.
+
+**Is the recovered lane exactly right, or right on ~96% of states?** The
+collapse evidence puts *f* between 0.96 and 1.0 and cannot distinguish further.
+Ground truth settles it and nothing else will. If the constants are recovered
+and a full decode *almost* works, suspect this before suspecting the constants.
+
+**Does the descending-operand prior hold for 13.04?** The recovered lane uses
+7,6,5,3,2,1 — descending, consistent — but it was *found under* the constraint,
+so this is not independent confirmation. The hill-climb that ignores the prior
+did not move off it, which is weak support.
 
 ## The tooling
 
-`csharp/patches/0001-payload-capture.patch` and its README. The capture is
-inert unless `VRF_PAYLOAD_CAPTURE` names a sink, and it can be pointed at a
-build whose answer is already known, which is the only reason any percentage
-above is interpretable.
+`csharp/patches/0001-payload-capture.patch` and its README write the corpus. The
+capture is inert unless `VRF_PAYLOAD_CAPTURE` names a sink, and it can be
+pointed at a build whose answer is already known, which is the only reason any
+percentage above is interpretable. `csharp/TransformSearch/` is the searcher
+over that corpus, and it lives in the repo rather than in scratch because Riot
+rotates the transform every patch: 13.05 will need it again.
 
 ## The rule that still stands
 
