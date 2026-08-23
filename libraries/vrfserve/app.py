@@ -264,15 +264,19 @@ def _add_library_routes(
         changed in `scan`, where `descending` is the flag that says so and the
         undated cards stay at the end either way.
 
-        Only playable captures are listed.  A build with no payload transform
-        has no positions to draw and there is no schematic to fall back to, so
-        the interface offers nothing to open; the filter is applied here rather
-        than being asked for, because there is no longer a request that would
-        turn it off.
+        Every capture the scanner described is listed, playable or not.  This
+        used to filter to `playable`, on the argument that a build with no
+        payload transform has nothing to draw -- but positions are not the only
+        thing a capture states.  The map, the rounds and their outcomes, the
+        kill feed and the player count all come out of the plain chunks with no
+        Oodle and no decoder, and the viewer already has the branch that shows
+        them as a document.  Filtering those away made a library of real
+        captures read as an empty directory, which is a stronger wrong claim
+        than a card that says what it cannot do.  The card carries
+        `positions_note` so it can say it.
         """
         result = library.result
         cards = scan.filter_cards(result.cards, map_name=query.map_name)
-        cards = [c for c in cards if c.playable]
         cards = scan.sort_cards(cards, descending=True)
         root = result.root or vrfconfig.demo_root(config.demo_path)
         return {

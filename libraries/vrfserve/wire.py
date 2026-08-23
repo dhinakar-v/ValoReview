@@ -447,9 +447,12 @@ def card(entry, replay_id: str, cache: ArtCache | None, prewarm: dict | None) ->
     """
     One row of the match list, as the scanner describes it.
 
-    `playable` is still sent although the list is now filtered to it: the card
-    is the scanner's own description of a capture, and a reader of this dict
-    should not have to know which query produced it to know what it is.
+    `playable` and `positions_note` are the pair a row needs to say what it
+    cannot do: the list is no longer filtered to playable captures, so a card
+    for an unsupported build has to carry its own reason rather than leaving
+    the reader to infer one from a missing marker later.  Both are read off the
+    entry, the way `readable` is -- `wire` states no branch rule of its own and
+    imports no decoder, so `vrfhome.scan` stays the one authority.
     """
     art = cache.map_art(entry.map_path) if cache else None
     return {
@@ -475,5 +478,6 @@ def card(entry, replay_id: str, cache: ArtCache | None, prewarm: dict | None) ->
         "error": entry.error,
         "readable": entry.readable,
         "playable": entry.playable,
+        "positions_note": entry.positions_note,
         "prewarm": prewarm,
     }

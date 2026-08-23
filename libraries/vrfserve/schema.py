@@ -83,6 +83,8 @@ class CardDoc(BaseModel):
     error: str
     readable: bool
     playable: bool
+    # Why, when `playable` is false.  See wire.card.
+    positions_note: str
     prewarm: PrewarmDoc | None
 
 

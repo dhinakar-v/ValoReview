@@ -299,19 +299,57 @@ class Endpoints(unittest.TestCase):
         # And it says where it looked, rather than just showing nothing.
         assert str(self.tmp) in doc["root"]["described"]
 
-    def test_only_playable_captures_are_listed(self):
+    def test_an_unreadable_capture_is_listed_carrying_its_error(self):
         """
-        The filter is the handler's, not the request's.
+        A file that will not parse is a card with a reason, never an omission.
 
-        A build with no payload transform has no positions to draw and there is
-        no schematic to fall back to, so there is nothing behind such a card to
-        open.  There is no longer a query that turns this off, which is the
-        point of asserting it: a stray `playable_only=false` must not resurrect
-        the old behaviour.
+        The route used to filter the whole list to `playable`, which took this
+        one off the page along with every capture on an unsupported build.  A
+        library of real files rendering as an empty directory is a stronger
+        wrong claim than a row that says what went wrong.
         """
         client = self._with_broken_capture()
-        assert client.get("/api/library").json()["cards"] == []
-        assert client.get("/api/library?playable_only=false").json()["cards"] == []
+        cards = client.get("/api/library").json()["cards"]
+        assert [c["file_name"] for c in cards] == ["broken.vrf"]
+        assert not cards[0]["readable"]
+        assert not cards[0]["playable"]
+        assert cards[0]["error"]
+
+    def test_an_unsupported_build_is_listed_and_says_why_it_cannot_be_drawn(self):
+        """
+        Readable but not decodable: the row is shown and carries the reason.
+
+        The pair is what a card needs to state its own case -- `playable` says
+        it cannot be drawn and `positions_note` says why -- and both are read
+        off the scanner, so a card and a replay document cannot disagree about
+        one capture.  A row with no positions is still worth opening: the map,
+        the rounds, the kill feed and the player count are all in the plain
+        chunks.
+        """
+        library = self.client.app.state.library
+        library.result = scan.ScanResult(
+            cards=[
+                scan.MatchCard(
+                    path=self.tmp / "unsupported.vrf",
+                    match_id="unsupported",
+                    map_name="Lotus",
+                    build="++Ares-Core+release-11.11",
+                    recorded_utc=datetime(2026, 6, 1, tzinfo=UTC),
+                ),
+            ],
+        )
+        library._register()
+
+        doc = self.client.get("/api/library").json()
+        schema.LibraryDoc.model_validate(doc)
+        assert [c["match_id"] for c in doc["cards"]] == ["unsupported"]
+        card = doc["cards"][0]
+        assert card["readable"]
+        assert not card["playable"]
+        assert "no payload transform" in card["positions_note"]
+        # No chip claiming a wait that will never end: `prewarm` queues only
+        # what is playable, so this capture has no preparation state at all.
+        assert card["prewarm"] is None
 
     def test_the_match_list_is_newest_first(self):
         """

@@ -322,6 +322,7 @@ class SpawnLocationsAreRealCoordinates(unittest.TestCase):
         )
 
 
+@pytest.mark.skipif(not DEMO_12_10.exists(), reason="needs the 12.10 capture")
 class SpikePlantsAreRealCoordinates(unittest.TestCase):
     """
     The check that let the spike have a place on the map for the first time.
@@ -361,6 +362,12 @@ class SpikePlantsAreRealCoordinates(unittest.TestCase):
     def setUpClass(cls):
         from vrfview import csharpdecode, infer, loader
 
+        # The decoder is checked for before it is run, and the capture is
+        # checked for by the decorator above.  Without that decorator this
+        # class was the one in the file with no `.vrf` gate, so on a machine
+        # with a built decoder and no reference capture it *errored* where
+        # every sibling skipped -- three red entries that say nothing about
+        # the code, in the suite whose whole job is being believable.
         try:
             csharpdecode.locate(None)
         except csharpdecode.DecodeError as exc:

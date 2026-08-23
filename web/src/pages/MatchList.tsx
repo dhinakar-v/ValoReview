@@ -1,10 +1,14 @@
 /**
- * Page one: every playable capture the scanner found.
+ * Page one: every capture the scanner found.
  *
- * The list is filtered to captures whose build has a payload transform, and
- * that filter lives on the server rather than here.  A build without one has no
- * positions to decode and there is no schematic to fall back to, so there is
- * nothing behind such a card to open.
+ * It used to be every *playable* capture -- the list was filtered to builds
+ * with a payload transform, on the server rather than here.  A build without
+ * one has no positions to decode, but positions are not all a capture states:
+ * the map, the rounds and their outcomes, the kill feed and the player count
+ * all come out of the plain chunks, and the viewer already shows them as a
+ * document.  So the row is here and carries a chip saying what it cannot do,
+ * which is a smaller wrong claim than a library of real captures rendering as
+ * an empty directory.
  *
  * There are no filters here beyond the two the server offers.  `map_name` and
  * `page` are what `/api/library` takes; a search box filtering the page in the
@@ -141,9 +145,18 @@ function CardRow({ card, index }: { card: Card; index: number }) {
         {card.error ? <span className="card-line error">{card.error}</span> : null}
       </div>
       <div className="card-badges">
+        {/*
+          One chip, and the two cases cannot both apply: `vrfhome/prewarm.py`
+          queues only playable captures, so a card that cannot be decoded has
+          no prewarm state to report and the slot is free for the reason why.
+        */}
         {card.prewarm ? (
           <Chip tone={prewarmTone(card.prewarm.state)} dot>
             {card.prewarm.label}
+          </Chip>
+        ) : card.readable && !card.playable ? (
+          <Chip tone="neutral" title={card.positions_note}>
+            NO POSITIONS
           </Chip>
         ) : null}
       </div>
@@ -152,7 +165,14 @@ function CardRow({ card, index }: { card: Card; index: number }) {
 
   // The left edge says whether there is anything behind the row, in the one
   // place the eye lands first on a list of a hundred.
-  const edge = card.readable ? "card playable" : "card unreadable";
+  //
+  // `playable` means what the scanner means by it and not merely `readable`:
+  // the list is no longer filtered, so a readable capture on an unsupported
+  // build now reaches this page, and it opens on the viewer's no-positions
+  // document.  `a.card` still matches every openable row, which is what the
+  // Playwright specs select on; `a.card.playable` is the narrower one the
+  // harness needs when it wants a capture that will actually draw.
+  const edge = !card.readable ? "card unreadable" : card.playable ? "card playable" : "card";
 
   // An unreadable capture is still shown -- carrying its error -- but there is
   // nothing behind it to open.
