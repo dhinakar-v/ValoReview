@@ -54,6 +54,28 @@ export interface Prewarm {
   label: string;
 }
 
+export interface CardAgent {
+  name: string;
+  icon_url: string | null;
+}
+
+/**
+ * One of a card's two teams.
+ *
+ * The split is read off the loadout roster's own order and is a measurement --
+ * `vrfhome.scan.team_ids` carries the numbers.  It is a *set*-level claim: these
+ * five were one team, those five the other.  Nothing joins a roster slot to a
+ * player, and nothing here pretends otherwise.
+ *
+ * `rounds_won` is null until something has established which of the two halves
+ * `infer` calls team A, which only a decoded capture can say.  Null means "not
+ * attributable", never zero.
+ */
+export interface CardTeam {
+  agents: CardAgent[];
+  rounds_won: number | null;
+}
+
 export interface Card {
   id: string;
   file_name: string;
@@ -71,7 +93,13 @@ export interface Card {
   error: string;
   readable: boolean;
   playable: boolean;
+  /** Why, when `playable` is false: the build has no payload transform. */
+  positions_note: string;
   prewarm: Prewarm | null;
+  /** Null where the split was refused or there is no art to draw it with. */
+  teams: CardTeam[] | null;
+  /** Rounds nothing settled, so a short scoreline can say why it is short. */
+  rounds_undecided: number;
 }
 
 export interface Library {
@@ -254,6 +282,20 @@ export interface AbilityCast {
    * the spawn transform was read, which is every v1 and v2 sidecar.
    */
   landed: Placement | null;
+  /**
+   * A round smoke: how wide it is, how long it stands, and on whose word.
+   *
+   * Null for everything that is not one, which is most casts -- a molly has a
+   * radius and does not block sight, and a wall blocks sight and is not a
+   * circle. Looked up in `vrfview.abilityfacts` on (codename, slot), so it is
+   * *simulated* exactly the way `range_uu` is, and `smoke_source` carries the
+   * word it is taken on. `sightlayer.smokesAt` turns these into `Occluder`s
+   * and stops sight rays inside them while the cast is younger than
+   * `smoke_duration_ms`.
+   */
+  smoke_radius_uu: number | null;
+  smoke_duration_ms: number | null;
+  smoke_source: string | null;
 }
 
 export interface SightMaskDoc {
@@ -262,11 +304,6 @@ export interface SightMaskDoc {
   /** Base64, one byte per cell, row-major, 1 open. Thresholded in Python. */
   cells: string;
   open_fraction: number;
-  /**
-   * What a cone drawn from this is, in words. It travels with the cells so
-   * nothing can render a wedge without having been handed the sentence.
-   */
-  caption: string;
   max_range_uu: number;
   fov_degrees: number;
   ray_step_degrees: number;

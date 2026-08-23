@@ -10,6 +10,7 @@ with no source, and a lookup that answers where it does not know.
 from __future__ import annotations
 
 import unittest
+from typing import ClassVar
 
 from vrfview import abilityfacts
 
@@ -68,3 +69,52 @@ class TheConversionIsRiotsOwn(unittest.TestCase):
         "Radius increased 410 >>> 415".
         """
         assert abilityfacts.UU_PER_METRE == 100.0
+
+
+class SmokeTable(unittest.TestCase):
+    """
+    The second table, and the one thing that can be checked without a browser.
+
+    `_SMOKES` is keyed on (codename, slot) because the internal name splits --
+    Clove's smoke arrives as both `Post Death` and `New Smoke` for the same
+    ability.  That means the radius is written twice, here and in `_FACTS`, and
+    two copies of a number are two chances to change one of them.
+    """
+
+    # (codename, slot) -> the (agent, internal name) entry for the same ability.
+    SAME_ABILITY: ClassVar[dict] = {
+        ("Wraith", "C"): ("Omen", "Smoke"),
+        ("Wushu", "C"): ("Jett", "Smoke"),
+        ("Rift", "E"): ("Astra", "Transform Rift Smoke World Targeting"),
+        ("Mage", "E"): ("Harbor", "World Smoke"),
+    }
+
+    def test_a_radius_written_in_both_tables_agrees_with_itself(self):
+        for key, twin in self.SAME_ABILITY.items():
+            smoke = abilityfacts.smoke_for(*key)
+            facts = abilityfacts.facts_for(*twin)
+            assert smoke is not None, key
+            assert facts is not None, twin
+            assert smoke.radius_uu == facts.radius_uu, f"{key} disagrees with {twin}"
+
+    def test_an_agent_the_table_does_not_name_blocks_nothing(self):
+        """No default: a made-up smoke is the plausible wrong answer."""
+        assert abilityfacts.smoke_for("Iris", "E") is None
+        assert abilityfacts.smoke_for("Hunter", "Q") is None
+
+    def test_every_duration_says_it_was_not_verified(self):
+        """
+        The figures are the weakest in the file and the source strings say so.
+
+        A citation that implies a page somebody opened is worse than an
+        admission, because the next reader cannot tell them apart.
+        """
+        for key, smoke in abilityfacts._SMOKES.items():
+            assert "NOT verified" in smoke.source, key
+            assert smoke.duration_ms > 0, key
+
+    def test_the_unit_is_the_one_the_module_argues_for(self):
+        brimstone = abilityfacts.smoke_for("Sarge", "C")
+        assert brimstone is not None
+        assert brimstone.radius_m == 4.15
+        assert brimstone.duration_s == 19.25

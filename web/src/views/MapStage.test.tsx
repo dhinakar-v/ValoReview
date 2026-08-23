@@ -1,10 +1,10 @@
 /**
- * The three things the map stage must not quietly stop saying.
+ * The things the map stage must not quietly stop saying.
  *
  * Every one of them fails *silently* if it regresses.  A missing sentence
- * leaves a plausible-looking panel; a DECODE button that can only refuse looks
- * exactly like one that works until it is pressed; a cone with no caption looks
- * like line of sight.  So each is asserted by name rather than trusted.
+ * leaves a plausible-looking panel, and a DECODE button that can only refuse
+ * looks exactly like one that works until it is pressed.  So each is asserted
+ * by name rather than trusted.
  *
  *   * **Where a map cannot be drawn there are words, never a drawing.**  A
  *     diagram in the place a map goes reads as a map however it is captioned,
@@ -13,10 +13,8 @@
  *     it cannot -- a build with no payload transform, and a machine with no
  *     decoder -- get different sentences, because they are fixed by different
  *     things.
- *   * **The sight caption is the server's own text**, rendered verbatim.  It
- *     travels in the same document as the cells so nothing can draw a wedge
- *     without having been handed it -- and it is absent while the layer is off,
- *     because a caption is a claim about what is on screen.
+ *   * **Every layer switch is offered**, and one that cannot be used here says
+ *     why in a node outside its own `<label>`, so the checkbox keeps its name.
  *
  * There is no canvas here.  jsdom has no 2D context and no WebGL, so what is
  * asserted is the sentences and the controls -- the drawing itself is pinned by
@@ -31,10 +29,6 @@ import type { Decoder, MapArt, Replay, SightMaskDoc } from "../api/types";
 import { SIMULATED_NOTE } from "../model/synthetic";
 import { MapStage } from "./MapStage";
 import { DEFAULT_LAYERS, usePlayback } from "./playback";
-
-const CAPTION =
-  "SIGHT (approx) — the radar silhouette, not collision. 2D only: it ignores " +
-  "heaven, tunnels and anything you can see over.";
 
 const REPLAY: Replay = {
   id: "abc123",
@@ -91,7 +85,6 @@ const MASK: SightMaskDoc = {
   size: 2,
   cells: btoa(""),
   open_fraction: 1,
-  caption: CAPTION,
   max_range_uu: 6000,
   fov_degrees: 103,
   ray_step_degrees: 2,
@@ -209,6 +202,22 @@ describe("where a map cannot be drawn", () => {
     expect(container.querySelector("canvas")).toBeNull();
   });
 
+  /*
+    Between the guards above and a drawn map there is a wait, and it used to be
+    one line of grey text in a panel whose head was not even the stage's own.
+    It is the arena's four rows now -- but with none of the three things the
+    Playwright suite treats as signals: `canvas.minimap` is how `harness.ts`
+    decides the replay page is ready, and `.player-card` and `.round-chip` are
+    how `review.spec.ts` finds a card and picks a round.
+  */
+  it("holds the arena's shape while the tracks are arriving, and draws no canvas", () => {
+    // Synchronous: the fetch stub resolves, but not before this render returns.
+    const { container } = show({ has_positions: true });
+    expect(container.querySelector(".skel-gutter")).toBeTruthy();
+    expect(container.querySelector("canvas, .player-card, .round-chip")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("the decoded tracks");
+  });
+
   it("says the radar image is missing rather than drawing something else", async () => {
     const { container } = show({ has_positions: true }, DECODER, {
       ...ART,
@@ -279,20 +288,26 @@ describe("the layers menu", () => {
   });
 });
 
-describe("the captions", () => {
-  it("renders the server's sight sentence verbatim when the layer is on", async () => {
+describe("the sight layer", () => {
+  it("is offered as a switch", async () => {
     show({ has_positions: true });
     await openLayers();
-    expect(await screen.findByText("SIGHT")).toBeTruthy();
-    usePlayback.setState({ layers: { ...DEFAULT_LAYERS, sight: true } });
-    expect(await screen.findByText(CAPTION)).toBeTruthy();
+    expect(await screen.findByRole("checkbox", { name: "SIGHT" })).toBeTruthy();
   });
 
-  it("does not state a claim the layer is not making", async () => {
+  it("draws the cone without anybody being picked first", () => {
+    /*
+      What the layer being on by default is *for*, and it is now true of both
+      canvases: the 2D one drew for one selected player once and the 3D scene
+      went on doing so long after, so switching view silently dropped nine
+      cones. Neither reads `selected` or `hovered` any more -- the switch is
+      the only control -- and this is the standing check that a fresh replay
+      needs no click to show them.
+    */
     show({ has_positions: true });
-    await openLayers();
-    expect(await screen.findByText("SIGHT")).toBeTruthy();
-    expect(screen.queryByText(CAPTION)).toBeNull();
+    expect(usePlayback.getState().layers.sight).toBe(true);
+    expect(usePlayback.getState().selected).toBeNull();
+    expect(usePlayback.getState().hovered).toBeNull();
   });
 });
 
@@ -302,7 +317,7 @@ describe("the simulated notice", () => {
     and ATK/DEF itself -- is not in a `.vrf` and is generated by
     `model/synthetic.ts`.  The sentence saying so is not conditional and is not
     a tooltip: it is on the page whenever those numbers are, for the same
-    reason the sight caption travels with the mask it describes.
+    reason the layer switches say why they cannot be used.
   */
   it("always says which numbers are generated", async () => {
     show({ has_positions: true });

@@ -28,6 +28,22 @@ gates on, so the indicator and the refusal cannot disagree.  Both mirror what
 is a dead end and the schematic that used to soften it is gone.  The ones held
 back are counted and one button away, never silently dropped.
 
+Who played, and how the two teams are told apart
+-----------------------------------------------
+A card also names its ten agents, and that costs no decoder either: every
+loadout slot in the match metadata carries an agent UUID, and the asset
+manifest publishes one per agent.  Which five were a *team* is not stated
+anywhere, and `team_ids` reads it off the roster's own order on measured
+evidence rather than on faith -- the numbers are in its docstring, and
+`tests/test_positions.py::LoadoutSplitIsTheRealTeamSplit` re-runs them.
+
+The scoreline beside those agents is `infer`'s, so it is derived rather than
+read, it is routinely short of the round count -- `rounds_undecided` says by
+how much -- and it can only be put beside the right five faces once something
+has established which half `infer` called team A.  Nothing here can: that
+needs a decode.  See `vrfhome.teamorder`, and note that this is a different
+claim from the badge below, which no amount of decoding would fix.
+
 A file that fails to parse is a card too
 ----------------------------------------
 A truncated or non-`.vrf` file in the library becomes a card carrying its
@@ -47,7 +63,8 @@ import vrfcache
 import vrfconfig
 from vrf_reader import VrfError, VrfFile
 from vrfnet.payload_transform import SUPPORTED_BRANCHES
-from vrfview.loader import map_name_for
+from vrfview import infer
+from vrfview.loader import load_vrf, map_name_for
 
 # The badge the brief demands and the file cannot support.  A constant rather
 # than a literal in the UI, so there is exactly one place saying it.
@@ -77,10 +94,16 @@ def positions_note(build: str) -> str:
     return POSITIONS_AVAILABLE if positions_available(build) else POSITIONS_UNAVAILABLE
 
 
-# What the footer says about the captures the default filter holds back.
-HIDDEN_NOTE = "{n} hidden - no payload transform for their build"
+# What the footer says about the captures that will not draw on a map.  It was
+# `{n} hidden` while the match list filtered them away; they are listed now, so
+# the sentence counts a limitation rather than an omission.
+NO_POSITIONS_NOTE = "{n} without positions - no payload transform for their build"
 
-CACHE_VERSION = 1
+# A cached card holds the *resolved* map name rather than the path it came
+# from, so it outlives a change to loader.MAP_NAMES: bump this whenever that
+# table learns a codename, or every already-scanned capture keeps reporting
+# the raw leaf the table used to fall back to.
+CACHE_VERSION = 3
 CACHE_FILENAME = "match-scan.json"
 
 # Distinguishes "the caller said nothing" from "the caller said None", which
@@ -96,15 +119,16 @@ def default_cache_path() -> Path | None:
     This used to be `Path("out") / "match-scan.json"`, which was relative to
     the *working directory*: running the app from anywhere but the repo root
     silently addressed a different cache and rescanned the whole library.
-    `vrfcache` searches for the project root instead, so every entry point
-    agrees.  Resolved per call rather than at import, because a module-level
-    constant would freeze the root before a test could move it.
+    `vrfcache` resolves the cache directory instead -- `VRF_CACHE_ROOT` when an
+    installer named one, the checkout's own `.cache/` otherwise -- so every
+    entry point agrees.  Resolved per call rather than at import, because a
+    module-level constant would freeze the root before a test could move it.
     """
-    root = vrfcache.project_root()
-    return None if root is None else root / vrfcache.CACHE_DIRNAME / CACHE_FILENAME
+    root = vrfcache.root_or_none()
+    return None if root is None else root / CACHE_FILENAME
 
 
-PER_PAGE = 10
+PER_PAGE = 7
 
 
 @dataclass(frozen=True)
@@ -122,6 +146,16 @@ class MatchCard:
     build: str = ""
     size_bytes: int = 0
     error: str = ""
+    # The two teams' agent UUIDs, in the file's own order -- see `team_ids`.
+    # `((), ())` where the split was refused, which is the only other value.
+    agent_ids: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
+    # Rounds won by `infer`'s team A and team B, or None where the kill graph
+    # gave no teams at all.  A and B are labels, never sides.
+    score: tuple[int, int] | None = None
+    # Rounds nothing settled.  A defuse or an explode records the reason but
+    # leaves the winner unknown, so a score routinely falls short of `rounds`
+    # and a reader has to be told by how much.
+    rounds_undecided: int = 0
 
     @property
     def file_name(self) -> str:
@@ -178,24 +212,112 @@ class ScanResult:
         return [c for c in self.cards if c.playable]
 
     @property
-    def hidden(self) -> list[MatchCard]:
-        """Everything the default filter holds back, counted rather than dropped."""
+    def without_positions(self) -> list[MatchCard]:
+        """
+        The captures that will open but not draw on a map.
+
+        This was `hidden`, back when the match list filtered them off the page.
+        Nothing is held back now, so the name would have been the last thing
+        still saying otherwise.
+        """
         return [c for c in self.cards if not c.playable]
 
     @property
     def described(self) -> str:
-        """One line the home page can show verbatim."""
+        """
+        One line the home page can show verbatim.
+
+        It used to open `{playable} of {total} replays` and close with a count
+        of what was `hidden`, which was true while the match list filtered to
+        playable captures.  It does not any more, so both halves were claims
+        the page disproved on the same screen -- `0 of 2 replays ... 2 hidden`
+        printed above a list showing two.  The count is now what is listed, and
+        the undecodable ones are still counted rather than passed over,
+        because a capture with no positions is a real limitation of the
+        library and not merely an absence.
+        """
         where = self.root.described if self.root is not None else "no directory"
         if not self.cards:
             return f"no replays in {where}"
         bad = len(self.failed)
         note = f", {bad} unreadable" if bad else ""
-        held = len(self.hidden)
-        back = f"; {HIDDEN_NOTE.format(n=held)}" if held else ""
+        held = len(self.without_positions)
+        back = f"; {NO_POSITIONS_NOTE.format(n=held)}" if held else ""
         return (
-            f"{len(self.playable)} of {len(self.cards)} replays in {where} "
+            f"{len(self.cards)} replays in {where} "
             f"({self.read} read, {self.cached} from cache{note}){back}"
         )
+
+
+# How many players a match has, and therefore how long each half of the loadout
+# roster is.  A capture that does not hold exactly this many slots is refused
+# rather than split down the middle of whatever it does hold.
+TEAM_SIZE = 5
+ROSTER_SIZE = TEAM_SIZE * 2
+
+
+def team_ids(loadouts) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """
+    The two teams' agent UUIDs, read off the loadout roster's own order.
+
+    **This is a measurement, not an assumption.**  Nothing in the metadata says
+    "team", and `names` is right that a loadout slot cannot be joined to an
+    actor net ID -- but the weaker, set-level claim that the first five slots
+    are one team and the last five the other was checked two independent ways
+    over the whole reference library:
+
+      * 95 of the 103 captures carry a duplicated agent, i.e. the same agent on
+        both teams.  A *random* 5/5 split would keep every duplicate out of its
+        own half in about 45 of the 103; the file's own order does it in
+        **103 of 103**.
+      * On the 23 captures with a cached decode -- the only ones where a second
+        opinion exists -- the two halves equal `infer`'s bipartite two-colouring
+        of the kill graph **exactly, 23 of 23, with no disagreement**.
+
+    `tests/test_vrfhome.py` keeps both figures honest.  What this does *not*
+    license is naming which half is `infer`'s A and which is B: that ordering is
+    a coin flip (measured 12 to 10), so a score cannot be attached to a row
+    here.  See `vrfhome.teamorder`.
+
+    An agent appearing twice inside one half would mean the order is not what
+    this claims, so that capture is refused outright rather than split anyway.
+    """
+    ids = [str(entry.get("characterId") or "") for entry in loadouts]
+    if len(ids) != ROSTER_SIZE or not all(ids):
+        return ((), ())
+    first, second = tuple(ids[:TEAM_SIZE]), tuple(ids[TEAM_SIZE:])
+    if len(set(first)) != TEAM_SIZE or len(set(second)) != TEAM_SIZE:
+        return ((), ())
+    return (first, second)
+
+
+def _derived(vrf: VrfFile, path: Path):
+    """
+    The teams and the scoreline, or empty values where they cannot be had.
+
+    Best-effort on purpose.  `loader` raises for a capture with no rounds at
+    all, and `infer` leaves teams unknown where the kill graph is not
+    bipartite; neither makes the *file* unreadable, so a failure here costs the
+    card its scoreline and never its error field.  `load_vrf` rather than
+    `load` because the caller already read these 47 MB once.
+    """
+    empty = ((), ()), None, 0
+    try:
+        replay = infer.annotate(load_vrf(vrf, source=path))
+    except Exception:  # noqa: BLE001 - read_card promises never to raise
+        # Deliberately total.  `read_card` is documented never to raise and
+        # `scan` has no guard of its own around it, so a surprise in here --
+        # `loader` refusing a capture with no rounds, anything else -- must
+        # cost this card its scoreline rather than the whole match list.
+        return empty
+    ids = team_ids(vrf.players())
+    a, b = replay.score
+    # Teams are unknown when nothing scores at all -- an empty score and an
+    # honest 0-0 are different claims, and only the second may be printed.
+    scored = any(p.team in ("A", "B") for p in replay.players)
+    score = (a, b) if scored else None
+    undecided = sum(1 for r in replay.rounds if not r.decided)
+    return ids, score, undecided
 
 
 def read_card(path: str | Path) -> MatchCard:
@@ -212,6 +334,7 @@ def read_card(path: str | Path) -> MatchCard:
 
     map_path = vrf.demo.maps[0] if vrf.demo.maps else ""
     name, _ = map_name_for(map_path)
+    agent_ids, score, undecided = _derived(vrf, src)
     return MatchCard(
         path=src,
         match_id=vrf.header.friendly_name,
@@ -223,6 +346,9 @@ def read_card(path: str | Path) -> MatchCard:
         players=len(vrf.players()),
         build=vrf.demo.build,
         size_bytes=size,
+        agent_ids=agent_ids,
+        score=score,
+        rounds_undecided=undecided,
     )
 
 
@@ -389,6 +515,9 @@ def _to_entry(card: MatchCard) -> dict:
         "build": card.build,
         "size_bytes": card.size_bytes,
         "error": card.error,
+        "agent_ids": [list(card.agent_ids[0]), list(card.agent_ids[1])],
+        "score": list(card.score) if card.score is not None else None,
+        "rounds_undecided": card.rounds_undecided,
     }
 
 
@@ -410,4 +539,29 @@ def _from_entry(path: Path, entry: dict) -> MatchCard:
         build=str(entry.get("build") or ""),
         size_bytes=int(entry.get("size_bytes") or 0),
         error=str(entry.get("error") or ""),
+        agent_ids=_entry_agent_ids(entry.get("agent_ids")),
+        score=_entry_score(entry.get("score")),
+        rounds_undecided=int(entry.get("rounds_undecided") or 0),
     )
+
+
+def _entry_agent_ids(raw) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Rehydrate the split, refusing anything that is not two whole teams."""
+    if not isinstance(raw, list) or len(raw) != 2:  # noqa: PLR2004
+        return ((), ())
+    halves = []
+    for half in raw:
+        if not isinstance(half, list) or len(half) != TEAM_SIZE:
+            return ((), ())
+        halves.append(tuple(str(x) for x in half))
+    return (halves[0], halves[1])
+
+
+def _entry_score(raw) -> tuple[int, int] | None:
+    """`None` and `(0, 0)` are different claims, so the absent case survives."""
+    if not isinstance(raw, list) or len(raw) != 2:  # noqa: PLR2004
+        return None
+    try:
+        return (int(raw[0]), int(raw[1]))
+    except (TypeError, ValueError):
+        return None

@@ -191,6 +191,17 @@ export function PlayerCard({
   if (hovered || selected) {
     classes.push("is-lit");
   }
+  /*
+    And the pointer's own card is outlined, in the same `--marker-hover` its
+    marker is ringed in on the canvas.  The two are one gesture -- pointing at
+    a card raises that player's marker and pointing at the marker raises the
+    card -- and the raised background alone said so at a weight nobody notices
+    while sweeping a column of five.  Hover only, never `selected`: a pin is a
+    different act with a different treatment.
+  */
+  if (hovered) {
+    classes.push("is-hovered");
+  }
 
   return (
     <article

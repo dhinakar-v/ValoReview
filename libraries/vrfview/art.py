@@ -38,13 +38,32 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import envfile
+
 ASSETS_DIR = Path("assets")
 MANIFEST_NAME = "manifest.json"
 
 SOURCE_MANIFEST = "valorant-api.com art cache"
 SOURCE_NONE = "none"
 
-FETCH_HINT = "runners\\fetch-assets.bat fetch writes one"
+FETCH_HINT_ENV = "VRF_FETCH_HINT"
+CHECKOUT_FETCH_HINT = "runners\\fetch-assets.bat fetch writes one"
+
+
+def fetch_hint() -> str:
+    r"""
+    What to do about a missing art cache, in the reader's own terms.
+
+    This sentence reaches a person twice -- on `/api/config` and as the body of
+    every 404 from the art mount -- so it has to name something they can
+    actually do.  In a checkout that is the runner; in a packaged copy there is
+    no `runners\\` directory and naming one would be a plain untruth, so
+    whatever launched the app can say what it offers instead.  Read through
+    `envfile` for the same reason every other setting here is: the real
+    environment first, the nearest `.env` second.
+    """
+    return envfile.get(FETCH_HINT_ENV) or CHECKOUT_FETCH_HINT
+
 
 # Keybind -> the slot name valorant-api.com publishes.  Only the two that are
 # unambiguous appear; see AgentArt.ability for why Q and E cannot.
@@ -236,7 +255,7 @@ class ArtCache:
         turned off is how a provenance line loses its authority.
         """
         if self.empty:
-            return self.reason or f"no art cache found; {FETCH_HINT}"
+            return self.reason or f"no art cache found; {fetch_hint()}"
         version = f" {self.version}" if self.version else ""
         return (
             f"{self.source}{version} ({self.root}): "
@@ -306,6 +325,18 @@ class ArtCache:
     def agent_art(self, uuid: str) -> AgentArt | None:
         """Art for an agent UUID.  Both sides are lowered; the manifest varies."""
         return self.agents.get(uuid.lower()) if uuid else None
+
+    def agent_name(self, uuid: str) -> str:
+        """
+        The published display name for an agent UUID, or `""`.
+
+        The plain-chunk half of the catalogue join: a loadout slot carries a
+        UUID and nothing else, and this is what turns it into the same name a
+        decoded pawn's codename resolves to.  Both sides come from the one
+        published catalogue, which is what makes comparing them exact.
+        """
+        found = self.agent_art(uuid)
+        return found.name if found is not None else ""
 
     def agent_art_by_name(self, name: str) -> AgentArt | None:
         """
@@ -472,11 +503,11 @@ def load(root: Path | str | None = None) -> ArtCache:
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except OSError:
-        return ArtCache(root, reason=f"no art cache at {path}; {FETCH_HINT}")
+        return ArtCache(root, reason=f"no art cache at {path}; {fetch_hint()}")
     except ValueError:
-        return ArtCache(root, reason=f"{path} is not readable JSON; {FETCH_HINT}")
+        return ArtCache(root, reason=f"{path} is not readable JSON; {fetch_hint()}")
     if not isinstance(doc, dict) or not (doc.get("maps") or doc.get("agents")):
-        return ArtCache(root, reason=f"{path} names no maps or agents; {FETCH_HINT}")
+        return ArtCache(root, reason=f"{path} names no maps or agents; {fetch_hint()}")
     return from_manifest(doc, root)
 
 

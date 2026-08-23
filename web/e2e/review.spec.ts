@@ -67,7 +67,7 @@ test.describe("the rebuilt viewer", () => {
     expect(overflow.y, "the page is exactly the window").toBeLessThanOrEqual(0);
   });
 
-  test("is flat and square everywhere except the three floating layers", async ({
+  test("is flat and square everywhere except the floating layers", async ({
     page,
   }) => {
     await openFirstPlayable(page);
@@ -75,7 +75,18 @@ test.describe("the rebuilt viewer", () => {
       // The only elements allowed to float, and the only ones allowed a
       // shadow. Everything else separates with a 1px border and a step on the
       // surface ramp.
-      const floating = [".clock-pill", ".kill-chip", ".marker-tip", ".menu-panel", ".modal"];
+      //
+      // Five, and the title used to say three: the kill toast over the map,
+      // the marker tooltip beside a player, the rail's tooltip under the
+      // transport, the layers popover and the modal.  The clock pill was a
+      // sixth until it stopped floating and became a cell in the stage head.
+      const floating = [
+        ".kill-chip",
+        ".marker-tip",
+        ".rail-tip",
+        ".menu-panel",
+        ".modal",
+      ];
       const bad: string[] = [];
       for (const node of document.querySelectorAll("*")) {
         const style = getComputedStyle(node);
@@ -105,15 +116,25 @@ test.describe("the rebuilt viewer", () => {
     expect(offenders, offenders.join("\n")).toEqual([]);
   });
 
-  test("keeps the floating layers apart and inside the canvas", async ({ page }) => {
+  test("keeps the clock off the map and the layers apart", async ({ page }) => {
     const { model } = await openFirstPlayable(page);
     await stepToEvent(page, firstCrowdedEvent(model, 8));
 
+    /*
+      The clock is a cell in the stage head and not an overlay any more.  It
+      floated over the top of the map, which is fine on a radar with void up
+      there and is a pill sitting on the callouts and the markers on one whose
+      playable area reaches its own image's top edge -- several do.  So the
+      assertion is the one that fixed it: the clock is inside the head, and it
+      touches no part of the canvas at all.
+    */
     const canvas = await boxOf(page.locator(".stage-canvas"));
+    const head = await boxOf(page.locator(".stage-head"));
     const clock = await boxOf(page.locator(".clock-pill"));
-    expect(clock.y).toBeGreaterThanOrEqual(canvas.y);
-    expect(clock.x).toBeGreaterThanOrEqual(canvas.x);
-    expect(clock.x + clock.width).toBeLessThanOrEqual(canvas.x + canvas.width);
+    expect(overlaps(clock, canvas), "the clock covers the map").toBe(false);
+    // A pixel of slack: both boxes are fractional.
+    expect(clock.y).toBeGreaterThanOrEqual(head.y - 1);
+    expect(clock.y + clock.height).toBeLessThanOrEqual(head.y + head.height + 1);
 
     await openLayers(page);
     const menu = await boxOf(page.locator(".menu-panel"));

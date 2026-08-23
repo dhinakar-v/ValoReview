@@ -1,11 +1,17 @@
 """
-The sight approximation: a raycast over the radar image's alpha channel.
+The sight approximation: a raycast over what the radar image draws.
 
 Everything here runs against a synthetic image, so there is no art cache, no
 display and no map involved.  The point is not that the cone is *right* -- it
 is an approximation and the interface says so -- but that it is right about the
 two things a wrong one would be plausible about: which way the player is
-looking, and where the silhouette stops it.
+looking, and where the picture stops it.
+
+The synthetic images are painted in Riot's own colours.  They used to paint
+playable cells pure white, which was fine while alpha was the whole occluder
+and became a fixture that was *entirely wall* the moment the white ink started
+blocking -- so a floor cell is now the exact (118, 118, 118) every published
+radar uses, and W is the ink.
 """
 
 from __future__ import annotations
@@ -30,24 +36,48 @@ PLAIN = Transform(
 )
 
 
-def image(rows: list[str]) -> Image.Image:
+# Riot's own values, so a fixture cannot drift from the art the thresholds
+# were measured against.  See vrfview/walls.py for the measurement.
+FLOOR = (118, 118, 118, 255)
+INK = (255, 255, 255, 255)
+VOID = (0, 0, 0, 0)
+# An upper elevation tier and Bind's teleporter teal.  Both sit inside the
+# floor band and must stay open: the first is a walkable storey, and the
+# second is the one saturated colour anywhere on a radar.
+TIER = (152, 152, 152, 255)
+TELEPORTER = (26, 163, 132, 255)
+
+PAINT = {"#": FLOOR, "W": INK, ".": VOID, "^": TIER, "T": TELEPORTER}
+
+
+def image(rows: list[str], *, scale: int = 1) -> Image.Image:
     """
-    A tiny RGBA image from an ASCII map: `#` is playable, `.` is void.
+    A tiny RGBA image from an ASCII map: `#` floor, `W` wall ink, `.` void.
 
     Void is alpha 0, which is exactly how Riot's radars mark everything
-    outside the map -- 57% to 72% of every published minimap.png.
+    outside the map -- 57% to 72% of every published minimap.png -- and the
+    floor is the exact grey that is 69% to 79% of every opaque pixel.
+
+    `scale` paints each character as a square block, so a fixture can be
+    written at the size it is read at *or* at a multiple of it.  The second
+    case is the one that matters: the real thing is a 1024 image read onto a
+    256 grid, and a wall line is thinner than a cell.
     """
-    size = len(rows)
-    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    size = len(rows) * scale
+    out = Image.new("RGBA", (size, size), VOID)
     pixels = out.load()
     for y, row in enumerate(rows):
         for x, cell in enumerate(row):
-            pixels[x, y] = (255, 255, 255, 255) if cell == "#" else (0, 0, 0, 0)
+            for dy in range(scale):
+                for dx in range(scale):
+                    pixels[x * scale + dx, y * scale + dy] = PAINT[cell]
     return out
 
 
 ALL_OPEN = ["########"] * 8
-# A wall down the middle column.
+# A wall down the middle column, drawn the way the void is: as a hole in the
+# silhouette.  Riot draws both -- a hole where the map ends, a white line where
+# a wall stands on the floor -- and INKED below is the other one.
 SPLIT = [
     "###.####",
     "###.####",
@@ -57,6 +87,21 @@ SPLIT = [
     "###.####",
     "###.####",
     "###.####",
+]
+
+
+# The same wall, drawn the way Riot actually draws an interior one: a white
+# line standing on floor that continues on both sides of it.  Under an
+# alpha-only occluder this image is entirely open.
+INKED = [
+    "###W####",
+    "###W####",
+    "###W####",
+    "###W####",
+    "###W####",
+    "###W####",
+    "###W####",
+    "###W####",
 ]
 
 
@@ -87,6 +132,56 @@ class TestSightMap(unittest.TestCase):
     def test_open_fraction_measures_the_playable_area(self):
         found = sight.SightMap.from_image(image(SPLIT), size=8)
         assert round(found.open_fraction, 3) == 0.875
+
+    def test_a_drawn_wall_blocks_although_the_silhouette_is_unbroken(self):
+        """
+        The whole point of reading the ink: this image has no hole in it.
+
+        Every pixel of INKED is opaque, so an occluder built from alpha alone
+        calls it entirely open and a cone crosses the wall as if it were not
+        there.  That was true of every interior wall on every map.
+        """
+        found = sight.SightMap.from_image(image(INKED), size=8)
+        assert found.blocked(0.44, 0.5)
+        assert not found.blocked(0.1, 0.5)
+        assert not found.blocked(0.9, 0.5)
+        assert round(found.open_fraction, 3) == 0.875
+
+    def test_the_same_line_painted_floor_grey_blocks_nothing(self):
+        """The rule is the ink, not the column: repaint it and the wall goes."""
+        floored = [row.replace("W", "#") for row in INKED]
+        found = sight.SightMap.from_image(image(floored), size=8)
+        assert found.open_fraction == 1.0
+
+    def test_a_wall_thinner_than_a_cell_survives_the_downsample(self):
+        """
+        The regression that would fail silently rather than loudly.
+
+        A radar is 1024 wide and read onto a 256 grid, so a two-pixel wall is
+        half a cell.  Downsample first and threshold after -- which is what the
+        alpha half does -- and the line averages into the floor band and is
+        simply gone: the mask comes back entirely open and nothing anywhere
+        reports a problem.  `walls.wall_cells` thresholds at full resolution
+        and pools down, so the line still arrives as a cell.
+        """
+        fine = image(INKED, scale=4)
+        assert fine.size == (32, 32)
+        found = sight.SightMap.from_image(fine, size=8)
+        assert found.blocked(0.44, 0.5)
+        assert not found.blocked(0.1, 0.5)
+
+    def test_an_upper_tier_and_a_teleporter_stay_open(self):
+        """
+        Everything between the floor grey and the ink is still floor.
+
+        The elevation tiers are the population the threshold has to clear
+        without touching, and Bind's teleporter teal is the one saturated
+        colour anywhere on a radar -- a threshold reading a channel rather
+        than a luminance would close both.
+        """
+        mixed = ["#^T#####"] * 8
+        found = sight.SightMap.from_image(image(mixed), size=8)
+        assert found.open_fraction == 1.0
 
 
 class TestForward(unittest.TestCase):
@@ -237,10 +332,10 @@ class FromPath(unittest.TestCase):
     def test_it_reads_a_png_and_thresholds_its_alpha(self):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "minimap.png"
-            image = Image.new("RGBA", (8, 8), (255, 255, 255, 0))
+            image = Image.new("RGBA", (8, 8), VOID)
             for x in range(4):
                 for y in range(8):
-                    image.putpixel((x, y), (255, 255, 255, 255))
+                    image.putpixel((x, y), FLOOR)
             image.save(path)
             built = sight.SightMap.from_path(path, size=8)
             assert built is not None
@@ -264,22 +359,9 @@ class FromPath(unittest.TestCase):
     def test_the_cache_reads_the_file_itself_when_given_no_supplier(self):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "minimap.png"
-            Image.new("RGBA", (8, 8), (255, 255, 255, 255)).save(path)
+            Image.new("RGBA", (8, 8), FLOOR).save(path)
             cache = sight.SightCache()
             first = cache.get(path)
             assert first is not None
             # Kept, not rebuilt: the same object comes back.
             assert cache.get(path) is first
-
-
-class Caption(unittest.TestCase):
-    def test_the_sentence_lives_with_the_raycaster(self):
-        """
-        Anything handed a mask is handed the sentence that says what it is.
-
-        The caption used to belong to the one view that drew a cone, which
-        meant a second view could draw one and quietly leave off what it was
-        a cone of.
-        """
-        assert "not collision" in sight.CAPTION
-        assert "2D only" in sight.CAPTION

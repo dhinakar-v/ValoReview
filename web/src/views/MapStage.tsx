@@ -28,9 +28,11 @@
  * When everything is present this is not a panel on a page -- it is the page.
  * The canvas fills the window between a 40px bar and the transport, the two
  * rosters take a fixed gutter each side, and three things float over the canvas
- * itself: the round clock, the kill feed and the hover tooltip.  Those are the
- * only overlapping elements in the interface, and each keeps `--space-4` of
- * clearance from the canvas edge and from its neighbours.
+ * itself: the round clock, the kill feed and the hover tooltip.  Each keeps
+ * `--space-4` of clearance from the canvas edge and from its neighbours.  A
+ * fourth floats *below* the canvas rather than over it -- the rail's own
+ * tooltip, in `Transport` -- and it is the only overlapping element in this
+ * interface that is not one of these three.
  *
  * `.stage-canvas` holds **exactly one canvas** and `.panel.stage` stays the
  * outer node: `e2e/scene.spec.ts` locates the renderer through the first and
@@ -52,7 +54,7 @@ import { activeRound } from "../model/roundclock";
 import { SIMULATED_LABEL, SIMULATED_NOTE, sideInRound } from "../model/synthetic";
 import { useWeapons } from "./catalogue";
 import { ClockPill } from "./ClockPill";
-import { Icon, Spinner, glyphs } from "./icons";
+import { Icon, glyphs } from "./icons";
 import { KillToast } from "./KillToast";
 import { LayersMenu } from "./LayersMenu";
 import { useLiveSnapshot } from "./live";
@@ -60,10 +62,11 @@ import { MarkerTip } from "./MarkerTip";
 import { MinimapCanvas } from "./MinimapCanvas";
 import { RosterPanel } from "./RosterPanel";
 import { Failed } from "./Shell";
+import { RendererSkeleton, StageSkeleton } from "./skeleton";
 import { Transport } from "./Transport";
 import { Button, Chip, EmptyState, Panel, Segmented } from "./ui";
 import { useImages } from "./images";
-import { seek, selectedActor, usePlayback, usePlaybackDriver } from "./playback";
+import { seek, usePlayback, usePlaybackDriver } from "./playback";
 
 // `three` and its two wrappers are about a megabyte of the bundle, and the 2D
 // view is the default and is not a stepping stone to this one. Loading the
@@ -99,6 +102,27 @@ export function MapStage({
     // offering it.
     retry: false,
   });
+
+  /*
+    SIGHT is on by default, and a map with no radar image on disk cannot draw
+    it. Left alone that is a ticked switch over an unchanged canvas -- the
+    exact "a control that appears to do something and does not" fault
+    `LayersMenu` was rewritten to remove, and worse than the disabled row it
+    already renders, because a tick is a claim that the layer is on.
+
+    So the store is corrected to match what can actually be drawn, when the
+    query settles. Only ever *off*: turning it back on would fight a reader who
+    switched it off on purpose, and this settles again for every replay opened
+    in this session.
+  */
+  const noMask = mask.isError;
+  useEffect(() => {
+    if (noMask) {
+      usePlayback.setState((state) => ({
+        layers: { ...state.layers, sight: false },
+      }));
+    }
+  }, [noMask]);
 
   const decode = useMutation({
     mutationFn: () => api.decode(replay.id),
@@ -209,14 +233,21 @@ export function MapStage({
     );
   }
 
+  /*
+    The arena's own shape, not a sentence in a panel.
+
+    This branch used to be a `Panel` holding one line of grey text, which drew
+    the *wrong* head -- a `.panel-head` where the real stage has a `.stage-head`
+    -- and left the other three rows of the grid empty, so the page jumped twice
+    on every open.  `StageSkeleton` is those four rows with blocks in them, and
+    it says the same sentence to a reader.
+
+    It is safe to assume the arena here: the guards above have already returned
+    for a capture with no positions and for a map in no art entry, so whatever
+    replaces this is the stage.
+  */
   if (art.isPending || positions.isPending) {
-    return (
-      <Panel title="Map" icon={glyphs.map} className="stage">
-        <p className="muted">
-          <Spinner /> Reading the decoded tracks…
-        </p>
-      </Panel>
-    );
+    return <StageSkeleton what="the decoded tracks" />;
   }
 
   if (!art.data || !radarUrl) {
@@ -266,6 +297,17 @@ export function MapStage({
           {SIMULATED_LABEL}
         </Chip>
         <div className="spacer" />
+        {/*
+          The round clock, and it used to float over the top of the map.  On a
+          map whose playable area reaches the top of its own radar image -- and
+          several do -- it sat on the callouts and the markers under them, which
+          is an overlay covering the thing it is an overlay on.  There is a row
+          across the top of the stage with two controls in it and room for a
+          third, so the clock is a cell in it: nothing is covered, and the
+          number does not move when the map does.
+        */}
+        <ClockPill round={round} snap={snap} />
+        <div className="spacer" />
         <Segmented
           label="Which view"
           options={["2D", "3D"] as const}
@@ -299,17 +341,10 @@ export function MapStage({
           {mode === "2d" ? (
             <MinimapCanvas model={model} art={art.data} radar={radar} mask={maskDoc} />
           ) : (
-            <Suspense
-              fallback={
-                <p className="stage-loading">
-                  <Spinner /> Loading the renderer…
-                </p>
-              }
-            >
+            <Suspense fallback={<RendererSkeleton />}>
               <Scene3D model={model} art={art.data} radar={radar} mask={maskDoc} />
             </Suspense>
           )}
-          <ClockPill round={round} snap={snap} />
           <KillToast model={model} snap={snap} weapons={weapons} />
           <MarkerTip model={model} snap={snap} weapons={weapons} />
         </div>
@@ -345,74 +380,30 @@ export function MapStage({
         <LayersMenu hasMask={maskDoc !== null} is3d={mode === "3d"} />
       </Transport>
 
-      <Captions
-        sightCaption={maskDoc?.caption ?? null}
-        maskUnavailable={maskUnavailable}
-      />
+      <Captions maskUnavailable={maskUnavailable} />
     </div>
   );
 }
 
 /**
- * Every claim a layer is making, in words, under the view making it.
+ * Every claim the page is making, in words, under the view making it.
  *
- * The sight caption is never held here as a constant, precisely so it cannot
- * drift: the sentence saying what a cone is travels in the same document as the
- * cells it is raycast against, and is rendered verbatim.  The simulated notice
- * beside it is the same idea for the generated numbers, and it is always shown,
- * because those numbers are always on screen.
+ * The simulated notice is unconditional, because the numbers it is about are
+ * always on screen.  The second line is not a claim but a report: it appears
+ * only when a map has no radar on disk, and it is the server's own sentence for
+ * why the sight layer cannot be offered.
  *
  * The mark beside each is `aria-hidden`, because one of these sentences is
  * matched exactly by a test and a glyph that joined the text node would change
  * what it is.
  */
-/**
- * What SIGHT needs, said on the stage rather than inside a closed menu.
- *
- * The cone is drawn for one player because ten overlapping wedges over one
- * radar are a wash -- the argument `DEFAULT_LAYERS` already makes.  Switching
- * the layer on with nobody picked therefore correctly draws nothing, and until
- * this sentence existed that was indistinguishable from a layer that does not
- * work.  `gallery.spec.ts` had even written the behaviour down in a comment.
- */
-export const SIGHT_NEEDS_A_PLAYER =
-  "SIGHT is drawn for one player: point at a marker, or click one to pin it.";
-
-function Captions({
-  sightCaption,
-  maskUnavailable,
-}: {
-  sightCaption: string | null;
-  maskUnavailable: string | null;
-}) {
-  const showSight = usePlayback((state) => state.layers.sight);
-  const chosen = usePlayback(selectedActor);
+function Captions({ maskUnavailable }: { maskUnavailable: string | null }) {
   return (
     <div className="captions">
       <p>
         <Icon glyph={glyphs.simulated} size={12} />
         <span>{SIMULATED_NOTE}</span>
       </p>
-      {showSight && sightCaption ? (
-        <p>
-          <Icon glyph={glyphs.sight} size={12} />
-          <span>{sightCaption}</span>
-        </p>
-      ) : null}
-      {/*
-        SIGHT on with nobody picked draws nothing, and that is correct -- ten
-        overlapping wedges say nothing, which is the argument `DEFAULT_LAYERS`
-        makes for the layer being off by default.  What was missing is anybody
-        saying so: the switch lit up and the map did not change, which reads as
-        a broken layer.  Additional to the server's caption, never instead of
-        it: that sentence travels with the mask and is asserted verbatim.
-      */}
-      {showSight && chosen === null ? (
-        <p>
-          <Icon glyph={glyphs.sight} size={12} />
-          <span>{SIGHT_NEEDS_A_PLAYER}</span>
-        </p>
-      ) : null}
       {maskUnavailable ? (
         <p>
           <Icon glyph={glyphs.noArt} size={12} />

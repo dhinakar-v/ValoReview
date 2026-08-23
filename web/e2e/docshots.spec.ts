@@ -41,6 +41,7 @@ import {
   openLayers,
   readCanvas,
   stepToEvent,
+  setLayer,
   toggleLayer,
   waitForArt,
 } from "./harness";
@@ -50,9 +51,10 @@ import {
  *
  * The same precaution `readCanvas` takes, and for the same reason: a Playwright
  * screenshot clips the page rather than isolating an element, so a marker left
- * hovered draws at three times the size and names itself.  In a picture that is
- * about to sit on the front page that is not a measurement error, it is a
- * screenshot of the interface doing something nobody asked it to.
+ * hovered draws a magenta ring and names itself, and the roster card under the
+ * pointer is outlined to match.  In a picture that is about to sit on the front
+ * page that is not a measurement error, it is a screenshot of the interface
+ * doing something nobody asked it to.
  */
 async function park(page: Page): Promise<void> {
   await page.mouse.move(2, 2);
@@ -146,8 +148,9 @@ test("the README's screenshots, regenerated", async ({ page }, testInfo) => {
     "false",
   );
 
-  // 5. Sight and trails, which need somebody selected: clicking empty canvas
-  // selects nobody, and the picture is then of a lit SIGHT switch and no cone.
+  // 5. Sight and trails. A cone is drawn for every living player at the same
+  // weight, so this needs no selection; the click stays because the picked
+  // marker is what the README paragraph beside this shot describes.
   // Where the click goes is computed the way `gallery.spec.ts` computes it --
   // through the model's own transform, so it lands on a player rather than near
   // one.
@@ -162,9 +165,9 @@ test("the README's screenshots, regenerated", async ({ page }, testInfo) => {
   const [px, py] = uvToPixels(box, u, v);
   await minimap.click({ position: { x: px, y: py } });
   await toggleLayer(page, "TRAILS");
-  await toggleLayer(page, "SIGHT");
+  await setLayer(page, "SIGHT", true);
   await shot("05-sight-trails.png", stage);
-  await toggleLayer(page, "SIGHT");
+  await setLayer(page, "SIGHT", false);
   await toggleLayer(page, "TRAILS");
 
   // 6. The scene, with Riot's callouts on it.

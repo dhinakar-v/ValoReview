@@ -36,7 +36,8 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { AbilityCast, MapArt, Player, SightMaskDoc } from "../api/types";
 import type { ReplayModel } from "../model/replay";
 import type { SightMask, SightSettings } from "../model/sight";
-import { cone, decodeMask, forwardUv, uvRadius } from "../model/sight";
+import type { Occluder } from "../model/sight";
+import { decodeMask, uvRadius } from "../model/sight";
 import type { Snapshot } from "../model/state";
 import { positionOf, spikeLocation, stateAt } from "../model/state";
 import { segments } from "../model/track";
@@ -46,6 +47,7 @@ import { sideOf } from "../model/synthetic";
 import { markerScale, panBy, viewBox, zoomAt } from "../model/viewport";
 import { palette, sideColour, useImages } from "./images";
 import { usePlayback, selectedActor, teamShown } from "./playback";
+import { paintCones, sightCones, smokesAt } from "./sightlayer";
 
 /** Marker sizes, in CSS pixels, carried over from the desktop viewer. */
 const AVATAR_PX = 26;
@@ -72,8 +74,33 @@ const UTILITY_HALF = 8;
 const FACING_LENGTH = 11;
 const FACING_HALF = 6;
 
-/** How much larger a hovered or pinned marker is drawn. */
+/**
+ * How much larger a *pinned* marker is drawn.
+ *
+ * A pin and a hover are not the same act and no longer draw the same way.  A
+ * pin is a decision -- somebody clicked this player and wants to keep hold of
+ * them in a five-man stack -- so it earns the reference's own treatment, about
+ * 104px against a 26px base.  A hover is the pointer passing over, and
+ * inflating a portrait to three times its size for that covered the very
+ * neighbours the reader was sweeping the stack to tell apart; worse, the
+ * roster raises the same state, so pointing at a card three hundred pixels
+ * away silently blew up a marker on the map.  Hover is `HOVER_RING` instead:
+ * the same mark, ringed in `--marker-hover`, moving nothing.  That colour is
+ * magenta and not the warm hue this started as: a ring has to contrast with
+ * both sides at once, and an orange one around an attacker is drawn in very
+ * nearly the marker's own colour.
+ */
 const PICKED_SCALE = 3;
+
+/**
+ * The hovered marker's outline, in CSS pixels before the zoom scale.
+ *
+ * Three rather than the ordinary ring's two, because the ring it replaces is
+ * already the team colour and a hover has to be legible as a *change* to a
+ * mark whose size is now fixed.  It is drawn proud of the portrait like every
+ * other ring here, so an agent icon with a pale border cannot swallow it.
+ */
+const HOVER_RING = 3;
 
 /*
  * The death X's arm, in CSS pixels before the zoom scale.
@@ -170,6 +197,14 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
   /** The un-zoomed square, which is what the camera arithmetic works from. */
   const fitRef = useRef<Box>({ left: 0, top: 0, side: 0 });
   const dragRef = useRef<{ x: number; y: number } | null>(null);
+  /**
+   * Where the sight cones are accumulated before they reach this canvas.
+   *
+   * Held across frames rather than made per frame, and deliberately empty here:
+   * `paintCones` builds it on first use, so a page test that never draws a cone
+   * never asks jsdom for a 2D context it does not have.
+   */
+  const sightScratch = useRef<HTMLCanvasElement | null>(null);
 
   const icons = useImages(model.replay.players.map((player) => player.icon_url));
   const iconFor = useMemo(() => {
@@ -267,7 +302,19 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
       // players on top -- because a player hidden behind their own utility is
       // the one thing on this canvas nobody can afford to lose.
       if (state.layers.sight && silhouette && settings) {
-        drawSight(context, { model, art, snap, box, colours, silhouette, settings });
+        drawSight(context, {
+          model,
+          art,
+          snap,
+          box,
+          colours,
+          silhouette,
+          settings,
+          shown: (team: string) => teamShown(state, team),
+          smokes: smokesAt(art, snap),
+          scratch: sightScratch,
+          size: { width, height, scale: dpr },
+        });
       }
       if (state.layers.trails) {
         drawPlayerTrails(context, { model, snap, world, colours });
@@ -304,8 +351,26 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
       drawSpike(context, { model, snap, world, colours, scale });
 
       const hits: Hit[] = [];
+      // Two questions, not one.  `chosenId` is whoever is being pointed at --
+      // pinned, else hovered -- and decides who is *named*; `pinnedId` is the
+      // narrower one and is the only thing that changes a marker's size.
       const chosenId = selectedActor(state);
-      for (const player of model.replay.players) {
+      const pinnedId = state.selected;
+      /*
+        And the pointer's own player is painted last.
+
+        A ring is no use underneath the four markers stacked on top of it, and
+        a five-man spawn is exactly where somebody is pointing at one to find
+        out who it is.  `sort` is stable, so this moves one player to the end
+        and leaves the rest in the replay's own order -- which is what keeps
+        the picture steady while the pointer is somewhere else entirely.
+      */
+      const order = model.replay.players
+        .slice()
+        .sort(
+          (a, b) => Number(a.actor_id === chosenId) - Number(b.actor_id === chosenId),
+        );
+      for (const player of order) {
         if (!teamShown(state, player.team)) {
           continue;
         }
@@ -329,10 +394,11 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
         // does not is the one inconsistency a viewer would actually notice.
         const colour = sideColour(colours, sideOf(model.replay, player.team, snap.t_ms));
         const chosen = chosenId === player.actor_id;
-        // The picked-out marker is three times the size, which is the
-        // reference's own treatment: about 104px against a 26px base. It is
-        // what makes one player findable inside a five-man stack.
-        const radius = (AVATAR_PX * scale * (chosen ? PICKED_SCALE : 1)) / 2;
+        const pinned = pinnedId === player.actor_id;
+        // Only a pin grows the marker -- see `PICKED_SCALE`.  A hover keeps
+        // the size and takes the magenta ring below, so nothing on the canvas
+        // moves under a pointer that is only passing through.
+        const radius = (AVATAR_PX * scale * (pinned ? PICKED_SCALE : 1)) / 2;
 
         if (alive) {
           drawFacing(context, { x, y, position, world, colour, radius });
@@ -341,7 +407,8 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
             y,
             radius,
             colour,
-            ring: chosen ? colours.text! : colour,
+            ring: pinned ? colours.text! : chosen ? colours.hover! : colour,
+            ringWidth: chosen && !pinned ? HOVER_RING : 2,
             icon: iconFor.get(player.actor_id),
             background: colours.background!,
           });
@@ -380,6 +447,17 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
         }
         hits.push({ x, y, radius, player });
       }
+      /*
+        Reversed, so the hit test answers with whatever is on *top*.
+
+        `at` returns the first hit within reach and the list is built in paint
+        order, so it used to answer with the bottom-most marker of a stack --
+        the one drawn first and covered by every other.  Harmless while nothing
+        depended on it; not harmless now that the answer decides which marker
+        comes to the front, because pointing at the player on top would ring
+        the one buried underneath them.
+      */
+      hits.reverse();
       hitsRef.current = hits;
     },
     [art, iconFor, model, radar, settings, silhouette],
@@ -556,12 +634,24 @@ function drawSpike(
 
 
 /**
- * The selected player's approximate view cone.
+ * Every living player's approximate view cone, one wedge each.
  *
- * Everything about this is an approximation and the caption under the canvas
- * says so.  What it must not be is wrong about which way somebody is looking,
- * so the heading goes through `forwardUv`, which probes a world point and
- * transforms it rather than doing trigonometry in image space.
+ * Nobody is picked out any more, and that is the point rather than a
+ * simplification.  This drew one cone for a selected player once, then ten at
+ * two different weights so the selection still read; both made the switch mean
+ * something about *a player* when the question it answers is about the map --
+ * which parts of it nobody can see.  A selection has nothing to say about that,
+ * so the marker keeps `PICKED_SCALE` and the cone does not.
+ *
+ * The weight is the count instead: `sightlayer.paintCones` gives each cone
+ * `1/N` of its side's ink and accumulates overlap additively, so k cones over a
+ * point read as exactly `k/N` and a full side covering one lane paints it
+ * solid.  No stroke -- an outline is a second ink that counts nothing and cuts
+ * a hard line through the gradient this layer is made of.
+ *
+ * `Scene3D` paints the identical picture from the identical two functions, at
+ * the identical alphas; the only difference is that it rasterises in uv onto a
+ * ground quad where this rasterises in screen space.
  */
 function drawSight(
   context: CanvasRenderingContext2D,
@@ -573,55 +663,23 @@ function drawSight(
     colours: Record<string, string>;
     silhouette: SightMask;
     settings: SightSettings;
+    shown: (team: string) => boolean;
+    smokes: readonly Occluder[];
+    scratch: { current: HTMLCanvasElement | null };
+    size: { width: number; height: number; scale: number };
   },
 ): void {
   const { model, art, snap, box, colours, silhouette, settings } = args;
-  const actorId = selectedActor(usePlayback.getState());
-  if (actorId === null || !snap.alive.has(actorId)) {
-    return;
-  }
-  const position = snap.positions.get(actorId);
-  if (position === undefined) {
-    return;
-  }
-  const polygon = cone(
-    silhouette,
-    applyTransform(art.transform, position.x, position.y),
-    forwardUv(art.transform, position.x, position.y, position.yaw, settings.probe_uu),
-    uvRadius(art.transform, settings.max_range_uu),
-    settings,
-  );
-  // An empty cone means draw nothing. Never a fallback circle: a circle where
-  // a cone belongs claims the player can see in every direction.
-  if (polygon.length < 3) {
-    return;
-  }
-  const player = model.replay.players.find((p) => p.actor_id === actorId);
-  const colour = sideColour(
+  const { shown, smokes, scratch, size } = args;
+
+  paintCones(
+    context,
+    sightCones({ model, art, snap, silhouette, settings, shown, smokes }),
     colours,
-    player ? sideOf(model.replay, player.team, snap.t_ms) : "?",
+    (u, v) => uvToPixels(box, u, v),
+    scratch,
+    size,
   );
-  context.save();
-  context.beginPath();
-  polygon.forEach(([u, v], i) => {
-    const [x, y] = uvToPixels(box, u, v);
-    if (i === 0) {
-      context.moveTo(x, y);
-    } else {
-      context.lineTo(x, y);
-    }
-  });
-  context.closePath();
-  // What the `gray25` stipple was standing in for, now that there is an alpha
-  // channel to say it with.
-  context.globalAlpha = 0.22;
-  context.fillStyle = colour;
-  context.fill();
-  context.globalAlpha = 0.5;
-  context.strokeStyle = colour;
-  context.lineWidth = 1;
-  context.stroke();
-  context.restore();
 }
 
 /**
@@ -990,11 +1048,12 @@ function drawAlive(
     radius: number;
     colour: string;
     ring: string;
+    ringWidth: number;
     icon: HTMLImageElement | undefined;
     background: string;
   },
 ): void {
-  const { x, y, radius, colour, ring, icon, background } = args;
+  const { x, y, radius, colour, ring, ringWidth, icon, background } = args;
   if (icon) {
     // The ring is drawn first and slightly proud of the portrait, so the team
     // colour survives an agent icon with a pale border.
@@ -1003,7 +1062,7 @@ function drawAlive(
     context.fillStyle = colour;
     context.fill();
     context.strokeStyle = ring;
-    context.lineWidth = 2;
+    context.lineWidth = ringWidth;
     context.stroke();
 
     context.save();
@@ -1021,7 +1080,7 @@ function drawAlive(
   context.fillStyle = colour;
   context.fill();
   context.strokeStyle = ring === colour ? background : ring;
-  context.lineWidth = 2;
+  context.lineWidth = ringWidth;
   context.stroke();
 }
 

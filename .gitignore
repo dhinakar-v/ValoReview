@@ -219,6 +219,7 @@ __marimo__/
 
 # Valorant Replay Demo Folder
 Demos/
+Demos1/
 # fetch_assets.py output
 assets/
 # Oodle runtime drop-in. The DLL is Epic's; it is never redistributed here.
@@ -252,4 +253,4 @@ web/e2e/report/
 # README's own screenshots, which are committed on purpose. A `!docs/images/`
 # negation cannot fix that, because git does not descend into an excluded
 # directory and so never reaches the rule that would un-exclude it.
-/images/
+/features/

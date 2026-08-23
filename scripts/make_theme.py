@@ -85,6 +85,7 @@ COLOURS = (
     ("SPIKE_SAFE", "--spike-safe"),
     ("SPIKE_BOOM", "--spike-boom"),
     ("PLAYHEAD", "--playhead"),
+    ("HOVER", "--marker-hover"),
 )
 
 

@@ -43,7 +43,7 @@ a line here saying what it buys.
 | `three` | The 3D scene. There is no smaller way to put a textured plane and ten markers in a perspective camera, and writing WebGL by hand to avoid a dependency would be a much larger thing to maintain than the dependency. |
 | `@react-three/fiber` | `three` as React components, so the scene's lifetime is the component's and `useFrame` is the per-frame hook. The alternative is a manual renderer, a manual resize observer and a manual teardown, all of which this already gets right. |
 | `@react-three/drei` | `OrbitControls` and `Html`. Orbit is a camera rig everybody writes the same way and nobody writes correctly the first time; `Html` is what puts a callout label in the scene without a text-geometry pipeline. |
-| `lucide-react` | The icon set. Every control used to be a bare uppercase word and the transport bar was ASCII -- `|<`, `<<`, `PLAY`. Drawing twenty-four glyphs by hand would be twenty-four paths to maintain and a set that stops the day somebody needs a twenty-fifth; the package is MIT, tree-shaken to what is imported, and one consistent grid. It is wrapped in `views/icons.tsx` rather than imported directly -- see *Icons, and the rule that makes them safe*. |
+| `@phosphor-icons/react` | The icon set. Every control used to be a bare uppercase word and the transport bar was ASCII -- `|<`, `<<`, `PLAY`. Drawing twenty-four glyphs by hand would be twenty-four paths to maintain and a set that stops the day somebody needs a twenty-fifth; the package is MIT, one consistent grid, and every glyph is imported as its own module rather than through a barrel that re-exports three thousand of them. It is wrapped in `views/icons.tsx` rather than imported directly, and drawn at its **fill** weight -- see *Icons, and the rule that makes them safe*. |
 
 `three` and its two wrappers are about a megabyte, and the 2D view is the
 default — so `Scene3D` is behind a `React.lazy`, and the readable view costs
@@ -151,7 +151,8 @@ stripped still looks deliberate rather than broken.
 
 ## Icons, and the rule that makes them safe
 
-`views/icons.tsx` wraps `lucide-react`, and the wrapper exists for one reason:
+`views/icons.tsx` wraps `@phosphor-icons/react`, and the wrapper exists for one
+reason:
 **an icon never replaces a label.**
 
 There is not one `data-testid` in this repository. Every DOM assertion is text,
@@ -300,7 +301,7 @@ belong to a `role="tablist"` (ArrowRight in the timeline's strip changed the tab
 **A key exists exactly where its control does.** `MapStage` draws SIGHT only
 where there is a mask and CALLOUTS only in 3D, so `useTransportKeys` is handed
 the same two booleans. Without them `S` on a map with no mask set `showSight`
-with no effect and no caption -- and because the store is module-level, the
+with nothing to show for it -- and because the store is module-level, the
 next replay opened in the same session came up with the layer already on.
 
 `views/shortcuts.test.tsx` is the standing check on all three, and each
@@ -347,10 +348,12 @@ Each of these is load-bearing, and each is pinned by a test in
   nothing to press at all, so the sentence names `runners\build-decoder.bat`.
   They are fixed by different things and therefore say different things. A
   control that cannot do anything is worse than an explanation of its absence.
-- **A sight cone is never drawn without its caption.** The sentence saying what
-  the wedge is — the radar silhouette, not collision, 2D only — travels in the
-  same document as the cells it is raycast against, so there is no state in
-  which the page has one and not the other.
+- **A sight cone means the same thing in both views.** `views/sightlayer.ts`
+  owns the selection, the gates, the colours and the ink, and the two canvases
+  call it — so a cone cannot be drawn for everybody here and for one picked
+  player there, which is what they did for months. The opacity is the overlap:
+  each cone is `1/N` of its side, accumulated additively on an offscreen buffer,
+  because ordinary compositing saturates and stops counting.
 - **Where `Track.at` refuses, nothing is drawn.** Not a last-known position, in
   either view. The refusal exists to stop a plausible coordinate being
   invented, and a fallback downstream of it would undo exactly that.

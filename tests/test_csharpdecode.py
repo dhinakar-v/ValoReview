@@ -16,6 +16,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -203,6 +204,19 @@ class Invoking(unittest.TestCase):
             25,
         )
         assert command[-2:] == ["--hz", "25"]
+
+    def test_windows_gets_no_console_and_everywhere_else_gets_nothing(self):
+        """
+        A GUI host has no console to lend a child, so Windows gives it one of
+        its own and it flashes.  One decode would be a blemish; `prewarm` runs
+        a library of them back to back.  The flag is Windows-only, and
+        `subprocess` refuses a non-zero one elsewhere, so the other platforms
+        have to come back exactly 0 rather than merely falsy.
+        """
+        with mock.patch.object(csharpdecode.os, "name", "nt"):
+            assert csharpdecode._quiet_flags() == csharpdecode._CREATE_NO_WINDOW
+        with mock.patch.object(csharpdecode.os, "name", "posix"):
+            assert csharpdecode._quiet_flags() == 0
 
 
 if __name__ == "__main__":

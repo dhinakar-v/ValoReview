@@ -12,8 +12,29 @@
  * The rail is still a canvas rather than an `<input type="range">`, and for the
  * same reason it always was: it draws every kill, ultimate, spike event and
  * ability cast in the round along one axis, and a themed widget owns its own
- * geometry and cannot be drawn into.  Which of those it draws is now a layer
+ * geometry and cannot be drawn into.  Which of those it draws is a layer
  * switch, so a round dense with utility can still be read for its kills.
+ *
+ * **A mark now carries whose it was, and answers when pointed at.**  Every tick
+ * used to differ only in silhouette -- a stem, a triangle, a diamond, a square
+ * -- which said what *kind* of event it was and never whose: a cast was drawn
+ * in `--text-faint` whether an attacker or a defender made it.  So the side is
+ * the ink and the lane, ATK above the rail and DEF below, and the shapes are
+ * gone with the argument that justified them (at one pixel wide, colour alone
+ * was a hue judgement -- but a lane is not a hue).  The tooltip renders
+ * `roundevents.roundEvents`, which is the round timeline's **own** array, so a
+ * tick and a row cannot say different things about one event.
+ *
+ * The kills are the exception and are DOM rather than ink: a skull is the glyph
+ * this interface already uses for a kill, and painting one on the canvas would
+ * mean a hand-copied outline that could drift from the one in the menu beside
+ * it.  Ten spans a round is nothing, and it is what makes the layer testable
+ * under jsdom, which gives a canvas no 2D context at all.
+ *
+ * The tooltip is hover-only and deliberately has no keyboard equivalent here,
+ * because it already has one: the round-timeline dialog lists the same array,
+ * is reachable by tab and seeks to any row.  A second keyboard path onto a
+ * `<canvas>` would be a worse copy of it.
  *
  * Scrubbing is a seek, and a seek is exact.  `stateAt` accumulates nothing, so
  * dragging backwards across a round boundary is exactly as correct as playing
@@ -42,24 +63,53 @@ import {
   clockText,
   elapsedMs,
   eventTimesIn,
+  remainingMs,
 } from "../model/roundclock";
-import { Icon, glyphs } from "./icons";
-import { palette } from "./images";
+import { ICON_INLINE, Icon, glyphs } from "./icons";
+import { palette, sideColour } from "./images";
+import type { LayerKey } from "./playback";
 import { seek, setBounds, usePlayback } from "./playback";
+import type { Kind, RoundEvent } from "./roundevents";
+import { roundEvents } from "./roundevents";
 import { RoundStrip } from "./RoundStrip";
 import { RoundTimeline } from "./RoundTimeline";
 import { SHORTCUTS, useTransportKeys } from "./shortcuts";
-import { IconButton, Segmented, Toggle } from "./ui";
+import { IconButton, Modal, Segmented, Toggle } from "./ui";
 
-const RAIL_HEIGHT = 24;
-/** Where the rail itself sits, leaving the event ticks the room above it. */
-const RAIL_Y = 17;
+const RAIL_HEIGHT = 40;
+/** The rail line's own top edge. It is a centre line: there is a lane either side. */
+const RAIL_Y = 20;
+const RAIL_W = 2;
 
-/** Half-width of a tick's head, in CSS pixels. */
-const HEAD = 3;
+/*
+  The two lanes, and the two mark lengths in each.
 
-/** The shapes a tick head can take, one per kind of event. */
-type Head = "triangle" | "diamond" | "square";
+  Length and not weight separates a cast from an ultimate.  They share a lane
+  and a colour -- the side owns both -- so the difference has to be a
+  silhouette, the way the old shapes were, rather than a second hue judgement
+  against a dark ground.  An ultimate fills its lane; a cast is a third of it.
+*/
+const CAST_LEN = 7;
+const ULT_LEN = 16;
+/** A mark whose side is unknown straddles the line rather than picking a lane. */
+const UNKNOWN_LEN = 5;
+const MARK_W = 2;
+
+/** A skull is 14px, centred on the rail line. */
+const SKULL_TOP = RAIL_Y + Math.round(RAIL_W / 2) - Math.round(ICON_INLINE / 2);
+
+/** How near the pointer has to be, in CSS pixels, to raise a mark's tooltip. */
+const HIT_PX = 6;
+/** Kept equal to `.rail-tip`'s width in `app.css`, which is what it clamps. */
+const TIP_W = 244;
+
+/** Which switch draws which kind. One table, read by the canvas and the hover. */
+const LAYER_FOR: Record<Exclude<Kind, "first">, LayerKey> = {
+  kill: "kills",
+  ability: "casts",
+  ultimate: "ultimates",
+  spike: "spike",
+};
 
 /**
  * A spike tick's colour, by what the event was.
@@ -73,6 +123,20 @@ function spikeColour(colours: Record<string, string>, kind: string): string {
   if (kind === "defused") return colours.spikeSafe!;
   if (kind === "exploded") return colours.spikeBoom!;
   return colours.spikeArmed!;
+}
+
+/**
+ * Where a mark sits, given the side that made it.
+ *
+ * ATK above the rail and DEF below, and a null side -- a cast whose codename
+ * two players share, so `abilities.attribute` refused to name a caster --
+ * straddles the line in `--team-unknown`.  A lane is a claim about which side
+ * acted, and there is nothing to base one on.
+ */
+function lane(side: string | null, length: number): { top: number; height: number } {
+  if (side === "ATK") return { top: RAIL_Y - length, height: length };
+  if (side === "DEF") return { top: RAIL_Y + RAIL_W, height: length };
+  return { top: RAIL_Y - UNKNOWN_LEN, height: RAIL_W + UNKNOWN_LEN * 2 };
 }
 
 export function Transport({
@@ -262,7 +326,7 @@ export function Transport({
           onClick={toEnd}
         />
 
-        <Rail replay={replay} round={round} clock={clock} />
+        <Rail replay={replay} round={round} weapons={weapons} clock={clock} />
 
         {/* Exactly two clocks and nothing else: a Playwright spec asserts this
             span's whole text is `M:SS / M:SS`. */}
@@ -311,15 +375,29 @@ export function Transport({
         {children}
       </div>
 
+      {/*
+        The key list is a dialog, not a drawer.
+
+        It used to unfold *under* the bar, which pushed the whole transport up
+        and left ten rows of hint text spread across a two-thousand-pixel
+        window -- a legend as wide as the map it was explaining, with the
+        stage's own caption stranded below it.  It is a reference somebody
+        reads once and dismisses, which is what `ui.Modal` is for, and `fit`
+        because ten rows is ten rows however wide the window is.
+      */}
       {showKeys ? (
-        <div className="shortcuts">
-          {SHORTCUTS.map((entry) => (
-            <Fragment key={entry.keys}>
-              <span className="kbd">{entry.keys}</span>
-              <span>{entry.does}</span>
-            </Fragment>
-          ))}
-        </div>
+        <Modal title="Keyboard Shortcuts" size="fit" onClose={() => setShowKeys(false)}>
+          <dl className="shortcuts">
+            {SHORTCUTS.map((entry) => (
+              <Fragment key={entry.keys}>
+                <dt>
+                  <span className="kbd">{entry.keys}</span>
+                </dt>
+                <dd>{entry.does}</dd>
+              </Fragment>
+            ))}
+          </dl>
+        </Modal>
       ) : null}
 
       {showTimeline && round !== null ? (
@@ -340,20 +418,58 @@ export function Transport({
  * The scrubber: a rail across one round, with that round's events on it.
  *
  * Drawn rather than laid out, because there can be a hundred marks in a
- * fifteen-second window and each is one line rather than one element.
+ * fifteen-second window and each is one line rather than one element.  The
+ * kills are the exception, and the file docstring says why.
  */
 function Rail({
   replay,
   round,
+  weapons,
   clock,
 }: {
   replay: Replay;
   round: Round | null;
+  /**
+   * The weapon catalogue, threaded in for one reason: a kill's tooltip row
+   * carries the killfeed silhouette of the gun, and that gun is **generated**
+   * by `model/synthetic.ts` -- nothing decoded says who was holding what.  It
+   * is the same row the round timeline shows, under the same SIMULATED chip.
+   */
+  weapons: Weapon[] | undefined;
   clock: PlaybackClock;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [hit, setHit] = useState<{ left: number; events: RoundEvent[] } | null>(null);
   const fromMs = round?.start_ms ?? 0;
   const spanMs = round?.duration_ms ?? replay.length_ms;
+
+  /*
+    One array, drawn and hit-tested and listed.
+
+    `layers` is read as a subscription rather than through `getState()` inside
+    `draw`, which is the whole of the fix for a fault that would otherwise have
+    shipped silently: the canvas gated on the switches, and a hover that gated
+    on nothing would have gone on tooltipping kills with KILLS switched off.
+    The store hands back the same object until something is toggled, so this
+    costs no extra render.
+  */
+  const layers = usePlayback((state) => state.layers);
+  const shown = useMemo(
+    () =>
+      roundEvents(replay, round, weapons).filter(
+        // The first-blood duplicate is dropped: it is a second mark on a
+        // millisecond that already has one, and the tag it carries is the
+        // modal's own way of surfacing that moment in a filtered list.
+        (event) => event.kind !== "first" && layers[LAYER_FOR[event.kind]],
+      ),
+    [layers, replay, round, weapons],
+  );
+
+  /** A time as a fraction of the rail, which is how the skulls are placed. */
+  const pctOf = useCallback(
+    (ms: number) => Math.max(0, Math.min(100, ((ms - fromMs) / spanMs) * 100)),
+    [fromMs, spanMs],
+  );
 
   const draw = useCallback(
     (canvas: HTMLCanvasElement) => {
@@ -376,96 +492,84 @@ function Rail({
       context.clearRect(0, 0, width, height);
 
       const at = (ms: number) => ((ms - fromMs) / spanMs) * width;
-      const inRound = (ms: number) => ms >= fromMs && ms <= fromMs + spanMs;
-      const layers = usePlayback.getState().layers;
 
       context.fillStyle = colours.border!;
-      context.fillRect(0, RAIL_Y, width, 2);
+      context.fillRect(0, RAIL_Y, width, RAIL_W);
 
       /*
-        A tick is a stem and a head, and the head says what kind of event it is.
+        A mark is a filled rectangle on whole pixels, not a stroked line.
 
-        Every mark used to be a bare 1px line, differing only in colour and in
-        how far up it started -- so the strip could be read by hovering and no
-        other way.  Now each kind has a silhouette as well: a stem alone, a
-        downward triangle, a diamond, a square.  Shape *and* colour, because at
-        one pixel wide colour alone is a hue judgement against a dark ground.
-
-        The heads are drawn at the top of the stem rather than on the rail, so
-        a dense round of casts stays a comb rather than a solid bar.
+        The old tick stroked at `Math.round(x) + 0.5` with `lineWidth: 1`,
+        which is the right half-pixel trick for a one-pixel stroke and the
+        wrong one for anything wider: at two pixels the same offset paints a
+        blurred three-pixel band.  `fillRect` has no such rule.
       */
-      const tick = (ms: number, colour: string, top: number, head?: Head) => {
-        if (!inRound(ms)) {
-          return;
-        }
-        const x = Math.round(at(ms)) + 0.5;
-        context.strokeStyle = colour;
-        context.lineWidth = 1;
-        context.beginPath();
-        context.moveTo(x, top + (head === undefined ? 0 : HEAD));
-        context.lineTo(x, RAIL_Y);
-        context.stroke();
-        if (head === undefined) {
-          return;
-        }
+      const mark = (
+        ms: number,
+        colour: string,
+        top: number,
+        markHeight: number,
+        markWidth: number,
+      ) => {
         context.fillStyle = colour;
-        context.beginPath();
-        if (head === "triangle") {
-          context.moveTo(x - HEAD, top);
-          context.lineTo(x + HEAD, top);
-          context.lineTo(x, top + HEAD);
-        } else if (head === "diamond") {
-          context.moveTo(x, top);
-          context.lineTo(x + HEAD, top + HEAD);
-          context.lineTo(x, top + HEAD * 2);
-          context.lineTo(x - HEAD, top + HEAD);
-        } else {
-          context.rect(x - HEAD, top, HEAD * 2, HEAD * 2);
-        }
-        context.closePath();
-        context.fill();
+        context.fillRect(
+          Math.round(at(ms)) - Math.floor(markWidth / 2),
+          top,
+          markWidth,
+          markHeight,
+        );
       };
 
       // Densest first and rarest last, so a spike that lands on the same
       // millisecond as a cast is the one still visible.
-      if (layers.casts) {
-        for (const cast of replay.ability_casts) {
-          tick(cast.t_ms, colours.faint!, 12);
+      for (const event of shown) {
+        if (event.kind === "ability") {
+          const box = lane(event.side, CAST_LEN);
+          mark(event.tMs, sideColour(colours, event.side ?? ""), box.top, box.height, 1);
         }
       }
-      if (layers.kills) {
-        for (const kill of replay.kills) {
-          tick(kill.t_ms, colours.text!, 4, "triangle");
+      for (const event of shown) {
+        if (event.kind === "ultimate") {
+          const box = lane(event.side, ULT_LEN);
+          mark(
+            event.tMs,
+            sideColour(colours, event.side ?? ""),
+            box.top,
+            box.height,
+            MARK_W,
+          );
         }
       }
-      if (layers.ultimates) {
-        for (const ult of replay.ultimates) {
-          tick(ult.t_ms, colours.ult!, 0, "diamond");
-        }
-      }
-      if (layers.spike) {
-        for (const event of replay.spike) {
+      for (const event of shown) {
+        if (event.kind === "spike") {
           /*
-            Coloured by what happened, not by a side.  These ticks were drawn
-            in `--team-b` -- the defender colour -- and a spike event carries
-            no actor id at all, which is exactly the attribution
-            `RoundTimeline` states in words must never be made.  The three
-            spike colours already existed in the palette and nothing was using
-            them.
+            Full height, and coloured by what happened rather than by a side.
+            These marks were once drawn in `--team-b` -- the defender's colour
+            -- and a spike event carries no actor id at all, which is exactly
+            the attribution `roundevents` states in words must never be made.
           */
-          tick(event.t_ms, spikeColour(colours, event.kind), 0, "square");
+          mark(
+            event.tMs,
+            spikeColour(colours, event.spikeKind ?? "planted"),
+            0,
+            RAIL_HEIGHT,
+            MARK_W,
+          );
         }
       }
 
       const playhead = Math.max(0, Math.min(width, at(usePlayback.getState().tMs)));
       context.fillStyle = colours.a!;
-      context.fillRect(0, RAIL_Y, playhead, 2);
+      context.fillRect(0, RAIL_Y, playhead, RAIL_W);
       context.beginPath();
-      context.arc(playhead, RAIL_Y + 1, 5, 0, Math.PI * 2);
+      // Four and not five: the knob sits on a centre line with a lane either
+      // side of it now, and every pixel of its radius is a pixel of somebody
+      // else's mark that it covers as it passes.
+      context.arc(playhead, RAIL_Y + RAIL_W / 2, 4, 0, Math.PI * 2);
       context.fillStyle = colours.text!;
       context.fill();
     },
-    [fromMs, replay, spanMs],
+    [fromMs, shown, spanMs],
   );
 
   useEffect(() => {
@@ -482,24 +586,136 @@ function Rail({
     return () => cancelAnimationFrame(frame);
   }, [draw]);
 
-  const scrub = (event: React.MouseEvent<HTMLCanvasElement>) => {
+  /*
+    The kills, memoised as one element.
+
+    `Transport` subscribes to the playhead, so this component re-renders sixty
+    times a second while playing.  A stable element identity is what lets React
+    skip the whole subtree on a frame that changed nothing about it.
+  */
+  const skulls = useMemo(
+    () => (
+      <div className="rail-kills">
+        {shown
+          .filter((event) => event.kind === "kill")
+          .map((event) => (
+            <span
+              key={event.key}
+              className={
+                event.side ? `rail-skull side-${event.side.toLowerCase()}` : "rail-skull"
+              }
+              style={{ left: `${pctOf(event.tMs)}%`, top: SKULL_TOP }}
+            >
+              <Icon glyph={glyphs.kills} />
+            </span>
+          ))}
+      </div>
+    ),
+    [pctOf, shown],
+  );
+
+  const scrub = (event: React.MouseEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const fraction = (event.clientX - rect.left) / rect.width;
     seek(clock, fromMs + fraction * spanMs);
   };
 
+  /*
+    What the pointer is over: the **nearest** mark, and then everything within
+    `HIT_PX` of *that mark*, rather than everything within `HIT_PX` of the
+    cursor.
+
+    The difference matters twice.  A cursor-centred window changes membership
+    on every pixel of a sweep, so a dense flurry reshuffles its own tooltip as
+    the pointer crosses it; and it has no anchor, so there is nothing to pin
+    the tooltip to but the cursor.  A mark-centred one holds still while the
+    pointer stays nearest the same mark, which is what "the events at this
+    moment" means.
+  */
+  const hover = (event: React.MouseEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || spanMs <= 0) {
+      setHit(null);
+      return;
+    }
+    // The unrounded position and the measured box, so a hit agrees with where
+    // a skull was placed rather than with where a tick was rounded to.
+    const at = (ms: number) => ((ms - fromMs) / spanMs) * rect.width;
+    const x = event.clientX - rect.left;
+    let nearest: RoundEvent | null = null;
+    let best = Infinity;
+    for (const candidate of shown) {
+      const distance = Math.abs(at(candidate.tMs) - x);
+      if (distance < best) {
+        best = distance;
+        nearest = candidate;
+      }
+    }
+    if (nearest === null || best > HIT_PX) {
+      setHit(null);
+      return;
+    }
+    const anchor = at(nearest.tMs);
+    const events = shown.filter(
+      (candidate) => Math.abs(at(candidate.tMs) - anchor) <= HIT_PX,
+    );
+    const left = Math.max(TIP_W / 2, Math.min(rect.width - TIP_W / 2, anchor));
+    setHit((previous) => {
+      // Only where the set actually changed: a mousemove is a render otherwise.
+      const same =
+        previous !== null &&
+        previous.left === left &&
+        previous.events.length === events.length &&
+        previous.events.every((row, index) => row.key === events[index]!.key);
+      return same ? previous : { left, events };
+    });
+  };
+
   return (
-    <canvas
-      ref={canvasRef}
-      className="strip"
-      style={{ height: RAIL_HEIGHT }}
-      onMouseDown={scrub}
+    <div
+      className="rail"
+      onMouseDown={(event) => {
+        /*
+          Cleared on the way into a scrub as well as on the way out of the rail.
+
+          `.scrim` sits below `--z-tooltip`, so a tooltip left standing would
+          paint over an open dialog; and `e2e/harness.ts` parks the pointer
+          before every screenshot precisely because a live tooltip is thousands
+          of pixels of legitimate difference.
+        */
+        setHit(null);
+        scrub(event);
+      }}
       onMouseMove={(event) => {
         if (event.buttons === 1) {
+          setHit(null);
           scrub(event);
+          return;
         }
+        hover(event);
       }}
-    />
+      onMouseLeave={() => setHit(null)}
+    >
+      <canvas ref={canvasRef} className="strip" style={{ height: RAIL_HEIGHT }} />
+      {skulls}
+      {hit !== null ? (
+        <div className="rail-tip" style={{ left: hit.left, transform: "translateX(-50%)" }}>
+          {hit.events.map((event) => (
+            <div className="ev-row" key={event.key}>
+              {/* Time **remaining**, the same as every other clock here: a
+                  Valorant round counts down, and elapsed-into-the-round is a
+                  number nobody in the match could have read off their screen. */}
+              <span className="ev-time numeric">
+                {round === null
+                  ? clockText(event.tMs)
+                  : clockText(remainingMs(round, event.tMs))}
+              </span>
+              <span className="ev-body">{event.body}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

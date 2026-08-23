@@ -48,6 +48,7 @@ MODEL_MODULES = (
     "sight",
     "state",
     "theme",
+    "walls",
 )
 
 # `vrfnet` is the build table and its bit reader, and nothing else -- the net

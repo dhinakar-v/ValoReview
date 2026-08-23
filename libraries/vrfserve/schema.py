@@ -65,6 +65,19 @@ class PrewarmDoc(BaseModel):
     label: str
 
 
+class CardAgentDoc(BaseModel):
+    name: str
+    icon_url: str | None
+
+
+class CardTeamDoc(BaseModel):
+    agents: list[CardAgentDoc]
+    # `None` where nothing has established which of the two halves `infer`
+    # called A, which is every capture that has not been decoded.  See
+    # `vrfhome.teamorder`.
+    rounds_won: int | None
+
+
 class CardDoc(BaseModel):
     id: str
     file_name: str
@@ -83,7 +96,13 @@ class CardDoc(BaseModel):
     error: str
     readable: bool
     playable: bool
+    # Why, when `playable` is false.  See wire.card.
+    positions_note: str
     prewarm: PrewarmDoc | None
+    # The two teams, read off the loadout roster's own order -- `None` where
+    # that split was refused or there is no art to draw it with.
+    teams: list[CardTeamDoc] | None
+    rounds_undecided: int
 
 
 class LibraryDoc(BaseModel):
@@ -158,11 +177,7 @@ class MapDoc(BaseModel):
 
 class SightDoc(BaseModel):
     """
-    One map's playable silhouette, thresholded in Python, plus its caption.
-
-    The caption is not decoration and is not optional: a cone drawn from this
-    is the radar's own silhouette and not a line of sight, and travelling the
-    sentence with the cells is what stops a client drawing one without it.
+    One map's playable silhouette, thresholded in Python.
 
     `cells` is base64 of one byte per cell, row-major, 1 open and 0 blocked --
     `sight.SightMap.cells` unchanged, so the browser's `blocked` is a literal
@@ -174,7 +189,6 @@ class SightDoc(BaseModel):
     size: int
     cells: str
     open_fraction: float
-    caption: str
     max_range_uu: float
     fov_degrees: float
     ray_step_degrees: float
@@ -343,6 +357,16 @@ class AbilityCastDoc(BaseModel):
     # browser draws it dashed under a layer labelled `RANGE (SIM)`.
     range_uu: float | None = None
     range_source: str | None = None
+    # A round smoke, looked up in `vrfview.abilityfacts` on (codename, slot).
+    # Null for everything that is not one, which is most casts: a molly and a
+    # flash have a radius and do not block sight, and a wall blocks sight and
+    # is not a circle.  The browser stops a sight ray inside this radius while
+    # the cast is younger than this duration -- so it is *simulated* in exactly
+    # the way `range_uu` is: a looked-up radius and a looked-up lifetime, and
+    # `abilityfacts` carries a source string for each.
+    smoke_radius_uu: float | None = None
+    smoke_duration_ms: int | None = None
+    smoke_source: str | None = None
     # Every non-moving actor this cast spawned, at the coordinate its channel
     # opened at.
     placements: list[PlacementDoc]

@@ -215,9 +215,7 @@ def read(path: str | Path) -> Sidecar:
             for raw_id, entry in (doc.get("ability_spawns") or {}).items()
         },
         ability_tracks=ability_tracks,
-        plants=[
-            _plant(src, entry) for entry in (doc.get("spike_plants") or [])
-        ],
+        plants=[_plant(src, entry) for entry in (doc.get("spike_plants") or [])],
     )
 
 

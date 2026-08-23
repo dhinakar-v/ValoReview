@@ -57,10 +57,20 @@ export type LayerKey = keyof Layers;
 
 export const DEFAULT_LAYERS: Layers = {
   utility: true,
-  // Off by default and asked for deliberately: the claim is weak enough -- a
-  // radar silhouette, not collision -- that it should be a choice, and ten
-  // overlapping wedges say nothing anyway.
-  sight: false,
+  /*
+    On by default, and for everybody in both views.
+
+    An earlier decision had this off and drawing one wedge for a selected
+    player, arguing that ten overlapping wedges say nothing. They say the one
+    thing this layer is for -- which parts of the map nobody can see -- and one
+    wedge cannot. The overlap is now what carries the answer rather than what
+    spoils it: `sightlayer` gives each cone `1/N` of its side's ink and stacks
+    coverage additively, so k cones over a point read as exactly `k/N`.
+
+    `MapStage` follows `hasMask` when it mounts, so a map with no radar on
+    disk does not come up with a lit switch that draws nothing.
+  */
+  sight: true,
   // A new feature rather than a port: the desktop minimap drew trails for
   // ability pawns only.
   trails: false,

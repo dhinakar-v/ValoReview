@@ -319,8 +319,8 @@ def _spawns() -> list[abilities.AbilitySpawn]:
         (
             910,
             (
-                "/Game/Characters/Wraith/S0/Ability_Q/Ability_Wraith_Q_Smoke"
-                ".Default__Ability_Wraith_Q_Smoke_C"
+                "/Game/Characters/Wraith/S0/Ability_4/Ability_Wraith_4_Smoke"
+                ".Default__Ability_Wraith_4_Smoke_C"
             ),
             52_000,
             (100.0, 100.0, 30.0),
@@ -328,8 +328,8 @@ def _spawns() -> list[abilities.AbilitySpawn]:
         (
             911,
             (
-                "/Game/Characters/Wraith/S0/Ability_Q/GameObject_Wraith_Q_Smoke"
-                ".Default__GameObject_Wraith_Q_Smoke_C"
+                "/Game/Characters/Wraith/S0/Ability_4/GameObject_Wraith_4_Smoke"
+                ".Default__GameObject_Wraith_4_Smoke_C"
             ),
             52_100,
             (4200.0, -1800.0, 45.0),
@@ -695,6 +695,50 @@ def cone_fixture() -> dict:
         (0.0, 0.0, 359.5, "just short of a full turn"),
     ]
 
+    # Smokes, in uv, for the occluded cones below.  Deliberately clear of the
+    # wall column so that what stops a ray is unambiguous: if a case could be
+    # explained by the mask it proves nothing about the circle test.
+    smoke = sight.Occluder(u=0.35, v=0.75, radius=0.08)
+    behind = sight.Occluder(u=0.10, v=0.75, radius=0.05)
+
+    smoked = [
+        (
+            (0.05, 0.75),
+            (1.0, 0.0),
+            0.4,
+            (smoke,),
+            "east into a smoke standing well clear of the wall",
+        ),
+        (
+            (0.05, 0.75),
+            (1.0, 0.0),
+            0.4,
+            (),
+            "the same cone with no smoke, which must reach further",
+        ),
+        (
+            (0.35, 0.75),
+            (-1.0, 0.0),
+            0.3,
+            (smoke,),
+            "west from inside the smoke: the seed carries the first steps out",
+        ),
+        (
+            (0.05, 0.75),
+            (1.0, 0.0),
+            0.4,
+            (behind,),
+            "a smoke behind the origin, which stops nothing",
+        ),
+        (
+            (0.05, 0.75),
+            (1.0, 0.0),
+            0.4,
+            (behind, smoke),
+            "two smokes, of which only the far one is in the way",
+        ),
+    ]
+
     cones = [
         ((0.25, 4.5 * cell), (1.0, 0.0), 0.9, "east through the doorway"),
         ((0.25, 0.75), (1.0, 0.0), 0.9, "east into the wall"),
@@ -706,7 +750,6 @@ def cone_fixture() -> dict:
 
     return {
         "_": HEADER,
-        "caption": sight.CAPTION,
         "grid": sight.GRID,
         "alpha_floor": sight.ALPHA_FLOOR,
         "fov_degrees": sight.FOV_DEGREES,
@@ -758,6 +801,33 @@ def cone_fixture() -> dict:
                 "polygon": [list(p) for p in sight.cone(mask, origin, forward, radius)],
             }
             for origin, forward, radius, why in cones
+        ],
+        # The same shape again with round smokes standing in the way.  Kept as
+        # its own key rather than a field on every entry above, so the six
+        # cases that predate occluders stay byte-identical and go on proving
+        # that the default path did not move.
+        "smoke_cones": [
+            {
+                "origin": list(origin),
+                "forward": list(forward),
+                "radius": radius,
+                "why": why,
+                "occluders": [
+                    {"u": o.u, "v": o.v, "radius": o.radius} for o in occluders
+                ],
+                "rays": [list(r) for r in sight.ray_directions(forward)],
+                "polygon": [
+                    list(p)
+                    for p in sight.cone(
+                        mask,
+                        origin,
+                        forward,
+                        radius,
+                        occluders=occluders,
+                    )
+                ],
+            }
+            for origin, forward, radius, occluders, why in smoked
         ],
     }
 

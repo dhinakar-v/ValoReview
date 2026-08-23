@@ -39,10 +39,8 @@
 import type { LayerKey } from "./playback";
 import { usePlayback } from "./playback";
 import { CheckRow, Menu } from "./ui";
+import type { Glyph } from "./icons";
 import { glyphs } from "./icons";
-import type { ComponentType, SVGProps } from "react";
-
-type Glyph = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
 
 interface Entry {
   key: LayerKey;
@@ -52,12 +50,15 @@ interface Entry {
   /**
    * Tints the row to match the mark it controls.
    *
-   * The rail is a 24px canvas, so it cannot carry a legend of its own and a
-   * tick cannot carry a `title`.  This menu already lists the four event kinds
-   * with a glyph and a sentence each, so it *is* the legend -- provided the
-   * colours agree with what the rail draws.
+   * This menu used to be the rail's whole legend, on the grounds that a 24px
+   * canvas can carry neither a key nor a `title` -- with the standing proviso
+   * that the colours agree with what the rail draws, which nothing could
+   * check.  The rail answers for itself now, by hover, and three of the four
+   * marks are drawn in the *side's* colour, so a swatch would name a colour
+   * they do not have.  Only the spike keeps one, because the plant really is
+   * this colour; its hint carries the other two.
    */
-  tone?: "kill" | "cast" | "ult" | "spike";
+  tone?: "spike";
   /**
    * Which canvases actually read this layer.
    *
@@ -123,11 +124,11 @@ export const MAP_LAYERS: Entry[] = [
     key: "sight",
     label: "SIGHT",
     icon: glyphs.sight,
-    hint: "The selected player's approximate view cone",
+    hint: "Every living player's approximate view cone",
     drawnIn: ["2d", "3d"],
-    // The mask, and only the mask: `Scene3D` draws the wedge too, so this is
-    // not a 2D-only layer.  The caption's "2D only" is about the
-    // approximation being flat, not about which view you are in.
+    // The mask, and only the mask.  Both canvases draw the same cones from the
+    // same `sightlayer` functions now, so there is no view in which this row is
+    // inert -- only a map with no radar on disk to raycast against.
     why: ({ hasMask }) =>
       hasMask ? null : "No radar mask on disk for this map, and SIGHT raycasts one.",
   },
@@ -148,31 +149,28 @@ export const EVENT_LAYERS: Entry[] = [
     key: "kills",
     label: "KILLS",
     icon: glyphs.kills,
-    hint: "A triangle per kill",
+    hint: "A skull on the rail per kill, in the killer's colour",
     drawnIn: [],
-    tone: "kill",
   },
   {
     key: "casts",
     label: "ABILITY CASTS",
     icon: glyphs.casts,
-    hint: "A bare stem per inferred ability cast",
+    hint: "A tick per inferred cast: above the rail for ATK, below for DEF",
     drawnIn: [],
-    tone: "cast",
   },
   {
     key: "ultimates",
     label: "ULTIMATES",
     icon: glyphs.ultimates,
-    hint: "A diamond per characterUltimateUsed event",
+    hint: "A taller tick in the same lane, per characterUltimateUsed event",
     drawnIn: [],
-    tone: "ult",
   },
   {
     key: "spike",
     label: "SPIKE",
     icon: glyphs.spike,
-    hint: "A square per plant, defuse and detonation",
+    hint: "A full-height line: gold to plant, green to defuse, orange to detonate",
     drawnIn: [],
     tone: "spike",
   },

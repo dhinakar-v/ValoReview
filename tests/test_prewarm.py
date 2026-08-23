@@ -24,14 +24,24 @@ TIMEOUT = 10.0
 
 @dataclass(frozen=True)
 class FakeCard:
-    """Only the two attributes `Prewarmer` reads off a scan card."""
+    """
+    Only the attributes `Prewarmer` reads off a scan card.
+
+    It was two -- `path` and `playable` -- until a finished decode gained a
+    second job: recording which half of the loadout roster `infer` called team
+    A, so the match list can put a scoreline beside the right five agents.
+    That needs the split the scanner read (`agent_ids`) and the key it is
+    stored under (`match_id`), and nothing else.
+    """
 
     path: Path
     playable: bool = True
+    match_id: str = ""
+    agent_ids: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
 
 
 def cards(*names, playable=True):
-    return [FakeCard(Path(f"{n}.vrf"), playable) for n in names]
+    return [FakeCard(Path(f"{n}.vrf"), playable, n) for n in names]
 
 
 class Harness:

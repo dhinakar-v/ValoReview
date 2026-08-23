@@ -1,0 +1,15 @@
+# Code owners for ValoReview.
+#
+# One line, and deliberately so: this repository has a single contributor, so
+# per-directory rules would name the same person ten times and drift the first
+# time a path moved. Split this up when there is a second owner to name.
+#
+# What this file buys today is automatic review requests on every pull request
+# into a protected branch, which is a reminder rather than a gate.
+#
+# It is NOT safe to pair with "Require review from Code Owners" in branch
+# protection while the owner is one person: GitHub does not let you approve
+# your own pull request, so requiring an owner's review on a solo repository
+# leaves no path to merge. Turn that setting on when a second owner exists.
+
+* @dhinakar-v

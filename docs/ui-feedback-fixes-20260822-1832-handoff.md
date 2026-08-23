@@ -117,6 +117,14 @@ rejected — `DEFAULT_LAYERS` already argues ten overlapping wedges say nothing,
 raycasts in the side colour would put thousands of near-team-coloured pixels against
 `minimap.spec.ts`'s 200-pixel budget. A caption now says a player must be selected.
 
+> **Reversed later.** The layer is now on by default and draws a wedge per living player, and the
+> caption above was deleted with the behaviour it explained. The first objection was answered by
+> ink rather than by count — unpicked cones fill at 0.09 against the picked 0.22 — and the second
+> by the observation that the 200-pixel budget is a test about *markers*: `minimap.spec.ts` now
+> sets SIGHT off for that spec and checks the cones in its own, against every cone rotated about
+> its own player. That also needed a `setLayer` helper, because `toggleLayer` is a flip and every
+> caller meant "on", so three specs would have silently photographed a switched-*off* layer.
+
 ---
 
 ## What did not work

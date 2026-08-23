@@ -69,6 +69,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="serve no pictures; every claim the interface makes is unchanged",
     )
     parser.add_argument(
+        "--web-dir",
+        default=None,
+        help="the built browser interface (default web/dist)",
+    )
+    parser.add_argument(
         "--parser-exe",
         default=None,
         help="the built position decoder, overriding VRF_PARSER_EXE",
@@ -104,13 +109,20 @@ def build_settings(args: argparse.Namespace) -> Settings:
         art = art_mod.load(Path(args.assets))
     else:
         art = art_mod.load()
-    return Settings(
+    settings = Settings(
         demo_path=args.demo_path,
         art=art,
         use_cache=not args.no_cache,
         parser_exe=args.parser_exe,
         prewarm=not args.no_prewarm,
     )
+    # web/dist is right for a checkout and wrong everywhere else: the default
+    # is relative to the working directory, and a packaged copy is started
+    # from wherever its host happens to be. Left alone unless asked, so the
+    # dataclass keeps stating the default in one place.
+    if args.web_dir:
+        settings.web_dir = Path(args.web_dir).expanduser()
+    return settings
 
 
 def print_routes(app) -> None:

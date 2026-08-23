@@ -1,5 +1,5 @@
 """
-The two measurements that decided what a decoded coordinate may be used for.
+The measurements that decided what a decoded coordinate may be used for.
 
 Neither is a unit test.  Both march a whole reference capture through the C#
 decoder and check a fact about the world that no decoding bug could invent,
@@ -12,6 +12,11 @@ decoded from the first and rendered by nothing because no source says whether
 350 degrees is up or down.  `SpawnLocationsAreRealCoordinates` settled that
 `Decoded.spawn_locations` holds coordinates at all, which is what let an
 ability have a place on the map.
+
+`WhatTheDrawnLinesCost` is the odd one out: it measures the *art* rather than
+the decode, using the decode as its instrument.  It is here because it is the
+same kind of evidence -- a fact about the world that no bug on either side
+could invent -- and because it needs the same reference library to run at all.
 
 These used to live in `tests/test_movement.py` beside the unit tests for the
 pure-Python movement bitstream.  That decoder is gone -- the C# one replaced it
@@ -30,6 +35,7 @@ from typing import ClassVar
 import pytest
 
 DEMO_12_10 = Path("Demos/03fcbb4a-0064-4e4d-a209-091cb73ee5b8.vrf")
+ASSETS = Path("assets")
 
 
 # How near a player pawn's own first movement sample its spawn location has to
@@ -62,8 +68,105 @@ WEAPON_RANGE_UU = 5000.0
 # `Track.at` refuses to interpolate across a long gap: at a few plants the
 # planter has no sample at all and the nearest other player is a room away,
 # which is a fact about the 10 Hz thinning rather than about the coordinate.
+# The share of a derived build's kills that must land inside weapon range,
+# where the reference capture is held to a maximum instead.  13.04's transform
+# was recovered rather than ported, so this is the check that stands between it
+# and the registry -- and it is a share because one of the 200 kill pairs in the
+# first 13.04 capture spans 5,125 uu, 2.5% past a bound the reference capture
+# never reaches, which a 10 Hz track and a long-range weapon can produce and a
+# wrong transform cannot: a wrong transform places nobody near anybody.
+DERIVED_BUILD = "++Ares-Core+release-13.04"
+DERIVED_WEAPON_RANGE_SHARE = 0.95
+
 PLANT_NEAR_PLAYER_UU = 100.0
 PLANT_NEAR_PLAYER_SHARE = 0.85
+
+# How far from the caster a placement has to be before it is the thing the
+# ability left standing rather than the spot the caster stood on.  Measured
+# over the 21 playable captures as the distance to the caster's own decoded
+# position at that instant: GameObject 2,005 uu, Zone 3,533, Patch 2,017,
+# against Ability 259 and Projectile 42 -- two populations an order of
+# magnitude apart, so this sits in the gap rather than near either.
+LEFT_STANDING_UU = 500.0
+THROWN_FROM_UU = 300.0
+
+# How often the placement `landed` chooses lands inside the radar's playable
+# silhouette.  A real coordinate does; one drawn at random lands inside about a
+# third of the time.  Measured library-wide at 98.6%.
+LANDED_INSIDE_SHARE = 0.95
+
+# How many kill sightlines the radar silhouette is allowed to close.  Two
+# people in a gunfight can see each other, so a mask that says otherwise is
+# wrong about that kill -- and across the library the alpha silhouette is wrong
+# about 1.05% of them, which is as good as a 2D approximation with no height
+# data gets.  The bound is where it is so that a change to `ALPHA_FLOOR`, to
+# the downsample or to the transform has somewhere to fail.
+SILHOUETTE_FALSE_BLOCK = 0.03
+
+# And how many the drawn lines close on top of that: 38.17% of the same
+# sightlines, or thirty-six times the silhouette's rate.  The lines *are* the
+# shipped occluder -- a cone that stops at interior structure was asked for --
+# so this is pinned as a band rather than a ceiling.  A floor, because the
+# number is evidence about what Riot's lines are and stops being evidence if it
+# quietly improves; a ceiling, because a change to `walls.py` that took even
+# more of the map would make sight worse still and nothing else would say so.
+# See `vrfview/walls.py` for the whole table.
+LINES_FALSE_BLOCK_FLOOR = 0.20
+LINES_FALSE_BLOCK_CEILING = 0.55
+
+
+def _captures_on(build: str) -> list:
+    """
+    Every capture in `Demos/` on one build, by the branch in its plain chunks.
+
+    By build rather than by filename, unlike the reference capture above: a
+    replay GUID names a real match with real players in it, and a check about a
+    *build* has no reason to carry one into the repository.  Reading the branch
+    costs one header chunk and no decompression.
+    """
+    from vrf_reader import VrfFile
+
+    return [
+        path
+        for path in sorted(Path("Demos").glob("*.vrf"))
+        if VrfFile(path).demo.build == build
+    ]
+
+
+def _kill_geometry(replay) -> tuple[list, list]:
+    """How far apart each killer and victim were, and how wrong the pitch was."""
+    separations = []
+    pitch_errors = []
+    for kill in replay.kills:
+        if kill.is_suicide:
+            continue
+        killer = replay.track(kill.killer)
+        victim = replay.track(kill.victim)
+        if killer is None or victim is None:
+            continue
+        here = killer.at(kill.t_ms)
+        there = victim.at(kill.t_ms)
+        if here is None or there is None:
+            continue
+        flat = math.hypot(there.x - here.x, there.y - here.y)
+        separations.append(flat)
+        if flat < POINT_BLANK_UU:
+            continue
+        truth = math.degrees(math.atan2(there.z - here.z, flat))
+        pitch_errors.append(abs(_signed(_signed(here.pitch) - truth)))
+    return separations, pitch_errors
+
+
+def _spawn_gaps(decoded) -> list:
+    """How far each actor's spawn location sits from its own first sample."""
+    return [
+        math.dist(
+            decoded.spawn_locations[actor],
+            (samples[0].x, samples[0].y, samples[0].z),
+        )
+        for actor, samples in decoded.samples.items()
+        if samples and actor in decoded.spawn_locations
+    ]
 
 
 def infer_with_positions():
@@ -283,6 +386,7 @@ class SpawnLocationsAreRealCoordinates(unittest.TestCase):
         )
 
 
+@pytest.mark.skipif(not DEMO_12_10.exists(), reason="needs the 12.10 capture")
 class SpikePlantsAreRealCoordinates(unittest.TestCase):
     """
     The check that let the spike have a place on the map for the first time.
@@ -322,6 +426,12 @@ class SpikePlantsAreRealCoordinates(unittest.TestCase):
     def setUpClass(cls):
         from vrfview import csharpdecode, infer, loader
 
+        # The decoder is checked for before it is run, and the capture is
+        # checked for by the decorator above.  Without that decorator this
+        # class was the one in the file with no `.vrf` gate, so on a machine
+        # with a built decoder and no reference capture it *errored* where
+        # every sibling skipped -- three red entries that say nothing about
+        # the code, in the suite whose whole job is being believable.
         try:
             csharpdecode.locate(None)
         except csharpdecode.DecodeError as exc:
@@ -395,3 +505,482 @@ class SpikePlantsAreRealCoordinates(unittest.TestCase):
             f"only {share:.0%} of plants are within {PLANT_NEAR_PLAYER_UU:.0f} uu "
             f"of any player's own position at that instant"
         )
+
+
+@pytest.mark.skipif(not DEMO_12_10.exists(), reason="needs the 12.10 capture")
+@pytest.mark.skipif(not ASSETS.is_dir(), reason="needs the art cache")
+class WhatTheDrawnLinesCost(unittest.TestCase):
+    """
+    What the drawn walls cost the sight layer, kept where it can be re-run.
+
+    Riot draws walls on every radar, `vrfview.walls` reads them back cleanly,
+    and `sight.SightMap.from_image` folds them into the occluder so a cone
+    stops at the interior walls the alpha silhouette misses.  That is the
+    picture that was wanted.  It is also, by the only measure available here,
+    less accurate than the silhouette alone, and this is where that stays
+    written down in a form that runs.
+
+    The instrument is the one this file already uses: **at every
+    `characterDeath` the killer could see the victim**, so a mask that closes
+    the line between them is wrong about that kill.  It cannot say when a mask
+    is too *permissive*, and that asymmetry is the whole reason the result is
+    stated as a comparison rather than as a score.
+
+    Over 3,128 kills the silhouette closes 1.05% and the silhouette plus the
+    lines closes 38.17%, and every attempt to rescue that failed for a reason
+    worth knowing: a finer grid does not help (31.27% at full 1024 resolution,
+    so it is not the mask being too thick), dropping the lines along the map
+    rim does not help (37.15%, so it is not the silhouette's own outline), and
+    keeping only lines at least three pixels wide scores 4.60% by discarding
+    91% of them.
+
+    What the numbers say is that **the silhouette already is the wall model**:
+    a wall you cannot see through is drawn as a hole in the radar, and the
+    lines on top of the floor are the readable detail -- doorframes, crates,
+    ledges, stair treads -- that a quarter of all kills happen through or over.
+
+    Both rates are asserted, and the second from both sides.  A check that only
+    said "the silhouette is good" would pass just as happily on the day the
+    lines started closing three-quarters of the map.
+    """
+
+    rows: ClassVar[list] = []
+    seed: ClassVar[int] = 0
+
+    @classmethod
+    def setUpClass(cls):
+        from PIL import Image
+
+        from vrfview import art, pipeline, sight, tracks, walls
+
+        cls.seed = sight.SEED_CELLS
+
+        cache = art.load(ASSETS)
+        if cache.empty:
+            raise unittest.SkipTest(cache.reason)
+
+        replay = pipeline.open_replay(DEMO_12_10)
+        tracks.attach(replay, DEMO_12_10)
+        if not replay.has_positions:
+            raise unittest.SkipTest(replay.position_source)
+        entry = cache.map_art(replay.map_path)
+        if entry is None or entry.minimap is None or not entry.transform.usable:
+            raise unittest.SkipTest("no usable radar for this capture's map")
+
+        with Image.open(entry.minimap) as source:
+            rgba = source.convert("RGBA")
+            alpha = rgba.resize((sight.GRID, sight.GRID)).getchannel("A").tobytes()
+            ink = walls.wall_cells(rgba, sight.GRID, alpha_floor=sight.ALPHA_FLOOR)
+
+        open_cells = [1 if a >= sight.ALPHA_FLOOR else 0 for a in alpha]
+        cls.silhouette = sight.SightMap(
+            size=sight.GRID,
+            cells=bytes(open_cells),
+        )
+        cls.inked = sight.SightMap(
+            size=sight.GRID,
+            cells=bytes(0 if w else o for o, w in zip(open_cells, ink, strict=True)),
+        )
+
+        cls.rows = []
+        for kill in replay.kills:
+            if kill.is_suicide:
+                continue
+            killer = replay.track(kill.killer)
+            victim = replay.track(kill.victim)
+            if killer is None or victim is None:
+                continue
+            here = killer.at(kill.t_ms)
+            there = victim.at(kill.t_ms)
+            if here is None or there is None:
+                continue
+            cls.rows.append(
+                (
+                    entry.transform.apply(here.x, here.y),
+                    entry.transform.apply(there.x, there.y),
+                ),
+            )
+
+    @classmethod
+    def _closes(cls, mask, start, end):
+        """
+        Whether the mask blocks the straight line between two players.
+
+        Both ends skip `sight.SEED_CELLS`, and not for symmetry: a player
+        standing against a wall or in a doorway sits on a blocked cell often
+        enough that refusing there would count the *victim's* own cover as an
+        obstruction, which is the same reason `sight._march` seeds.
+        """
+        cell = 1.0 / mask.size
+        du = end[0] - start[0]
+        dv = end[1] - start[1]
+        length = math.hypot(du, dv)
+        steps = int(length / cell)
+        seed = cls.seed
+        if steps <= 2 * seed:
+            return False
+        for step in range(seed + 1, steps - seed):
+            along = (step * cell) / length
+            if mask.blocked(start[0] + du * along, start[1] + dv * along):
+                return True
+        return False
+
+    def _rate(self, mask):
+        closed = sum(1 for start, end in self.rows if self._closes(mask, start, end))
+        return closed / len(self.rows)
+
+    def test_there_are_enough_kills_to_measure_anything(self):
+        assert len(self.rows) > 50
+
+    def test_the_silhouette_lets_a_killer_see_their_victim(self):
+        """The check that the sight layer as it ships is worth drawing."""
+        rate = self._rate(self.silhouette)
+        assert rate <= SILHOUETTE_FALSE_BLOCK, f"the silhouette closes {rate:.1%}"
+
+    def test_the_drawn_lines_cost_what_they_are_recorded_as_costing(self):
+        """
+        A band, and the floor half is the unusual one.
+
+        The ceiling is ordinary: a `walls.py` change that took more of the map
+        would make every cone shorter and nothing else in the suite would
+        notice.  The floor is there because this number is *evidence* about
+        what Riot's lines are -- that they mark what you can see past rather
+        than what stops a bullet -- and a silent improvement would mean the
+        measurement had stopped measuring, not that the lines had changed.
+        """
+        rate = self._rate(self.inked)
+        assert LINES_FALSE_BLOCK_FLOOR <= rate <= LINES_FALSE_BLOCK_CEILING, (
+            f"the drawn lines close {rate:.1%} of real kill sightlines, outside "
+            f"the recorded {LINES_FALSE_BLOCK_FLOOR:.0%}..{LINES_FALSE_BLOCK_CEILING:.0%}; "
+            "re-measure vrfview/walls.py rather than moving this bound"
+        )
+
+    def test_the_lines_are_far_worse_than_the_silhouette_they_are_added_to(self):
+        """The comparison is the finding; either rate alone is just a number."""
+        assert self._rate(self.inked) > 5 * self._rate(self.silhouette)
+
+
+@pytest.mark.skipif(not DEMO_12_10.exists(), reason="needs the 12.10 capture")
+@pytest.mark.skipif(not ASSETS.is_dir(), reason="needs the art cache")
+class LandedIsTheThingNotTheThrower(unittest.TestCase):
+    """
+    That `AbilityCast.landed` names where an ability ended up, not where it began.
+
+    `PLACING_KINDS` is a ranking, and a ranking is only as good as the evidence
+    for its order.  The evidence is the same shape as the spawn-location check
+    above: a placement's distance from the caster's own decoded position at
+    that instant separates two populations by an order of magnitude.  The
+    things an ability leaves standing sit thousands of units away -- a
+    `GameObject_` at a median 2,005 uu, a `Zone_` at 3,533, a `Patch_` at 2,017
+    -- and the actors that merely record the decision sit on the caster, an
+    `Ability_` at 259 uu and a `Projectile_` at 42, which is inside their own
+    capsule.
+
+    It was wrong, and quietly.  `Projectile_` was ranked above the placed kinds,
+    so any cast without a `GameObject_` reported the *throw origin* as where it
+    landed.  Omen's smoke is a `Zone_`, which the ranking did not name at all,
+    so all 241 of them in the library were drawn on top of Omen instead of a
+    median 3,061 uu away where the smoke was.  Nothing failed; the smokes were
+    simply somewhere else, which is exactly the plausible wrong answer this
+    file exists to catch.
+
+    The reference capture carries no Omen and no Gekko, so `Zone_` and `Patch_`
+    are checked by the library-wide figures recorded beside `PLACING_KINDS`.
+    What runs here is the rule those figures justify.
+    """
+
+    casts: ClassVar[list] = []
+    gaps: ClassVar[dict] = {}
+
+    @classmethod
+    def setUpClass(cls):
+        from PIL import Image
+
+        from vrfview import abilities, art, pipeline, sight
+
+        cache = art.load(ASSETS)
+        if cache.empty:
+            raise unittest.SkipTest(cache.reason)
+        replay = pipeline.open_replay(DEMO_12_10)
+        if not replay.has_positions or not replay.ability_casts:
+            raise unittest.SkipTest(replay.position_source)
+        entry = cache.map_art(replay.map_path)
+        if entry is None or entry.minimap is None or not entry.transform.usable:
+            raise unittest.SkipTest("no usable radar for this capture's map")
+
+        with Image.open(entry.minimap) as source:
+            rgba = source.convert("RGBA")
+            alpha = rgba.resize((sight.GRID, sight.GRID)).getchannel("A").tobytes()
+        cls.silhouette = sight.SightMap(
+            size=sight.GRID,
+            cells=bytes(1 if a >= sight.ALPHA_FLOOR else 0 for a in alpha),
+        )
+        cls.transform = entry.transform
+        cls.casts = list(replay.ability_casts)
+        cls.placing = abilities.PLACING_KINDS
+
+        attribution = abilities.attribute(replay.players)
+        gaps: dict[str, list[float]] = {}
+        for cast in cls.casts:
+            actor = attribution.by_codename.get(cast.codename)
+            track = replay.track(actor) if actor is not None else None
+            here = track.at(cast.t_ms) if track is not None else None
+            if here is None:
+                continue
+            for place in cast.placements:
+                gaps.setdefault(place.kind, []).append(
+                    math.hypot(place.x - here.x, place.y - here.y),
+                )
+        cls.gaps = gaps
+
+    def test_there_are_enough_casts_to_measure_anything(self):
+        assert len(self.casts) > 50
+
+    def test_a_left_standing_actor_is_nowhere_near_the_caster(self):
+        """The half that says `GameObject_` is worth ranking first."""
+        for kind in ("GameObject", "Zone", "Patch"):
+            seen = self.gaps.get(kind)
+            if not seen:
+                continue
+            median = statistics.median(seen)
+            assert median >= LEFT_STANDING_UU, (
+                f"{kind} placements sit a median {median:.0f} uu from the caster, "
+                "which is the caster's own feet rather than where the ability went"
+            )
+
+    def test_a_throw_origin_is_on_top_of_the_caster(self):
+        """
+        The other half, and the one that makes the ranking an argument.
+
+        If these were also far away the order would be arbitrary.  They are
+        not: a `Projectile_` spawns inside the caster's own capsule.
+        """
+        for kind in ("Projectile", "Ability"):
+            seen = self.gaps.get(kind)
+            if not seen:
+                continue
+            median = statistics.median(seen)
+            assert median <= THROWN_FROM_UU, (
+                f"{kind} placements sit a median {median:.0f} uu from the caster; "
+                "if that is real then PLACING_KINDS is ranked on nothing"
+            )
+
+    def test_a_thing_left_standing_always_outranks_a_throw_origin(self):
+        """
+        The rule itself, on every cast that has both witnesses.
+
+        This is what regressed: `Projectile_` ranked third and `Zone_` not at
+        all, so a cast carrying both reported the throw origin.
+
+        Casts with a pawn are skipped rather than asserted on: `landed` refuses
+        outright where there is a track, because a track always outranks a
+        spawn point and a drone's start is not where the drone is.
+        """
+        standing = {"GameObject", "Zone", "Patch"}
+        for cast in self.casts:
+            if cast.pawns:
+                continue
+            kinds = {p.kind for p in cast.placements}
+            if not (kinds & standing) or not (kinds & {"Projectile", "Ability"}):
+                continue
+            assert cast.landed is not None
+            assert cast.landed.kind in standing, (
+                f"{cast.codename} {cast.slot} landed on a "
+                f"{cast.landed.kind} with {sorted(kinds)} available"
+            )
+
+    def test_the_placement_lands_inside_the_playable_area(self):
+        """
+        Ground truth that no ranking bug could fake.
+
+        A coordinate drawn at random lands inside the silhouette about a third
+        of the time, because 47% to 72% of every radar is transparent void.
+        """
+        landed = [c.landed for c in self.casts if c.landed is not None]
+        assert landed
+        inside = 0
+        for place in landed:
+            u, v = self.transform.apply(place.x, place.y)
+            if not self.silhouette.blocked(u, v):
+                inside += 1
+        share = inside / len(landed)
+        assert share >= LANDED_INSIDE_SHARE, f"only {share:.1%} land inside the map"
+
+
+@pytest.mark.skipif(not _captures_on(DERIVED_BUILD), reason="needs a 13.04 capture")
+class TheDerivedTransformDecodesRealMatches(unittest.TestCase):
+    """
+    The check that let a *derived* payload transform be registered.
+
+    Every other build's transform was ported from upstream, so a porting bug
+    was the only thing that could be wrong with it.  13.04's was recovered from
+    captured payloads by `csharp/TransformSearch` -- upstream has never
+    published one -- so the class in `vrfnet.payload_transform` and its twin in
+    the parser clone could both be faithful to a recovery that was simply
+    wrong, and the known-answer vectors would agree happily while every
+    coordinate was fiction.
+
+    This is what says otherwise, and it is the same evidence the reference
+    capture gets above: two people in a gunfight are within weapon range of
+    each other, and a player's first decoded position is where they spawned.
+    Measured over both 13.04 captures -- 200 kill pairs at a median of 1,796 uu
+    and 164 at 1,521, spawn locations a median 0.0 uu from their own first
+    sample, pitch inside ten degrees at 99.0% and 98.8% against a yaw control
+    of 0.42 and 0.46 degrees.
+
+    The share rather than the maximum, for the kills: one of the 200 spans
+    5,125 uu, which is 2.5% past the bound the reference capture never reaches.
+    A 10 Hz track and an Operator make that a plausible reading; what could not
+    be plausible is 99.5% of a match's kills landing inside weapon range under
+    a wrong transform, because a wrong transform does not place anybody
+    anywhere.
+    """
+
+    separations: ClassVar[list] = []
+    pitch_errors: ClassVar[list] = []
+    gaps: ClassVar[list] = []
+
+    @classmethod
+    def setUpClass(cls):
+        from vrfview import csharpdecode, pipeline, tracks
+
+        try:
+            csharpdecode.locate(None)
+        except csharpdecode.DecodeError as exc:
+            raise unittest.SkipTest(str(exc)) from exc
+
+        cls.separations = []
+        cls.pitch_errors = []
+        cls.gaps = []
+        for path in _captures_on(DERIVED_BUILD):
+            replay = pipeline.open_replay(path)
+            tracks.attach(replay, path, tracks.Options(decode=True, cache=False))
+            if not replay.has_positions:
+                raise unittest.SkipTest(replay.position_source)
+
+            separations, pitch_errors = _kill_geometry(replay)
+            cls.separations += separations
+            cls.pitch_errors += pitch_errors
+            cls.gaps += _spawn_gaps(csharpdecode.run(path))
+
+    def test_there_are_enough_kills_to_measure_anything(self):
+        assert len(self.separations) > 50
+
+    def test_almost_every_killer_and_victim_are_within_weapon_range(self):
+        inside = sum(1 for s in self.separations if s <= WEAPON_RANGE_UU)
+        share = inside / len(self.separations)
+        assert share >= DERIVED_WEAPON_RANGE_SHARE, (
+            f"only {share:.1%} within weapon range"
+        )
+
+    def test_the_typical_kill_is_a_gunfight_and_not_a_scatter(self):
+        # A wrong transform does not merely widen the tail: it puts the two
+        # players in unrelated places, and the median goes with them.
+        assert statistics.median(self.separations) <= WEAPON_RANGE_UU
+
+    def test_a_spawn_location_sits_on_the_actors_own_first_sample(self):
+        assert self.gaps, "no actor had both a spawn location and a sample"
+        worst = max(self.gaps)
+        assert worst <= SPAWN_GAP_UU, (
+            f"a spawn point is {worst:.0f} uu from its own first sample"
+        )
+
+    def test_the_killer_is_looking_at_the_victim(self):
+        inside = sum(1 for e in self.pitch_errors if e <= PITCH_TOLERANCE_DEGREES)
+        share = inside / len(self.pitch_errors)
+        assert share >= PITCH_AGREEMENT, f"only {share:.1%} of kills inside tolerance"
+
+
+# The two rates behind the match list's team rows.  Every capture must split
+# cleanly, and every capture with a decode to check against must agree with it:
+# these are the *whole* population rather than a sample, so the bar is 100% and
+# a single failure means the ordering assumption is wrong somewhere.
+@unittest.skipUnless(Path("Demos").is_dir(), "needs the reference library")
+@unittest.skipUnless(ASSETS.is_dir(), "needs the art manifest to name an agent")
+class LoadoutSplitIsTheRealTeamSplit(unittest.TestCase):
+    """
+    That the loadout roster's first five and last five are the two teams.
+
+    The match list draws two rows of agent portraits per card and can do it for
+    *every* capture, decoded or not, because the agent UUIDs are in a plain
+    chunk.  Nothing in that chunk says "team", though, so the split rests
+    entirely on the roster's order -- and this is the evidence for it.
+
+    Two independent checks, because either alone is weak.  The first is
+    internal: an agent may be picked by both teams but never twice by one, so a
+    duplicate landing inside a half would disprove the ordering outright.  It
+    is only evidence where duplicates exist, which is 95 of the 103 captures --
+    a random split would keep them all apart in about 45.  The second is
+    external and much stronger: `infer` two-colours the kill graph, which knows
+    nothing whatever about loadout order, and on every capture with a cached
+    decode the two agree exactly.
+
+    What this does **not** establish is which half `infer` calls A -- that came
+    out 12 to 10, a coin flip -- which is why a scoreline needs
+    `vrfhome.teamorder` and why an un-decoded card shows no numbers.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from vrfview import art as art_mod
+
+        cls.art = art_mod.load()
+        if cls.art.empty:
+            raise unittest.SkipTest("no art cache to name an agent UUID with")
+        cls.paths = sorted(Path("Demos").glob("*.vrf"))
+        if not cls.paths:
+            raise unittest.SkipTest("no captures in Demos/")
+
+    def test_every_capture_splits_into_two_whole_teams(self):
+        from vrfhome import scan
+
+        refused = []
+        duplicated = 0
+        for path in self.paths:
+            card = scan.read_card(path)
+            if not card.readable:
+                continue
+            first, second = card.agent_ids
+            if not first:
+                refused.append(path.name)
+                continue
+            names = [self.art.agent_name(u) for u in (*first, *second)]
+            assert all(names), f"{path.name}: an agent UUID named nothing"
+            if len(set(names)) < len(names):
+                duplicated += 1
+        assert refused == [], f"the roster order was refused for {refused}"
+        # If this ever reached zero the check above would still pass while
+        # proving nothing, so the population that makes it evidence is pinned
+        # too.  Measured at 95 of 103.
+        assert duplicated > len(self.paths) // 2
+
+    def test_the_split_agrees_with_the_kill_graph_wherever_one_can_be_checked(self):
+        from vrfhome import scan
+        from vrfview import pipeline
+        from vrfview.model import TEAM_A, TEAM_B
+
+        checked = 0
+        for path in self.paths:
+            card = scan.read_card(path)
+            if not card.readable or not card.agent_ids[0]:
+                continue
+            replay = pipeline.open_replay(path)
+            if not replay.has_positions:
+                continue  # no codenames, so no second opinion exists
+            by_team = {TEAM_A: set(), TEAM_B: set()}
+            for player in replay.players:
+                if player.team in by_team and player.agent:
+                    by_team[player.team].add(player.agent)
+            if any(len(v) != 5 for v in by_team.values()):
+                continue  # an incomplete decode is not a disagreement
+            first, second = card.agent_ids
+            front = {self.art.agent_name(u) for u in first}
+            back = {self.art.agent_name(u) for u in second}
+            assert (front, back) in (
+                (by_team[TEAM_A], by_team[TEAM_B]),
+                (by_team[TEAM_B], by_team[TEAM_A]),
+            ), f"{path.name}: the roster halves are not the kill graph's teams"
+            checked += 1
+        if checked == 0:
+            raise unittest.SkipTest("no cached decodes to check the split against")
+        assert checked >= 1

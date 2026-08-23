@@ -217,7 +217,6 @@ describe("applyTransform", () => {
 
 describe("sight", () => {
   const fixture = golden<{
-    caption: string;
     fov_degrees: number;
     ray_step_degrees: number;
     seed_cells: number;
@@ -237,6 +236,15 @@ describe("sight", () => {
       forward: [number, number];
       radius: number;
       why: string;
+      rays: Array<[number, number]>;
+      polygon: Array<[number, number]>;
+    }>;
+    smoke_cones: Array<{
+      origin: [number, number];
+      forward: [number, number];
+      radius: number;
+      why: string;
+      occluders: Array<{ u: number; v: number; radius: number }>;
       rays: Array<[number, number]>;
       polygon: Array<[number, number]>;
     }>;
@@ -326,6 +334,49 @@ describe("sight", () => {
       });
     });
   }
+
+  for (const entry of fixture.smoke_cones) {
+    it(`smoke cone: ${entry.why}`, () => {
+      const got = cone(
+        mask,
+        entry.origin,
+        entry.forward,
+        entry.radius,
+        settings,
+        entry.occluders,
+      );
+      expect(got.length).toBe(entry.polygon.length);
+      got.forEach((point, i) => nearly([...point], entry.polygon[i]!, `${entry.why}[${i}]`));
+    });
+
+    it(`smoke cone marches Python's own rays exactly: ${entry.why}`, () => {
+      // The same split the plain cones make. A direction comes out of atan2
+      // and is compared within a bound; everything a direction is then put
+      // through -- including the circle test, which is multiply and compare
+      // and nothing else -- is compared to the bit.
+      entry.rays.forEach((ray, i) => {
+        expect(
+          march(
+            mask,
+            entry.origin,
+            ray,
+            entry.radius,
+            settings.seed_cells,
+            entry.occluders,
+          ),
+        ).toEqual(entry.polygon[i + 1]);
+      });
+    });
+  }
+
+  it("takes no occluders as the same answer as before there were any", () => {
+    // The default argument has to be inert, or every existing call site --
+    // and every one of the six fixtures above -- quietly changed meaning.
+    const entry = fixture.cones.find((c) => c.polygon.length > 0)!;
+    expect(cone(mask, entry.origin, entry.forward, entry.radius, settings, [])).toEqual(
+      cone(mask, entry.origin, entry.forward, entry.radius, settings),
+    );
+  });
 
   it("draws nothing rather than a circle when there is no heading", () => {
     expect(cone(mask, [0.5, 0.5], [0, 0], 0.5, settings)).toEqual([]);

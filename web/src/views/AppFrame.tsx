@@ -62,16 +62,24 @@ export function AppFrame() {
       </a>
       {immersive ? null : (
         <header className="app-bar">
-          <Link to="/" className="brand">
-            <Wordmark />
-            <span>
-              <span className="brand-name">{PRODUCT_NAME}</span>
-              <br />
-              <span className="brand-sub">{PRODUCT_TAGLINE}</span>
-            </span>
-          </Link>
-          <Crumbs />
-          <div className="spacer" />
+          {/*
+            The row is `.bar-inner` and not the `<header>` itself, so that the
+            mark lands on the same vertical as the `h1` and the first card
+            below it.  The bar was full-bleed and padded by its own value while
+            `.page` is a centred `--page-max` column padded by another, so the
+            two left edges only agreed at one window width -- see `app.css`.
+          */}
+          <div className="bar-inner">
+            <Link to="/" className="brand">
+              <Wordmark size={24} />
+              <span className="brand-lockup">
+                <span className="brand-name">{PRODUCT_NAME}</span>
+                <span className="brand-sub">{PRODUCT_TAGLINE}</span>
+              </span>
+            </Link>
+            <Crumbs />
+            <div className="spacer" />
+          </div>
         </header>
       )}
       <Outlet />

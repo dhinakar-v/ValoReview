@@ -26,10 +26,13 @@
  * radar with `drawImage` at uv, which has no orientation freedom at all.
  */
 
+import type { Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
 import * as THREE from "three";
 
 import { floorZ } from "../src/model/replay";
+import type { SightSettings } from "../src/model/sight";
+import { cone, decodeMask, forwardUv, uvRadius } from "../src/model/sight";
 import { sideOf } from "../src/model/synthetic";
 import { positionOf, stateAt } from "../src/model/state";
 import { applyTransform, placeSquare, uvToPixels } from "../src/model/transform";
@@ -45,8 +48,22 @@ import {
   rgbDistance,
   momentAt,
   stepToEvent,
+  setLayer,
   toggleLayer,
 } from "./harness";
+
+/**
+ * Two frames, so the first paint is never what gets sampled.
+ *
+ * The scene draws from its own `useFrame`, and the sight overlay repaints only
+ * when the instant it is showing changes -- so a screenshot taken on the frame
+ * a layer was switched can be the picture from before it.
+ */
+async function settle(page: Page): Promise<void> {
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
+}
 
 /** `Scene3D`'s own camera, repeated here so a change to it fails this test. */
 const CAMERA = { position: [0.5, 0.9, 1.6] as const, target: [0.5, 0, 0.5] as const, fov: 40 };
@@ -159,6 +176,14 @@ test.describe("the 3D scene", () => {
 
     // Utility off in both views: the point of comparison is Riot's radar, and
     // a diamond drawn in one view and not the other is only noise here.
+    /*
+      SIGHT off. Both views now paint the same side-coloured wash over the same
+      cones, so leaving it on would no longer make the two pictures disagree --
+      but this spec correlates the *radar's own* luma at matching uv points, and
+      a wash tinting both of them is noise in exactly that measurement. The
+      cones have their own spec below.
+    */
+    await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
     const flat = await readCanvas(page, minimap);
     const box = placeSquare(flat.width, flat.height);
@@ -168,10 +193,7 @@ test.describe("the 3D scene", () => {
     // canvas outside it, and a bare `canvas` locator picks that one up.
     const scene = page.locator(".stage-canvas canvas");
     await expect(scene).toBeVisible();
-    // Two frames, so the first paint is not what gets sampled.
-    await page.evaluate(
-      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
-    );
+    await settle(page);
     const solid = await readCanvas(page, scene);
     const camera = sceneCamera(solid.width, solid.height);
 
@@ -244,6 +266,7 @@ test.describe("the 3D scene", () => {
    */
   test("draws a marker for every player the camera can see", async ({ page }) => {
     const { art, model } = await openFirstPlayable(page);
+    await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
     const moment = firstCrowdedEvent(model);
     const tMs = moment.tMs;
@@ -252,9 +275,7 @@ test.describe("the 3D scene", () => {
     await page.getByRole("button", { name: "3D", exact: true }).click();
     const scene = page.locator(".stage-canvas canvas");
     await expect(scene).toBeVisible();
-    await page.evaluate(
-      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
-    );
+    await settle(page);
     const solid = await readCanvas(page, scene);
     const camera = sceneCamera(solid.width, solid.height);
 
@@ -322,6 +343,7 @@ test.describe("the 3D scene", () => {
     page,
   }) => {
     const { art, model } = await openFirstPlayable(page);
+    await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
 
     // Into the scene first: the default camera frames rather less than the
@@ -365,9 +387,7 @@ test.describe("the 3D scene", () => {
     const found = best!;
 
     await stepToEvent(page, momentAt(model, found.tMs));
-    await page.evaluate(
-      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
-    );
+    await settle(page);
     const solid = await readCanvas(page, scene);
 
     const snap = stateAt(model, found.tMs);
@@ -405,5 +425,173 @@ test.describe("the 3D scene", () => {
     expect(Math.abs(top! - raised[1]), "at the predicted height").toBeLessThan(
       Math.max(12, lift * 0.4),
     );
+  });
+
+  /**
+   * Every living player's cone, in the scene, pointing where they are facing.
+   *
+   * The 2D twin of this is `minimap.spec.ts`, and the two exist for the same
+   * reason: the scene drew **one** cone for whoever was picked, so switching
+   * view silently dropped nine of them, and a wash that is simply absent
+   * photographs as a quiet map rather than as a fault.
+   *
+   * The overlay is a texture on a ground quad, which reintroduces exactly the
+   * orientation freedom the rest of this file exists to close off -- a flipped
+   * `texture.flipY`, or uv written into the quad the other way round, would put
+   * every cone somewhere plausible and wrong.  So the discriminator is the 2D
+   * spec's: the real cones must be covered, and covered better than the same
+   * cones each turned about its own player.  A mirrored overlay fails that the
+   * way a mirrored ground fails the correlation above.
+   */
+  test("draws a cone for every living player, pointing where they look", async ({
+    page,
+  }) => {
+    const { art, sight, model } = await openFirstPlayable(page);
+    await setLayer(page, "SIGHT", false);
+    await toggleLayer(page, "UTILITY");
+
+    const moment = firstCrowdedEvent(model);
+    const tMs = moment.tMs;
+    await stepToEvent(page, moment);
+
+    await page.getByRole("button", { name: "3D", exact: true }).click();
+    const scene = page.locator(".stage-canvas canvas");
+    await expect(scene).toBeVisible();
+    await settle(page);
+    const dark = await readCanvas(page, scene);
+    const camera = sceneCamera(dark.width, dark.height);
+
+    const settings: SightSettings = {
+      max_range_uu: sight.max_range_uu,
+      fov_degrees: sight.fov_degrees,
+      ray_step_degrees: sight.ray_step_degrees,
+      seed_cells: sight.seed_cells,
+      probe_uu: sight.probe_uu,
+    };
+    const mask = decodeMask(sight.size, sight.cells);
+    const snap = stateAt(model, tMs);
+
+    // Exactly what `sightlayer.sightCones` will have built, recomputed here:
+    // living players only, and no selection anywhere in it.
+    const drawn = model.replay.players
+      .map((player) => ({ player, position: snap.positions.get(player.actor_id) }))
+      .filter((e) => e.position !== undefined && snap.alive.has(e.player.actor_id))
+      .map(({ player, position }) => {
+        const [u, v] = applyTransform(art.transform, position!.x, position!.y);
+        return {
+          player,
+          origin: [u, v] as [number, number],
+          polygon: cone(
+            mask,
+            [u, v],
+            forwardUv(art.transform, position!.x, position!.y, position!.yaw, settings.probe_uu),
+            uvRadius(art.transform, settings.max_range_uu),
+            settings,
+          ),
+        };
+      })
+      .filter((entry) => entry.polygon.length > 2);
+
+    expect(drawn.length, "several players have a cone to draw here").toBeGreaterThan(2);
+
+    await setLayer(page, "SIGHT", true);
+    await page.getByRole("button", { name: "3D", exact: true }).click();
+    await settle(page);
+    const lit = await readCanvas(page, scene);
+
+    // Halfway along every ray of every cone, rotated about that cone's own
+    // player -- in uv, then projected, so the turn happens in the space the
+    // overlay is painted in rather than in screen space.
+    const rate = (turn: number): [number, number] => {
+      let sampled = 0;
+      let changed = 0;
+      for (const { origin, polygon } of drawn) {
+        const [ou, ov] = origin;
+        for (const [ru, rv] of polygon.slice(1)) {
+          const du = (ru - ou) / 2;
+          const dv = (rv - ov) / 2;
+          const u = ou + du * Math.cos(turn) - dv * Math.sin(turn);
+          const v = ov + du * Math.sin(turn) + dv * Math.cos(turn);
+          const at = project(camera, lit.width, lit.height, u, SIGHT_LIFT, v);
+          if (at === null) {
+            continue;
+          }
+          const before = pixelAt(dark, at[0], at[1]);
+          const after = pixelAt(lit, at[0], at[1]);
+          if (before === null || after === null) {
+            continue;
+          }
+          sampled += 1;
+          if (rgbDistance(before, after) > 8) {
+            changed += 1;
+          }
+        }
+      }
+      return [sampled === 0 ? 0 : changed / sampled, sampled];
+    };
+
+    const [forward, sampled] = rate(0);
+    const [left] = rate(Math.PI / 2);
+    const [right] = rate(-Math.PI / 2);
+    const [behind] = rate(Math.PI);
+    // eslint-disable-next-line no-console
+    console.log(
+      `scene cones ${drawn.length} over ${sampled} samples: forward ${forward.toFixed(3)} ` +
+        `left ${left.toFixed(3)} right ${right.toFixed(3)} behind ${behind.toFixed(3)}`,
+    );
+    // The default camera frames less than the whole map, so a good many samples
+    // are off-screen and skipped; what is left still has to be a real sample.
+    expect(sampled, "enough of the cones are in frame to measure").toBeGreaterThan(100);
+    /*
+      A lower floor than the 2D spec's 0.6, and deliberately so: this measures
+      about 0.62 where the minimap measures 0.86, because a perspective camera
+      foreshortens the far half of every cone into very few pixels and the
+      markers and their stems stand on top of the near half. The floor is only
+      here to catch "nothing was drawn at all" -- the assertion that actually
+      discriminates is the next one, and it clears its margin several times
+      over (0.62 against 0.22).
+    */
+    expect(forward, "the wash covers the cones the model computed").toBeGreaterThan(0.5);
+    expect(forward, "and covers them better than the same cones turned").toBeGreaterThan(
+      Math.max(left, right, behind) + 0.15,
+    );
+
+    /*
+      And the switch works more than once.
+
+      The overlay repaints only when the instant it is showing changes, which
+      is what keeps a paused scene from pushing four megabytes a frame to the
+      GPU. The playhead does not move while a layer is toggled, so an off-then-
+      on at the same instant is exactly the case where that cache has to be
+      given up rather than trusted -- and getting it wrong hides the cones
+      until something else moves, which is invisible to every assertion above.
+    */
+    await setLayer(page, "SIGHT", false);
+    await settle(page);
+    await setLayer(page, "SIGHT", true);
+    await settle(page);
+    const again = await readCanvas(page, scene);
+    let back = 0;
+    let looked = 0;
+    for (const { origin, polygon } of drawn) {
+      const [ou, ov] = origin;
+      for (const [ru, rv] of polygon.slice(1)) {
+        const at = project(camera, again.width, again.height, (ou + ru) / 2, SIGHT_LIFT, (ov + rv) / 2);
+        if (at === null) {
+          continue;
+        }
+        const before = pixelAt(dark, at[0], at[1]);
+        const after = pixelAt(again, at[0], at[1]);
+        if (before === null || after === null) {
+          continue;
+        }
+        looked += 1;
+        if (rgbDistance(before, after) > 8) {
+          back += 1;
+        }
+      }
+    }
+    expect(looked).toBeGreaterThan(100);
+    expect(back / looked, "the cones come back after the layer is cycled").toBeGreaterThan(0.5);
   });
 });

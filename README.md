@@ -57,8 +57,18 @@ good. `npm run docshots` rewrites them.
 ### The library
 
 Every capture under `DEMO_PATH`, described from plain chunks only — map, date,
-duration, rounds, players — with each one's decode state as a chip. A cold scan
-of 101 captures is 4.3 s and a warm one is 0.03 s, with no Oodle and no display.
+duration, rounds, players and the ten agents who played — with each one's decode
+state as a chip. A cold scan of 103 captures is about five seconds and a warm one
+is 0.03 s, with no Oodle and no display.
+
+The two rows of five faces are the loadout roster's own order, and that split is
+**measured rather than assumed**: it keeps every duplicated agent out of its own
+half in 103 of 103 captures, where a random 5/5 split would manage about 45, and
+it equals `infer`'s bipartite two-colouring of the kill graph on all 23 captures
+that have a decode to check it against. The scoreline is only drawn beside those
+faces once something has established which half `infer` called team A — which
+takes a decode — and a round nothing settled is printed as `+N undecided` rather
+than being allowed to read as a blowout.
 
 ![The match list](docs/images/ui/01-match-list.png)
 
@@ -94,8 +104,11 @@ reads as a feature that does not exist.
 
 The sight cone is raycast against the **radar image's own alpha channel** — 57–72%
 of every published `minimap.png` is transparent void — so it is an approximation
-of a silhouette and the caption says exactly that. There is no collision, navmesh
-or height data anywhere in this project. The trail splits wherever the position
+of a silhouette rather than a line of sight. There is no collision, navmesh
+or height data anywhere in this project. One cone is drawn per living player in
+both views, and the opacity counts rather than being fixed: each is `1/N` of its
+side's ink, so k cones over a point read as exactly `k/N` and a full side
+covering one lane paints it solid. The trail splits wherever the position
 lookup would refuse to interpolate, so it never draws a line through a wall the
 model would not cross.
 
@@ -115,10 +128,10 @@ by kind and by side, each row seeking the playhead to it.
 | **Inference** | Teams by bipartite two-colouring of the kill graph, round outcomes, sides, halftime swap, reconnect merges — each one appended to `Replay.notes` as a claim you can read (`vrfview/infer.py`) |
 | **Ability casts** | No `.vrf` holds an ability event; casts are reconstructed from the actors they spawn, with the agent, the keybind and where the ability came to rest (`vrfview/abilities.py`) |
 | **The spike** | A plant's coordinate, recovered from the `TimedBomb` actor it spawns. The planter is still not attributable |
-| **Match list** | A whole library described headlessly and cached by `(path, mtime, size)`, with a background worker decoding ahead of you (`vrfhome/`) |
+| **Match list** | A whole library described headlessly and cached by `(path, mtime, size)`, with the ten agents who played and a measured team split behind them, and a background worker decoding ahead of you (`vrfhome/`) |
 | **Server** | Ten routes and no more, deciding nothing: the model reads, infers, looks up and decodes, and a handler that started deciding would be a fourth place a claim could come from (`vrfserve/`) |
 | **2D and 3D** | The playback model is ported to TypeScript and runs in the browser, because `state_at` is 0.127 ms and a round trip is not (`web/src/model/`) |
-| **Sight** | A per-player cone raycast against the radar's alpha channel, off by default, captioned with what it is an approximation of (`vrfview/sight.py`) |
+| **Sight** | A cone per living player in 2D and 3D alike, raycast against the radar's silhouette and the wall lines drawn on it, and stopped by smokes; on by default, needing no selection, with overlap carried by the opacity (`vrfview/sight.py`, `web/src/views/sightlayer.ts`) |
 | **Catalogue** | Map, agent, role and weapon art and Riot's own callouts, cached locally from `valorant-api.com` (`scripts/fetch_assets.py`, `vrfview/art.py`) |
 
 ### What is read and what is generated
@@ -127,7 +140,9 @@ A roster card is half read and half generated, and the page says which.
 
 **Read or decoded:** the agent and its portrait, the four ability icons, whether
 a player is alive, the score, every position, every kill, every round boundary,
-every ability cast, and the spike plant.
+every ability cast, and the spike plant. A match-list card's ten agents are read
+too, from the loadout's own UUIDs — no decoder, no Oodle and no supported build
+needed for that one.
 
 **Generated:** health, armour, credits, the weapon held, and ATK/DEF itself. None
 of those is replicated to a spectator recording. They come from
@@ -169,8 +184,8 @@ if you want positions, and optionally an `oo2core_*_win64.dll` if you want to
 read compressed chunks directly.
 
 ```bash
-git clone https://github.com/dhinakar-v/val-replay-analyzer.git
-cd val-replay-analyzer
+git clone https://github.com/dhinakar-v/ValoReview.git
+cd ValoReview
 uv sync                                    # .venv, the project and the dev tools
 
 git clone https://github.com/michel-giehl/ValorantReplayParser.git ../ValorantReplayParser
@@ -194,6 +209,15 @@ Copy `.env.example` to `.env` to configure any of three keys:
 | `DEMO_PATH` | Directory the match list scans. Defaults to `Demos/`; a path that does not exist is an empty library, not a startup error |
 | `VRF_PARSER_EXE` | The position decoder, ahead of `vendor/parser/` and the `csharp/` build output |
 | `VRF_OODLE_DLL` | An Oodle runtime, ahead of `vendor/`, the cache and the Steam/Epic scan |
+
+Two more are read the same way — real environment first, nearest `.env` second —
+and are deliberately **not** in `.env.example`, because they exist for a packaged
+copy rather than for a checkout, where both already resolve on their own:
+
+| Variable | What it does |
+|---|---|
+| `VRF_CACHE_ROOT` | The cache directory itself, not a project root to append `.cache/` to. Naming it outright is the opposite of a fallback: unset, `vrfcache` still searches upward for `pyproject.toml` and still refuses rather than guessing |
+| `VRF_FETCH_HINT` | What to say about a missing art cache. In a checkout that is `runners\fetch-assets.bat fetch`; a packaged copy has no `runners\` directory, so naming one would be a plain untruth |
 
 ## Architecture
 
@@ -278,18 +302,18 @@ sequenceDiagram
 ## Repository layout
 
 ```text
-val-replay-analyzer/
+ValoReview/
 ├── libraries/            importable code; the source root, not a package
 │   ├── vrf_reader.py     the container: header, chunks, events
 │   ├── vrf_to_json.py    a whole capture as one JSON document
-│   ├── vrfview/          the model: loader, tracks, infer, names, state, sight, art
-│   ├── vrfhome/          the match list: scan, prewarm
+│   ├── vrfview/          the model: loader, tracks, infer, names, state, sight, art, barriers
+│   ├── vrfhome/          the match list: scan, prewarm, teamorder
 │   ├── vrfserve/         the HTTP interface: app, wire, ids, library, schema
 │   ├── vrfnet/           payload_transform (the build gate) and a bit reader
 │   ├── oodlefind.py      resolves oo2core_*_win64.dll, five places in order
 │   ├── vrfcache.py       finds <project root>/.cache/ from any working directory
 │   └── vrfconfig.py      DEMO_PATH, and where the answer came from
-├── scripts/              standalone CLIs: vrf_serve, fetch_assets, make_theme, make_golden
+├── scripts/              standalone CLIs: vrf_serve, fetch_assets, make_theme, make_golden, make_walls, make_barriers
 ├── csharp/VrfPositions/  the position decoder; sources committed, binaries not
 ├── web/                  the browser interface (React over vrfserve)
 ├── runners/              .bat launchers; each one works from any directory
@@ -308,8 +332,9 @@ so `import vrf_reader` and `import vrfview` resolve from anywhere — never
 `.cache/` is everything the project can regenerate — decoded positions, the
 resolved Oodle path, the match-list scan and the decoder's scratch.
 `libraries/vrfcache.py` finds it by walking up for `pyproject.toml`, so it is the
-same directory whatever you run from. Deleting it is a complete reset; the next
-run simply does the work again.
+same directory whatever you run from — unless `VRF_CACHE_ROOT` names one outright,
+which is what a packaged copy with no checkout above it does. Deleting it is a
+complete reset; the next run simply does the work again.
 
 ## Development
 
@@ -335,6 +360,9 @@ runners\lint.bat              # lint           (config: ruff.toml)
 runners\format.bat            # format
 runners\make-theme.bat        # regenerate web/src/theme.generated.css
 runners\make-golden.bat       # regenerate tests/golden (the two-language contract)
+runners\make-walls.bat        # regenerate assets/maps/*/walls.png (--overlay to check them)
+runners\make-barriers.bat     # regenerate assets/maps/*/barriers.png from the barrier table
+                              #   (--decode re-reads features/map-barriers/; --overlay to check)
 
 cd web && npm test            # vitest under jsdom: the model ports and the sentences
 cd web && npm run test:e2e    # playwright against a real Chromium: pixels only
@@ -371,6 +399,7 @@ Every runner forwards its arguments and returns the underlying exit code.
     runners\vrf-serve.bat --routes                  list the endpoints, bind nothing
     runners\vrf-serve.bat --no-art                  serve no pictures at all
     runners\vrf-serve.bat --assets DIR              read the art cache from elsewhere
+    runners\vrf-serve.bat --web-dir DIR             the built interface, from elsewhere
     runners\build-decoder.bat                       build the position decoder
     runners\fetch-assets.bat list                   plan the art download
     runners\fetch-assets.bat fetch                  ~85 MB into assets/
@@ -474,6 +503,37 @@ narrows the set. The art is Riot Games' intellectual property and the cache is
 gitignored; nothing here redistributes it. `docs/valorant-assets.md` documents the
 folder, the manifest schema and the measured world-to-minimap transform.
 
+### Spawn barriers
+
+`libraries/vrfview/barriers.json` holds the round-start spawn barriers for nine
+maps — 76 bars, as axis-aligned rectangles in radar uv. Nothing decoded here
+states them and Riot publishes no coordinate for one: a barrier is level
+geometry the engine raises for the buy phase and drops at round start, so no
+actor replicates and no event fires. It is external knowledge, in the shape
+`abilityfacts` and `names.AGENT_CODENAMES` already set for external knowledge —
+except that this one had to be **measured**, because there is nothing published
+to transcribe.
+
+The measurement is nine screenshots of another replay viewer, aligned onto
+Riot's own radar by maximising overlap between that viewer's floor and the
+radar's alpha silhouette, searching all eight ways a square picture can be laid
+down. The winner beats the runner-up by 1.7× to 2.2× on every map, which is the
+argument that the orientation was found rather than assumed. The ground truth is
+the same kind the spike plant and the ability spawns get: a barrier closes a
+doorway and a doorway is floor, and **76 of 76 bars land on it**.
+
+    runners\make-barriers.bat                  draw the committed table
+    runners\make-barriers.bat --decode         re-measure it from features/
+    runners\make-barriers.bat --overlay        a composite, to check by eye
+
+Nine maps of eighteen: the other nine have no reference frame, so they are
+*absent* rather than empty and `make-barriers` names them on every run. The
+table is the durable artefact — `features/` is gitignored, so the JSON and
+`docs/map-barriers.md` are the whole of what a later reader can check — and
+`assets/maps/<Map>/barriers.png` is a picture for a person, the way `walls.png`
+is. Neither PNG is ever read back; the wall lines reach the sight mask from the
+radar image itself, and **nothing in the app consumes the barrier table yet**.
+
 ### Names
 
 A replay states its map as an internal asset path (`/Game/Maps/Infinity/Infinity`),
@@ -482,10 +542,18 @@ its agents as UUIDs, and each player's agent as a codename on its pawn's archety
 names here, from tables compiled into the repository: `loader.MAP_NAMES` for the
 map and `names.AGENT_CODENAMES` for the codename.
 
-The third — agent UUID to name — is not, and the interface does not pretend
-otherwise: `Loadout.agent` is empty and the roster is reported in the file's own
-order. Nothing links a loadout to an actor net ID anyway, so a named roster would
-not have told you who was who.
+The third — agent UUID to name — is not a table here, and the model does not
+pretend otherwise: `Loadout.agent` is never filled. What resolves it is the art
+cache, because `assets/manifest.json` publishes a `uuid` per agent, so
+`ArtCache.agent_art` is a join between two halves of one published catalogue
+rather than a guess. That is what a match-list card's ten faces are, and all
+1,030 slots across the 103 captures resolve.
+
+What has not changed is that **nothing links a loadout slot to an actor net ID**.
+The card names the ten agents who played and, by the roster's own order, which
+five were a team; it does not say which of them is the pawn moving on the map.
+The viewer's roster does not need it — a pawn states its own codename — so the
+two are filled by two joins that share no term, and never from each other.
 
 **Nothing in this project opens a socket except `fetch-assets`, which needs no
 key.** There was a client for Riot's authenticated API (`valapi`) and a catalogue
@@ -522,19 +590,35 @@ Decoding also names each player — an agent's pawn states its own archetype, so
 a per-player agent is read beside the unattributable loadout roster, and the two
 agree by two joins that share no term.
 
-Only some builds decode. The transform changes every patch, so `12.10`, `12.11`
-and `13.00`–`13.02` work and everything older — including the reference capture —
-refuses by name rather than guessing:
+Only some builds decode. The transform changes every patch, so `12.10`, `12.11`,
+`13.00`–`13.02` and `13.04` work and everything older — including the reference
+capture — refuses by name rather than guessing:
 
     - positions: no positions: no payload transform for build
       '++Ares-Core+release-11.11'; supported: ...
 
 There is deliberately **no nearest-version fallback**: an unsupported build must
 raise, or a porting bug becomes indistinguishable from a version mismatch. On the
-reference library of 101 captures, 21 are playable. A capture whose build has no
-transform is not listed as playable at all, which costs one string comparison and
-no decompression, and nothing invents a coordinate when positions are absent: a
-player with no track is drawn with no track.
+reference library of 103 captures, 23 are playable — and the match list shows all
+103. A capture whose build has no transform is marked as such by one string
+comparison and no decompression, and its card carries `NO POSITIONS` with the
+reason; it still opens, because the map, the rounds and their outcomes, the kill
+feed and the player count all come out of the plain chunks. What is missing is
+missing rather than invented: no marker, no trail and no sight cone. The card
+still names its ten agents, because those come from the loadout's UUIDs rather
+than from the stream; what a capture with no decode cannot say is which of them
+is which player, so the viewer's own roster reads `A1` with no agent beside it —
+a pawn states its codename in the replication stream and nowhere else.
+
+`12.10`, `12.11` and `13.00`–`13.02` are ported from
+[`michel-giehl/ValorantReplayParser`](https://github.com/michel-giehl/ValorantReplayParser)
+(MIT). `13.04` is **not**: upstream has never published it, and it was derived
+from the captures themselves — `docs/payload-transform-13-04.md` is that
+derivation and `csharp/TransformSearch/` is the tool that did it. A derived
+transform is registered only once ground truth passes over a real match, which
+for `13.04` is `tests/test_positions.py::TheDerivedTransformDecodesRealMatches`:
+killer and victim inside weapon range at 99.5% and 100% of two captures' kills,
+and every spawn location within 0.1 uu of its own first movement sample.
 
 Player names, ranks and per-round economy live in `val-match-v1`, which is
 **403 on a personal development key** — every endpoint, including
@@ -572,6 +656,7 @@ to be made and two places to drift.
 | [`docs/vrf-decoding-findings.md`](docs/vrf-decoding-findings.md) | Measured truth about the container. Supersedes `vrf-decoding-research.md`, which is a literature review and partly wrong for this title |
 | [`docs/039f3991_summary.md`](docs/039f3991_summary.md) | The reference capture, key by key. §6 lists all seven event groups; §8 is what is *not* in the file |
 | [`docs/valorant-replay-parser-features.md`](docs/valorant-replay-parser-features.md) | What the vendored parser can and cannot do, cross-referenced against this repo |
+| [`docs/map-barriers.md`](docs/map-barriers.md) | Where the spawn barriers are, and how they were measured off somebody else's screenshots — the palette, the alignment search, and the 76-of-76 ground truth |
 | [`docs/valorant-assets.md`](docs/valorant-assets.md) | The art cache: folder layout, manifest schema, and the measured world-to-minimap transform |
 | [`docs/webapp-03-map-viewers.md`](docs/webapp-03-map-viewers.md) | How the 2D radar and the 3D scene were planned |
 | [`web/README.md`](web/README.md) | The browser interface: the two load-bearing build facts, the design system's three owners, the two test tiers |
@@ -600,5 +685,5 @@ properties.
 <p align="center">
   <img src="web/public/favicon.svg" alt="" width="28" /><br />
   <strong>ValoReview</strong> · Valorant · local captures<br />
-  <a href="https://github.com/dhinakar-v/val-replay-analyzer">github.com/dhinakar-v/val-replay-analyzer</a>
+  <a href="https://github.com/dhinakar-v/ValoReview">github.com/dhinakar-v/ValoReview</a>
 </p>

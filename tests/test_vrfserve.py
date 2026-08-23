@@ -26,6 +26,7 @@ import json
 import threading
 import time
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import ClassVar
@@ -40,7 +41,7 @@ from vrfserve import ids, schema, wire
 from vrfserve.app import Settings, create_app
 from vrfview import positionfile, sight, tracks
 from vrfview.abilities import AbilityCast
-from vrfview.art import ArtCache, Callout, MapArt, Transform
+from vrfview.art import AgentArt, ArtCache, Callout, MapArt, Transform
 from vrfview.model import Loadout, Player, Position, Replay, Round, Track
 
 REPO = Path(__file__).resolve().parents[1]
@@ -65,12 +66,17 @@ def _write_radar(path: Path) -> None:
     image.save(path)
 
 
+# A build `payload_transform` has a transform for, so a card carrying it is
+# playable and the match list does not filter it away.
+SUPPORTED_BUILD = "++Ares-Core+release-12.10"
+
+
 def _supplier():
     """A fresh Replay per call, the way `pipeline.open_replay` gives one."""
     return lambda *_args, **_kwargs: _replay()
 
 
-def _replay(build: str = "++Ares-Core+release-12.10") -> Replay:
+def _replay(build: str = SUPPORTED_BUILD) -> Replay:
     replay = Replay(
         source="capture.vrf",
         match_id="m-1",
@@ -236,6 +242,78 @@ class WireBuilders(unittest.TestCase):
         refused = wire.replay_doc(_replay(), "abc123", None)
         assert not refused["positions_available"]
 
+    def test_a_card_carries_its_two_teams_and_validates(self):
+        """
+        The match-list row's agents and, where it can be had, its scoreline.
+
+        `wire` resolves the art and places the numbers; it decides neither the
+        split (that is `vrfhome.scan.team_ids`, measured) nor which half is
+        team A (that is `vrfhome.teamorder`, which needs a decode).  All three
+        cases below are the second of those failing, succeeding, and flipping.
+        """
+        art = ArtCache(
+            root=Path("assets"),
+            agents={
+                f"uuid-{n}": AgentArt(name=f"Agent{n}", uuid=f"uuid-{n}")
+                for n in range(10)
+            },
+        )
+        entry = scan.MatchCard(
+            path=Path("m.vrf"),
+            match_id="m-1",
+            build="++Ares-Core+release-12.10",
+            rounds=24,
+            agent_ids=(
+                tuple(f"uuid-{n}" for n in range(5)),
+                tuple(f"uuid-{n}" for n in range(5, 10)),
+            ),
+            score=(13, 9),
+            rounds_undecided=2,
+        )
+
+        # No letter: the agents are still a fact, the scoreline is not.
+        unattributed = wire.card(entry, "abc123", art, None)
+        schema.CardDoc.model_validate(unattributed)
+        assert [a["name"] for a in unattributed["teams"][0]["agents"]] == [
+            "Agent0",
+            "Agent1",
+            "Agent2",
+            "Agent3",
+            "Agent4",
+        ]
+        assert [t["rounds_won"] for t in unattributed["teams"]] == [None, None]
+        assert unattributed["rounds_undecided"] == 2
+
+        # A letter puts `infer`'s A beside whichever half it actually was, and
+        # getting this backwards is the one mistake here that looks correct.
+        first_is_a = wire.card(entry, "abc123", art, None, "A")
+        assert [t["rounds_won"] for t in first_is_a["teams"]] == [13, 9]
+        first_is_b = wire.card(entry, "abc123", art, None, "B")
+        assert [t["rounds_won"] for t in first_is_b["teams"]] == [9, 13]
+
+    def test_a_card_with_no_split_or_no_art_carries_no_teams(self):
+        entry = scan.MatchCard(path=Path("m.vrf"), agent_ids=((), ()))
+        doc = wire.card(entry, "abc123", ArtCache(), None, "A")
+        schema.CardDoc.model_validate(doc)
+        assert doc["teams"] is None
+        # Art is what names an agent, so a library with none draws no roster
+        # rather than ten anonymous squares.
+        split = scan.MatchCard(
+            path=Path("m.vrf"),
+            agent_ids=(("a", "b", "c", "d", "e"), ("f", "g", "h", "i", "j")),
+        )
+        assert wire.card(split, "abc123", None, None, "A")["teams"] is None
+
+    def test_an_unscored_card_reports_no_rounds_won_even_with_a_letter(self):
+        """A letter says *where* a score goes, never that there is one."""
+        entry = scan.MatchCard(
+            path=Path("m.vrf"),
+            agent_ids=(("a", "b", "c", "d", "e"), ("f", "g", "h", "i", "j")),
+            score=None,
+        )
+        doc = wire.card(entry, "abc123", ArtCache(root=Path("assets")), None, "A")
+        assert [t["rounds_won"] for t in doc["teams"]] == [None, None]
+
     def test_a_derived_note_and_a_looked_up_one_stay_in_separate_lists(self):
         replay = _replay()
         replay.catalog_notes = ["the pawn's agent and the loadout's agree"]
@@ -293,19 +371,86 @@ class Endpoints(unittest.TestCase):
         # And it says where it looked, rather than just showing nothing.
         assert str(self.tmp) in doc["root"]["described"]
 
-    def test_only_playable_captures_are_listed(self):
+    def test_an_unreadable_capture_is_listed_carrying_its_error(self):
         """
-        The filter is the handler's, not the request's.
+        A file that will not parse is a card with a reason, never an omission.
 
-        A build with no payload transform has no positions to draw and there is
-        no schematic to fall back to, so there is nothing behind such a card to
-        open.  There is no longer a query that turns this off, which is the
-        point of asserting it: a stray `playable_only=false` must not resurrect
-        the old behaviour.
+        The route used to filter the whole list to `playable`, which took this
+        one off the page along with every capture on an unsupported build.  A
+        library of real files rendering as an empty directory is a stronger
+        wrong claim than a row that says what went wrong.
         """
         client = self._with_broken_capture()
-        assert client.get("/api/library").json()["cards"] == []
-        assert client.get("/api/library?playable_only=false").json()["cards"] == []
+        cards = client.get("/api/library").json()["cards"]
+        assert [c["file_name"] for c in cards] == ["broken.vrf"]
+        assert not cards[0]["readable"]
+        assert not cards[0]["playable"]
+        assert cards[0]["error"]
+
+    def test_an_unsupported_build_is_listed_and_says_why_it_cannot_be_drawn(self):
+        """
+        Readable but not decodable: the row is shown and carries the reason.
+
+        The pair is what a card needs to state its own case -- `playable` says
+        it cannot be drawn and `positions_note` says why -- and both are read
+        off the scanner, so a card and a replay document cannot disagree about
+        one capture.  A row with no positions is still worth opening: the map,
+        the rounds, the kill feed and the player count are all in the plain
+        chunks.
+        """
+        library = self.client.app.state.library
+        library.result = scan.ScanResult(
+            cards=[
+                scan.MatchCard(
+                    path=self.tmp / "unsupported.vrf",
+                    match_id="unsupported",
+                    map_name="Lotus",
+                    build="++Ares-Core+release-11.11",
+                    recorded_utc=datetime(2026, 6, 1, tzinfo=UTC),
+                ),
+            ],
+        )
+        library._register()
+
+        doc = self.client.get("/api/library").json()
+        schema.LibraryDoc.model_validate(doc)
+        assert [c["match_id"] for c in doc["cards"]] == ["unsupported"]
+        card = doc["cards"][0]
+        assert card["readable"]
+        assert not card["playable"]
+        assert "no payload transform" in card["positions_note"]
+        # No chip claiming a wait that will never end: `prewarm` queues only
+        # what is playable, so this capture has no preparation state at all.
+        assert card["prewarm"] is None
+
+    def test_the_match_list_is_newest_first(self):
+        """
+        The order is the handler's, and the browser renders what it is sent.
+
+        Asserted here rather than only in `tests/test_vrfhome.py`, where
+        `sort_cards(descending=True)` is already pinned: the flag defaults to
+        ascending, so what this guards is the route passing it at all.  The
+        cards are installed directly because a dated, playable card needs a
+        readable capture and this suite has none.
+        """
+        library = self.client.app.state.library
+        library.result = scan.ScanResult(
+            cards=[
+                scan.MatchCard(
+                    path=self.tmp / f"{name}.vrf",
+                    match_id=name,
+                    map_name="Haven",
+                    build=SUPPORTED_BUILD,
+                    recorded_utc=datetime(2026, 6, day, tzinfo=UTC),
+                )
+                for name, day in (("older", 1), ("newest", 3), ("middle", 2))
+            ],
+        )
+        library._register()
+
+        doc = self.client.get("/api/library").json()
+        schema.LibraryDoc.model_validate(doc)
+        assert [c["match_id"] for c in doc["cards"]] == ["newest", "middle", "older"]
 
     def test_an_unknown_replay_id_is_a_404(self):
         assert self.client.get("/api/replays/" + "0" * 16).status_code == 404
@@ -402,14 +547,13 @@ class MapsAreAddressedByName(unittest.TestCase):
             assert self.client.get(shaped).status_code == 404
 
 
-class SightMaskTravelsWithItsCaption(unittest.TestCase):
+class SightMaskIsThresholdedInPython(unittest.TestCase):
     """
-    A cone is drawn from a mask, and the mask arrives with the sentence.
+    A cone is drawn from a mask, and the mask is built in exactly one place.
 
-    `sight.CAPTION` says what a cone raycast against a radar's alpha channel
-    is and is not -- a silhouette, not collision, and two-dimensional.  It
-    travels in the same document as the cells so that no client can render a
-    wedge without having been handed the words for it.
+    `sight.GRID` and `sight.ALPHA_FLOOR` decide what "open" means, and a
+    browser downscale is not Pillow's, so the cells and the constants that
+    produced them travel together and the far end does no thresholding.
     """
 
     def setUp(self):
@@ -448,11 +592,6 @@ class SightMaskTravelsWithItsCaption(unittest.TestCase):
         assert doc["size"] == built.size
         assert base64.b64decode(doc["cells"]) == built.cells
         assert doc["open_fraction"] == pytest.approx(built.open_fraction)
-
-    def test_the_caption_is_sight_pys_own_words(self):
-        doc = self.client.get("/api/maps/Haven/sight").json()
-        assert doc["caption"] == sight.CAPTION
-        assert "not collision" in doc["caption"]
 
     def test_the_constants_come_from_the_module_that_decides_them(self):
         doc = self.client.get("/api/maps/Haven/sight").json()

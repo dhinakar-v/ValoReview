@@ -1,11 +1,17 @@
 /**
  * The frame every page sits in, and the two states every page can be in.
  *
- * `Loading` and `Failed` are here rather than inlined so that a failure always
- * looks the same and always says what the server said.  `ApiError` carries the
- * server's own `detail`, and the whole point of that detail is that it names
- * the thing that went wrong -- showing "something went wrong" instead would
- * throw away the one sentence worth reading.
+ * `Failed` is here rather than inlined so that a failure always looks the same
+ * and always says what the server said.  `ApiError` carries the server's own
+ * `detail`, and the whole point of that detail is that it names the thing that
+ * went wrong -- showing "something went wrong" instead would throw away the one
+ * sentence worth reading.
+ *
+ * There was a `Loading` beside it -- `<p class="muted">Reading {what}…</p>` --
+ * and it is gone rather than left as an unreachable primitive.  Both of its
+ * callers now draw the shape of what is arriving instead of naming it
+ * (`views/skeleton.tsx`), and that module says the same sentence to a screen
+ * reader, so the words survive and the second definition of them does not.
  */
 
 import type { ReactNode } from "react";
@@ -43,10 +49,6 @@ export function Page({
       {footer ? <footer className="page-foot">{footer}</footer> : null}
     </div>
   );
-}
-
-export function Loading({ what }: { what: string }) {
-  return <p className="muted">Reading {what}…</p>;
 }
 
 export function Failed({ error }: { error: unknown }) {

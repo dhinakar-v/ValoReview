@@ -65,11 +65,17 @@ async function api<T>(path: string): Promise<T> {
  * Deliberately the *first card* rather than a hard-coded id: an id is a digest
  * of a resolved path, so naming one would tie the suite to one machine's
  * `Demos/`.  What the suite needs is a capture the server itself considers
- * playable, which is exactly what the default filter leaves on the page.
+ * playable, and `a.card.playable` is the scanner's own word for that.
+ *
+ * It used to be `a.card`, which worked only because `/api/library` filtered to
+ * playable and every row on the page was one.  The list shows unsupported
+ * builds now, so the first row by date can be a capture with no positions --
+ * and this helper would then have opened it and left every layer spec
+ * asserting against a document that draws nothing.
  */
 export async function openFirstPlayable(page: Page): Promise<Opened> {
   await page.goto("/");
-  const card = page.locator("a.card").first();
+  const card = page.locator("a.card.playable").first();
   await expect(card).toBeVisible();
   await card.click();
   await page.waitForURL(/\/replay\/[0-9a-f]+/);
@@ -240,6 +246,36 @@ export async function toggleLayer(page: Page, name: string): Promise<void> {
   const before = await box.isChecked();
   await row.click();
   await expect(box, `${name} flipped`).toBeChecked({ checked: !before });
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "LAYERS", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false");
+}
+
+/**
+ * Put one layer into a known state, whether or not it is already there.
+ *
+ * `toggleLayer` is a *flip*, and every spec that called it meant "turn this
+ * on".  That was fine while every layer this suite touches started off, and it
+ * failed silently the moment one did not: the helper asserts only that the box
+ * changed, so `toggleLayer(page, "SIGHT")` on an on-by-default layer switches
+ * it **off**, the spec goes green, and the screenshot it was taking has no
+ * cone in it.  Three specs were in that state.
+ *
+ * So a spec that wants a layer on says so, and one that wants it off -- to
+ * count marker pixels without a cone wash over them -- says that.
+ */
+export async function setLayer(page: Page, name: string, on: boolean): Promise<void> {
+  await openLayers(page);
+  const row = page
+    .locator(".check-row")
+    .filter({ has: page.getByText(name, { exact: true }) });
+  const box = row.getByRole("checkbox");
+  await expect(box, `${name} is offered as a working switch here`).toBeEnabled();
+  if ((await box.isChecked()) !== on) {
+    await row.click();
+  }
+  await expect(box, `${name} is ${on ? "on" : "off"}`).toBeChecked({ checked: on });
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("button", { name: "LAYERS", exact: true }),

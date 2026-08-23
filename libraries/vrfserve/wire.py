@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 from vrfview import abilityfacts
 from vrfview import sight as sight_mod
 from vrfview.abilities import NO_POSITION, attribute, travel
+from vrfview.model import TEAM_A, TEAM_B
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -104,7 +105,7 @@ def map_art(art: MapArt, root: Path) -> dict:
 
 def sight_mask(mask, map_key: str) -> dict:
     """
-    One map's playable silhouette, and the sentence that says what it is.
+    One map's playable silhouette, thresholded where it is decided.
 
     The mask is thresholded here rather than in the browser, and that is not
     an optimisation.  `sight.GRID` and `sight.ALPHA_FLOOR` decide what "open"
@@ -114,17 +115,14 @@ def sight_mask(mask, map_key: str) -> dict:
     one answer, and `tests/golden/cone.json` checks the arithmetic on top of
     it in both languages.
 
-    `caption` travels **with** the cells, so nothing can draw a cone without
-    having been handed the sentence saying what it is a cone of.  One byte
-    per cell rather than a bit, because the far end's `blocked` is then a
-    literal port of this one's and not a second thing to get right.
+    One byte per cell rather than a bit, because the far end's `blocked` is
+    then a literal port of this one's and not a second thing to get right.
     """
     return {
         "map_key": map_key,
         "size": mask.size,
         "cells": base64.b64encode(mask.cells).decode("ascii"),
         "open_fraction": mask.open_fraction,
-        "caption": sight_mod.CAPTION,
         "max_range_uu": sight_mod.MAX_RANGE_UU,
         "fov_degrees": sight_mod.FOV_DEGREES,
         "ray_step_degrees": sight_mod.RAY_STEP_DEGREES,
@@ -301,6 +299,9 @@ def ability_cast(
             published = slot.name
             icon = asset_url(slot.icon, cache.root)
     published_range = abilityfacts.facts_for(cast.agent, cast.display_name)
+    # Keyed on the codename and slot, not the agent and internal name: the
+    # internal name splits for the same ability -- see `abilityfacts._SMOKES`.
+    smoke = abilityfacts.smoke_for(cast.codename, cast.slot)
     distance = None
     for actor_id in cast.pawns:
         track = replay.ability_track(actor_id)
@@ -329,6 +330,9 @@ def ability_cast(
         "travel_note": None if distance is not None else NO_POSITION,
         "range_uu": published_range.radius_uu if published_range else None,
         "range_source": published_range.source if published_range else None,
+        "smoke_radius_uu": smoke.radius_uu if smoke else None,
+        "smoke_duration_ms": smoke.duration_ms if smoke else None,
+        "smoke_source": smoke.source if smoke else None,
         "placements": [placement(p) for p in cast.placements],
         "landed": placement(cast.landed) if cast.landed is not None else None,
     }
@@ -440,13 +444,59 @@ def replay_doc(
     }
 
 
-def card(entry, replay_id: str, cache: ArtCache | None, prewarm: dict | None) -> dict:
+def card_teams(entry, cache: ArtCache | None, first_half_team: str = "") -> list | None:
+    """
+    The two teams a card draws: five agents each, and a rounds-won count.
+
+    The split itself is `vrfhome.scan.team_ids`' claim and is measured there;
+    this only resolves each UUID to its published art and decides where the
+    scoreline goes.  `first_half_team` is `vrfhome.teamorder`'s answer to the
+    one question the plain chunks cannot settle -- which half `infer` called A
+    -- and where it is absent **both rows report `null` rather than a number**,
+    because a score against the wrong five agents is a wrong claim that looks
+    like a right one.
+
+    `None` where there is no split or no art: a row of anonymous squares would
+    be a picture of a roster rather than the roster.
+    """
+    first, second = entry.agent_ids
+    if not first or cache is None:
+        return None
+    wins: tuple[int | None, int | None] = (None, None)
+    if entry.score is not None and first_half_team in (TEAM_A, TEAM_B):
+        a, b = entry.score
+        wins = (a, b) if first_half_team == TEAM_A else (b, a)
+    out = []
+    for half, won in zip((first, second), wins, strict=True):
+        agents = []
+        for uuid in half:
+            art = cache.agent_art(uuid)
+            agents.append(
+                {
+                    "name": art.name if art else "",
+                    "icon_url": asset_url(art.icon, cache.root) if art else None,
+                },
+            )
+        out.append({"agents": agents, "rounds_won": won})
+    return out
+
+
+def card(
+    entry,
+    replay_id: str,
+    cache: ArtCache | None,
+    prewarm: dict | None,
+    first_half_team: str = "",
+) -> dict:
     """
     One row of the match list, as the scanner describes it.
 
-    `playable` is still sent although the list is now filtered to it: the card
-    is the scanner's own description of a capture, and a reader of this dict
-    should not have to know which query produced it to know what it is.
+    `playable` and `positions_note` are the pair a row needs to say what it
+    cannot do: the list is no longer filtered to playable captures, so a card
+    for an unsupported build has to carry its own reason rather than leaving
+    the reader to infer one from a missing marker later.  Both are read off the
+    entry, the way `readable` is -- `wire` states no branch rule of its own and
+    imports no decoder, so `vrfhome.scan` stays the one authority.
     """
     art = cache.map_art(entry.map_path) if cache else None
     return {
@@ -472,5 +522,12 @@ def card(entry, replay_id: str, cache: ArtCache | None, prewarm: dict | None) ->
         "error": entry.error,
         "readable": entry.readable,
         "playable": entry.playable,
+        "positions_note": entry.positions_note,
         "prewarm": prewarm,
+        "teams": card_teams(entry, cache, first_half_team),
+        # Rounds nothing settled.  A scoreline that falls short of `rounds` is
+        # the normal case rather than the exceptional one -- a defuse or an
+        # explode records its reason and no winner -- so the shortfall travels
+        # beside it and the card can say so instead of reading as a blowout.
+        "rounds_undecided": entry.rounds_undecided,
     }

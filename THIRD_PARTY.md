@@ -145,15 +145,15 @@ unmodified and are used only to render this project's own interface.
 
 ---
 
-## lucide-react
+## @phosphor-icons/react
 
-`web/package.json` lists `lucide-react`, which is installed from npm and is
-**not** vendored into this repository -- so this entry is a note rather than a
-licence reproduction. It is ISC-licensed -- *Copyright (c) 2026 Lucide Icons
-and Contributors*, the project itself being a fork of Feather Icons -- and the
-glyphs it draws are inlined into `web/dist/static/` at build time. `npm
-install` fetches its own copy of the licence into
-`node_modules/lucide-react/LICENSE`.
+`web/package.json` lists `@phosphor-icons/react`, which is installed from npm
+and is **not** vendored into this repository -- so this entry is a note rather
+than a licence reproduction. It is MIT-licensed -- *Copyright (c) 2020 Phosphor
+Icons*, verified from `node_modules/@phosphor-icons/react/LICENSE` rather than
+assumed -- and the glyphs it draws are inlined into `web/dist/static/` at build
+time. Only the forty-five `views/icons.tsx` imports by name are, each from its
+own module: the package ships some three thousand.
 
 ---
 
@@ -171,7 +171,7 @@ community mirror of Riot's published content catalogue; they are Riot's assets,
 cached locally under `assets/` and never redistributed by this repository,
 which gitignores that directory. The transport glyphs in `assets/icons/` are
 drawn by `scripts/make_icons.py` and belong to this project; the browser
-interface does not use them, and draws Lucide's instead.
+interface does not use them, and draws Phosphor's instead.
 
 The wordmark in `web/src/views/icons.tsx` and the favicon in
 `web/public/favicon.svg` are this project's own, and are deliberately not a

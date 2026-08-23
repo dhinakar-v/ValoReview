@@ -1,10 +1,14 @@
 /**
- * Page one: every playable capture the scanner found.
+ * Page one: every capture the scanner found.
  *
- * The list is filtered to captures whose build has a payload transform, and
- * that filter lives on the server rather than here.  A build without one has no
- * positions to decode and there is no schematic to fall back to, so there is
- * nothing behind such a card to open.
+ * It used to be every *playable* capture -- the list was filtered to builds
+ * with a payload transform, on the server rather than here.  A build without
+ * one has no positions to decode, but positions are not all a capture states:
+ * the map, the rounds and their outcomes, the kill feed and the player count
+ * all come out of the plain chunks, and the viewer already shows them as a
+ * document.  So the row is here and carries a chip saying what it cannot do,
+ * which is a smaller wrong claim than a library of real captures rendering as
+ * an empty directory.
  *
  * There are no filters here beyond the two the server offers.  `map_name` and
  * `page` are what `/api/library` takes; a search box filtering the page in the
@@ -17,10 +21,11 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { api } from "../api/client";
-import type { Card } from "../api/types";
+import type { Card, CardTeam } from "../api/types";
 import { formatDay, formatDuration, formatTimeOfDay } from "../model/format";
 import { glyphs } from "../views/icons";
-import { Failed, Loading, Page } from "../views/Shell";
+import { Failed, Page } from "../views/Shell";
+import { MatchListSkeleton } from "../views/skeleton";
 import { Chip, EmptyState, IconButton, Select, Toolbar } from "../views/ui";
 
 function Thumbnail({ card }: { card: Card }) {
@@ -44,6 +49,93 @@ function Thumbnail({ card }: { card: Card }) {
       width={200}
       height={52}
     />
+  );
+}
+
+/**
+ * The two teams, five agents each, in the card's own middle column.
+ *
+ * Three separate claims are drawn here and only two of them are always
+ * available, which is the whole reason this reads the way it does.
+ *
+ *   * **Who played.** An agent UUID per loadout slot, out of the plain chunks,
+ *     joined to Riot's published art.  Every readable capture has it -- no
+ *     decoder, no supported build -- so the portraits are on every row.
+ *   * **Which five were a team.** The roster's own first-five/last-five, which
+ *     `vrfhome.scan.team_ids` measured rather than assumed (103 of 103 against
+ *     duplicated agents, 23 of 23 against the kill graph).  A *set*-level
+ *     claim: nothing joins a slot to a player, and nothing here says it does.
+ *   * **How many rounds each won.** Derived by `infer`, and attributable to a
+ *     row only where a decode has said which half is its team A.  Where it has
+ *     not, `rounds_won` is null and **no number is drawn at all** -- a score
+ *     against the wrong five agents is a wrong claim that looks like a right
+ *     one, and this is the one of the three that could be silently wrong.
+ *
+ * What is deliberately absent is ATK/DEF.  Which team attacked is not
+ * recoverable -- spike events carry no actor id -- and over a whole match each
+ * team plays both sides anyway, so the colours name the two teams and claim no
+ * side.  See `vrfview/theme.py`.
+ */
+function TeamStrip({ card }: { card: Card }) {
+  if (card.teams === null) {
+    return null;
+  }
+  // Only ever drawn beside a number, and only when the numbers are real: it
+  // explains a scoreline that falls short of the round count, which is the
+  // ordinary case rather than the exceptional one.
+  const scored = card.teams.some((team) => team.rounds_won !== null);
+  return (
+    <div className="match-teams">
+      {card.teams.map((team, index) => (
+        <TeamRow key={index} team={team} tone={index === 0 ? "is-a" : "is-b"} />
+      ))}
+      {scored && card.rounds_undecided > 0 ? (
+        <span
+          className="match-undecided"
+          title={
+            `${card.rounds_undecided} of ${card.rounds} rounds ended in a defuse, ` +
+            "an explode or nothing at all. Spike events carry no actor id, so " +
+            "no side can be credited and these are in neither total."
+          }
+        >
+          +{card.rounds_undecided} undecided
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function TeamRow({ team, tone }: { team: CardTeam; tone: string }) {
+  return (
+    <div className={`match-team ${tone}`}>
+      {/* The cell is drawn either way so the two rows' portraits line up
+          whether or not a score could be attributed to them. */}
+      <span className="match-score">{team.rounds_won ?? ""}</span>
+      <span className="match-agents">
+        {team.agents.map((agent, index) =>
+          // Same rule as the thumbnail: where there is no picture the slot says
+          // so in letters rather than standing a drawing in for one.  An
+          // `<img>` with no `src` renders as the browser's broken-image glyph,
+          // which reads as a failed load rather than as art nobody fetched.
+          agent.icon_url === null ? (
+            <span key={index} className="match-agent absent" title={agent.name}>
+              {agent.name.slice(0, 2) || "?"}
+            </span>
+          ) : (
+            <img
+              key={index}
+              className="match-agent"
+              src={agent.icon_url}
+              alt={agent.name}
+              title={agent.name}
+              loading="lazy"
+              width={28}
+              height={28}
+            />
+          ),
+        )}
+      </span>
+    </div>
   );
 }
 
@@ -140,10 +232,20 @@ function CardRow({ card, index }: { card: Card; index: number }) {
         </span>
         {card.error ? <span className="card-line error">{card.error}</span> : null}
       </div>
+      <TeamStrip card={card} />
       <div className="card-badges">
+        {/*
+          One chip, and the two cases cannot both apply: `vrfhome/prewarm.py`
+          queues only playable captures, so a card that cannot be decoded has
+          no prewarm state to report and the slot is free for the reason why.
+        */}
         {card.prewarm ? (
           <Chip tone={prewarmTone(card.prewarm.state)} dot>
             {card.prewarm.label}
+          </Chip>
+        ) : card.readable && !card.playable ? (
+          <Chip tone="neutral" title={card.positions_note}>
+            NO POSITIONS
           </Chip>
         ) : null}
       </div>
@@ -152,7 +254,14 @@ function CardRow({ card, index }: { card: Card; index: number }) {
 
   // The left edge says whether there is anything behind the row, in the one
   // place the eye lands first on a list of a hundred.
-  const edge = card.readable ? "card playable" : "card unreadable";
+  //
+  // `playable` means what the scanner means by it and not merely `readable`:
+  // the list is no longer filtered, so a readable capture on an unsupported
+  // build now reaches this page, and it opens on the viewer's no-positions
+  // document.  `a.card` still matches every openable row, which is what the
+  // Playwright specs select on; `a.card.playable` is the narrower one the
+  // harness needs when it wants a capture that will actually draw.
+  const edge = !card.readable ? "card unreadable" : card.playable ? "card playable" : "card";
 
   // An unreadable capture is still shown -- carrying its error -- but there is
   // nothing behind it to open.
@@ -186,7 +295,7 @@ export function MatchListPage() {
   if (query.isPending) {
     return (
       <Page title="Replays">
-        <Loading what="the replay library" />
+        <MatchListSkeleton />
       </Page>
     );
   }

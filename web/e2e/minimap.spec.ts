@@ -18,7 +18,7 @@
  * keeps saying it will not make and which looks entirely plausible on screen.
  */
 
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 import type { Transform } from "../src/api/types";
 import type { ReplayModel } from "../src/model/replay";
@@ -35,6 +35,7 @@ import {
   readCanvas,
   rgbDistance,
   stepToEvent,
+  setLayer,
   toggleLayer,
   type Moment,
   type Pixels,
@@ -108,48 +109,6 @@ function largestPatch(pixels: Array<[number, number]>): number {
   return biggest;
 }
 
-interface Rect {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
-function inside(rect: Rect, x: number, y: number): boolean {
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
-
-/**
- * Where the clock pill covers the canvas, in the screenshot's own pixels.
- *
- * `.clock-pill` is `position: absolute` over the map, and while the spike is
- * down it carries a `SPIKE DOWN` badge whose text *and* 1px border are
- * `currentcolor` -- which is `--spike-armed`.  A Playwright element screenshot
- * clips the page to the element's box rather than isolating it, so those ~210
- * amber pixels are in the read of the canvas without a single one of them
- * having been drawn on it.  They are the DOM saying the same true thing the
- * marker says, so the count below steps over them rather than budgeting for
- * them -- which is what let the budget tighten from 200 to 20.
- */
-async function pillRect(page: Page, canvas: Locator): Promise<Rect | null> {
-  const pill = page.locator(".clock-pill");
-  if ((await pill.count()) === 0) {
-    return null;
-  }
-  const [over, under] = await Promise.all([pill.boundingBox(), canvas.boundingBox()]);
-  if (over === null || under === null) {
-    return null;
-  }
-  // A pixel of slack each way: both boxes are fractional and the screenshot is
-  // whole pixels, so a glyph's edge can land just outside the rounded box.
-  return {
-    left: over.x - under.x - 1,
-    top: over.y - under.y - 1,
-    right: over.x - under.x + over.width + 1,
-    bottom: over.y - under.y + over.height + 1,
-  };
-}
-
 /**
  * How far a player's centre has to be for the spike to be visible under it.
  *
@@ -213,8 +172,16 @@ test.describe("the 2D minimap", () => {
     const { replay, art, model } = await openFirstPlayable(page);
     const canvas = page.locator("canvas.minimap");
 
-    // Utility off: ability markers are drawn in team colours too, and this
-    // test is about players. The toggle is part of the interface, not a hook.
+    /*
+      Utility and sight off: both draw in team colours and this test is about
+      players. Turning SIGHT off is the point rather than a workaround -- the
+      assertion below counts team-coloured pixels that are near no predicted
+      player and allows fewer than 200, and a cone is a team-coloured wash
+      across half the map by design. Leaving it on would mean loosening the
+      budget until it stopped catching what it exists to catch, which is a
+      marker drawn where nobody is. The cones have their own spec below.
+    */
+    await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
 
     const moment = firstCrowdedEvent(model);
@@ -277,9 +244,12 @@ test.describe("the 2D minimap", () => {
     expect(unclaimed, "team-coloured pixels away from any predicted player").toBeLessThan(200);
   });
 
-  test("the sight cone points where the player is facing", async ({ page }) => {
+  test("every living player gets a cone, pointing where they are facing", async ({
+    page,
+  }) => {
     const { art, sight, model } = await openFirstPlayable(page);
     const canvas = page.locator("canvas.minimap");
+    await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
 
     const moment = firstCrowdedEvent(model);
@@ -290,18 +260,6 @@ test.describe("the 2D minimap", () => {
     const box = placeSquare(first.width, first.height);
     const snap = stateAt(model, tMs);
 
-    // Pick a living player the model can place, and select them by clicking
-    // the pixel the model says they are on -- which also exercises hit-testing.
-    const chosen = model.replay.players
-      .map((player) => ({ player, position: snap.positions.get(player.actor_id) }))
-      .find((entry) => entry.position !== undefined && snap.alive.has(entry.player.actor_id));
-    expect(chosen, "somebody is alive and placeable here").toBeTruthy();
-    const position = chosen!.position!;
-
-    const [u, v] = applyTransform(art.transform, position.x, position.y);
-    const [px, py] = uvToPixels(box, u, v);
-    await canvas.click({ position: { x: px, y: py } });
-
     const settings: SightSettings = {
       max_range_uu: sight.max_range_uu,
       fov_degrees: sight.fov_degrees,
@@ -309,41 +267,66 @@ test.describe("the 2D minimap", () => {
       seed_cells: sight.seed_cells,
       probe_uu: sight.probe_uu,
     };
-    const polygon = cone(
-      decodeMask(sight.size, sight.cells),
-      [u, v],
-      forwardUv(art.transform, position.x, position.y, position.yaw, settings.probe_uu),
-      uvRadius(art.transform, settings.max_range_uu),
-      settings,
-    );
-    expect(polygon.length, "this player has a cone to draw").toBeGreaterThan(2);
+    const mask = decodeMask(sight.size, sight.cells);
 
-    await toggleLayer(page, "SIGHT");
-    // The sentence travels with the mask, and is rendered verbatim.
-    await expect(page.getByText(sight.caption, { exact: true })).toBeVisible();
+    /*
+      Every cone the model says should be on the canvas, not just one.
+
+      This spec used to select a player and check their single wedge against
+      the same wedge rotated a quarter turn -- the control that catches
+      trigonometry done in uv space, which puts every cone ninety degrees out
+      and looks entirely plausible. The layer draws one per living player now,
+      so a rotated control aimed at one of them lands inside somebody else's
+      cone and the comparison stops discriminating. Rotating *every* cone about
+      *its own* player restores it: the real set covers what the model
+      predicts, and any turn of the whole set does not.
+    */
+    const drawn = model.replay.players
+      .map((player) => ({ player, position: snap.positions.get(player.actor_id) }))
+      .filter((e) => e.position !== undefined && snap.alive.has(e.player.actor_id))
+      .map(({ player, position }) => {
+        const [u, v] = applyTransform(art.transform, position!.x, position!.y);
+        return {
+          player,
+          origin: uvToPixels(box, u, v),
+          polygon: cone(
+            mask,
+            [u, v],
+            forwardUv(art.transform, position!.x, position!.y, position!.yaw, settings.probe_uu),
+            uvRadius(art.transform, settings.max_range_uu),
+            settings,
+          ),
+        };
+      })
+      .filter((entry) => entry.polygon.length > 2);
+
+    expect(drawn.length, "several players have a cone to draw here").toBeGreaterThan(2);
+
+    await setLayer(page, "SIGHT", true);
     const lit = await readCanvas(page, canvas);
 
-    // Sample halfway along each ray, then along the same rays rotated about the
-    // player. A cone drawn ninety degrees out -- trigonometry done in uv space
-    // instead of through the probe -- looks entirely plausible, and is exactly
-    // what a rotated control catches.
+    // Sample halfway along every ray of every cone, each rotated about the
+    // player it belongs to.
     const rate = (turn: number): number => {
       let sampled = 0;
       let changed = 0;
-      for (const [ru, rv] of polygon.slice(1)) {
-        const [ex, ey] = uvToPixels(box, ru, rv);
-        const dx = (ex - px) / 2;
-        const dy = (ey - py) / 2;
-        const x = px + dx * Math.cos(turn) - dy * Math.sin(turn);
-        const y = py + dx * Math.sin(turn) + dy * Math.cos(turn);
-        const before = pixelAt(first, x, y);
-        const after = pixelAt(lit, x, y);
-        if (before === null || after === null) {
-          continue;
-        }
-        sampled += 1;
-        if (rgbDistance(before, after) > 8) {
-          changed += 1;
+      for (const { origin, polygon } of drawn) {
+        const [px, py] = origin;
+        for (const [ru, rv] of polygon.slice(1)) {
+          const [ex, ey] = uvToPixels(box, ru, rv);
+          const dx = (ex - px) / 2;
+          const dy = (ey - py) / 2;
+          const x = px + dx * Math.cos(turn) - dy * Math.sin(turn);
+          const y = py + dx * Math.sin(turn) + dy * Math.cos(turn);
+          const before = pixelAt(first, x, y);
+          const after = pixelAt(lit, x, y);
+          if (before === null || after === null) {
+            continue;
+          }
+          sampled += 1;
+          if (rgbDistance(before, after) > 8) {
+            changed += 1;
+          }
         }
       }
       return sampled === 0 ? 0 : changed / sampled;
@@ -353,8 +336,13 @@ test.describe("the 2D minimap", () => {
     const left = rate(Math.PI / 2);
     const right = rate(-Math.PI / 2);
     const behind = rate(Math.PI);
-    expect(forward, "the wash covers the cone the model computed").toBeGreaterThan(0.6);
-    expect(forward, "and covers it better than a cone rotated a quarter turn").toBeGreaterThan(
+    // eslint-disable-next-line no-console
+    console.log(
+      `cones ${drawn.length}: forward ${forward.toFixed(3)} left ${left.toFixed(3)} ` +
+        `right ${right.toFixed(3)} behind ${behind.toFixed(3)}`,
+    );
+    expect(forward, "the wash covers the cones the model computed").toBeGreaterThan(0.6);
+    expect(forward, "and covers them better than the same cones turned").toBeGreaterThan(
       Math.max(left, right, behind) + 0.15,
     );
   });
@@ -459,13 +447,17 @@ test.describe("the 2D minimap", () => {
 
     const colours = await palette(page);
     const amber = parseColour(colours.spikeArmed!);
-    const overlay = await pillRect(page, canvas);
+    /*
+      Nothing is stepped over any more.  While the clock floated over the map it
+      carried a `SPIKE DOWN` badge whose text and 1px border are `currentcolor`
+      -- `--spike-armed` -- and an element screenshot clips the page rather than
+      isolating it, so ~210 amber pixels were in the read of the canvas without
+      one of them having been drawn on it.  The clock is in the stage head now
+      and outside this box entirely, so every amber pixel below was painted here.
+    */
     let near = 0;
     const stray: Array<[number, number]> = [];
     for (const [px, py] of colouredPixels(image, [amber])) {
-      if (overlay !== null && inside(overlay, px, py)) {
-        continue;
-      }
       if (Math.hypot(px - x, py - y) <= MARKER_REACH) {
         near += 1;
       } else {

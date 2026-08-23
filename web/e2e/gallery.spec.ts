@@ -17,7 +17,14 @@ import { expect, test } from "@playwright/test";
 
 import { positionOf, stateAt } from "../src/model/state";
 import { applyTransform, placeSquare, uvToPixels } from "../src/model/transform";
-import { firstCrowdedEvent, openFirstPlayable, readCanvas, stepToEvent, toggleLayer } from "./harness";
+import {
+  firstCrowdedEvent,
+  openFirstPlayable,
+  readCanvas,
+  setLayer,
+  stepToEvent,
+  toggleLayer,
+} from "./harness";
 
 test("every view, rendered and saved for a person to look at", async ({ page }, testInfo) => {
   const { replay, art, model } = await openFirstPlayable(page);
@@ -45,10 +52,12 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
   await take("2d-trails.png");
   await toggleLayer(page, "TRAILS");
 
-  // A cone needs somebody selected, and selecting them means clicking where
-  // the model says they are: clicking empty canvas selects nobody, and the
-  // picture then shows the SIGHT button lit and no cone, which is correct
-  // behaviour and useless to look at.
+  // The cones no longer care about a selection -- every living player gets
+  // one, at the same weight, and overlap is what varies. The click stays
+  // because a picked *marker* is still a feature worth having in the gallery:
+  // it is three times the size with a light ring and its own hover card. It
+  // lands where the model says a player is, since clicking empty canvas
+  // selects nobody.
   const minimap = page.locator("canvas.minimap");
   const image = await readCanvas(page, minimap);
   const box = placeSquare(image.width, image.height);
@@ -59,9 +68,9 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
   const [u, v] = applyTransform(art.transform, chosen.x, chosen.y);
   const [px, py] = uvToPixels(box, u, v);
   await minimap.click({ position: { x: px, y: py } });
-  await toggleLayer(page, "SIGHT");
+  await setLayer(page, "SIGHT", true);
   await take("2d-sight.png");
-  await toggleLayer(page, "SIGHT");
+  await setLayer(page, "SIGHT", false);
 
   await page.getByRole("button", { name: "3D", exact: true }).click();
   await expect(page.locator(".stage-canvas canvas")).toBeVisible();
@@ -69,6 +78,12 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
     () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
   );
   await take("3d-scene.png");
+  // The scene draws the same cones as the minimap now, for the same people, at
+  // the same weights -- so the gallery shows both, because "the same" is a
+  // claim a person should be able to check by looking at two pictures.
+  await setLayer(page, "SIGHT", true);
+  await take("3d-sight.png");
+  await setLayer(page, "SIGHT", false);
   await toggleLayer(page, "CALLOUTS");
   await take("3d-callouts.png");
 

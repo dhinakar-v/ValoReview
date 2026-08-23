@@ -55,6 +55,13 @@ MAP_NAMES = {
     "Jam": "Lotus",
     "Juliett": "Sunset",
     "Pitt": "Pearl",
+    # Summit is the one map valorant-api publishes no developerName for, so
+    # fetch_assets writes `codename: null` and this row cannot be read off
+    # the manifest the way the others could be.  The join is the manifest's
+    # own `map_url` for Summit -- /Game/Maps/Plummet/Plummet -- which is the
+    # same path a capture states, so it is a published fact rather than a
+    # guess at a codename.
+    "Plummet": "Summit",
     "Port": "Icebox",
     "Rook": "Corrode",
     "Triad": "Haven",
@@ -99,7 +106,19 @@ def load(path: str | Path) -> Replay:
             events=doc["events"],
             metadata=doc.get("match_metadata") or {},
         )
-    vrf = VrfFile(path)
+    return load_vrf(VrfFile(path), source=path)
+
+
+def load_vrf(vrf: VrfFile, source: str | Path | None = None) -> Replay:
+    """
+    Build a Replay from a container that is already open.
+
+    `load` reads 47 MB to construct a `VrfFile`, and a caller that has one in
+    hand should not pay for that twice: `vrfhome.scan` parses every event
+    anyway to count the rounds, so deriving the teams and the score there costs
+    it milliseconds rather than a second read of the whole file.
+    """
+    path = Path(source) if source is not None else vrf.path
     return _from_document(
         source=path,
         container=dump_container_header(vrf),

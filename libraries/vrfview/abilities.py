@@ -118,33 +118,105 @@ KIND_PROJECTILE = "Projectile"
 KIND_GAMEOBJECT = "GameObject"
 KIND_EQUIPPABLE = "Equippable"
 
+# Two more things-left-standing, and they are not synonyms of `GameObject_`
+# that somebody forgot to normalise -- they are what Riot names them, and they
+# are measured to behave the same way.  `Zone_` is Omen's smoke; `Patch_` is
+# Gekko's.  See PLACING_KINDS for the numbers.
+KIND_ZONE = "Zone"
+KIND_PATCH = "Patch"
+
 KIND_ACTOR = "Actor"
 
 # Only these ever move; see the module docstring.
 MOVING_KINDS = (KIND_PAWN,)
 
-# Kinds a cast *creates*.  A `GameObject_` is excluded on purpose: a smoke
-# still standing when the round rolled over reopens with no cast beside it,
-# and treating that as a fresh use would put a decision in a round nobody made
-# it in.  `Equippable_` is excluded because it is loadout, not a use.
-CAST_KINDS = (KIND_ABILITY, KIND_PAWN, KIND_PROJECTILE)
+# Kinds a cast *creates*.  `Equippable_` is excluded because it is loadout,
+# not a use.
+#
+# The placed kinds used to be excluded too, and that was a real guard aimed at
+# a real thing -- a smoke still standing when the round rolled over reopens
+# with no `Ability_` beside it, and reporting that would put a decision in a
+# round nobody made it in.  It was aimed with the wrong instrument.  Excluding
+# the *kind* also throws away every ability whose only witness is the thing it
+# left behind, which measured over the reference library is 2,223 groups:
+# Brimstone's sky smokes (37 of 37 groups), Chamber's traps and headhunter
+# (1,073), Cypher's cages, Reyna's dismiss, Breach's fault line.  Brimstone's C
+# slot spawns 142 `GameObject_` against 4 `Ability_` library-wide, so his
+# smokes simply did not exist.
+#
+# What separates a leftover from a use is *when*, not what -- see
+# ROUND_OPENING_MS, which is where that guard now lives and which also catches
+# the 140 re-replicated groups this list was letting through.
+CAST_KINDS = (
+    KIND_ABILITY,
+    KIND_PAWN,
+    KIND_PROJECTILE,
+    KIND_GAMEOBJECT,
+    KIND_ZONE,
+    KIND_PATCH,
+)
+
+# How far into a round a group has to open before it is a decision somebody
+# made rather than the world being handed over again.
+#
+# At a round boundary the engine reopens whatever is still standing under fresh
+# actor ids, and those land within a few milliseconds of the round's own start.
+# Measured over the 21 playable captures, as the offset from the round start to
+# a group's earliest spawn: **495 groups land in the first 100 ms, then nothing
+# at all until 4 seconds** -- the 100-250, 250-500 and 1,000-4,000 ms bands are
+# each completely empty, and 500-1,000 holds seven.  So this is a gap between
+# two populations rather than a number anybody chose, and it sits in the empty
+# band immediately above the spike.
+#
+# It cannot cost a real cast, because a round opens on a barrier nobody can
+# cast through.
+ROUND_OPENING_MS = 250
 
 # Which spawn gets to name the cast, best first.  The pawn wins because it is
 # the object the ability left in the world and its name is the ability's own;
 # the ability actor is second because it is sometimes a sub-actor
-# (`..._TurretAttack`) rather than the ability itself.
-NAMING_KINDS = (KIND_PAWN, KIND_ABILITY, KIND_PROJECTILE, KIND_GAMEOBJECT)
+# (`..._TurretAttack`) rather than the ability itself.  `Zone_` and `Patch_`
+# sit beside `GameObject_` at the back for the same reason it does.
+NAMING_KINDS = (
+    KIND_PAWN,
+    KIND_ABILITY,
+    KIND_PROJECTILE,
+    KIND_GAMEOBJECT,
+    KIND_ZONE,
+    KIND_PATCH,
+)
 
 # Which spawn gets to say *where* the cast ended up, best first -- and note
 # that this is very nearly the reverse of NAMING_KINDS, because the two
-# questions have different best witnesses.  The `Ability_` actor appears at
-# the caster's own feet (a median 1 uu from them, measured), so it names the
-# ability well and says nothing about where the ability went.  The
-# `GameObject_` is the thing left standing in the world -- a smoke, a wall --
-# and it appears where it came to rest, a median 1,296 uu away.  A pawn is
-# first only so that the rule reads completely; a pawn has a track, and a
-# track always outranks a spawn point.
-PLACING_KINDS = (KIND_PAWN, KIND_GAMEOBJECT, KIND_PROJECTILE, KIND_ABILITY)
+# questions have different best witnesses.
+#
+# Measured over the 21 playable captures as the distance from the placement to
+# the caster's own decoded position at that instant, which is the same way the
+# first version of this list was settled:
+#
+#     Pawn                    -- a track, which always outranks a spawn point
+#     GameObject   n=2341     median 2,005 uu    98.3% inside the silhouette
+#     Zone         n= 288     median 3,533 uu   100.0%
+#     Patch        n= 259     median 2,017 uu    99.1%
+#     Ability      n= 897     median   259 uu    99.7%
+#     Projectile   n=3491     median    42 uu    99.5%
+#
+# The split is not subtle.  The first four are the thing left standing, out
+# where it came to rest; the last two are where the caster was standing when
+# they made the decision, and they are here only so the rule reads completely.
+# `Projectile_` is a *throw origin* -- 42 uu is inside the caster's own capsule
+# -- so ranking it above the placed kinds is what put Omen's smoke a median
+# 3,061 uu from the smoke and on top of Omen instead, for every one of 241
+# casts.  A kind this list does not name is refused, which is why `Zone_` and
+# `Patch_` had to be added rather than left to fall through.
+PLACING_KINDS = (
+    KIND_PAWN,
+    KIND_GAMEOBJECT,
+    KIND_ZONE,
+    KIND_PATCH,
+    KIND_PROJECTILE,
+    KIND_ABILITY,
+)
 
 NO_POSITION = "no position on wire"
 
@@ -399,6 +471,7 @@ def casts(
     spawns: list[AbilitySpawn],
     round_of=None,
     codenames: dict[str, str] | None = None,
+    opened_at=None,
 ) -> list[AbilityCast]:
     """
     Group spawns into one cast per agent, slot and round.
@@ -406,12 +479,19 @@ def casts(
     `round_of` is a callable taking milliseconds and returning a round number
     (`Replay.round_at` wrapped by the caller); without one everything lands in
     round 0, which is what a replay with no rounds deserves.  `codenames` maps
-    a codename to a public agent name where one resolved.
+    a codename to a public agent name where one resolved.  `opened_at` takes
+    milliseconds and returns the start of the round containing them, and is
+    what the leftover guard below needs; without one that guard is skipped and
+    a round boundary will hand back a handful of casts nobody made.
 
-    A group is a cast only if something in it was *created by the act* --
-    `CAST_KINDS`.  A stray `GameObject_` on its own is a leftover from before
-    the window, a smoke still standing when the round ended, and reporting it
-    as a fresh cast would put a decision in a round nobody made it in.
+    A group is a cast if something in it was *created by the act* --
+    `CAST_KINDS` -- **and** it did not open in the first `ROUND_OPENING_MS` of
+    its round.  The second half is the leftover guard: a smoke still standing
+    when the round ended reopens under a fresh actor id a few milliseconds into
+    the next round, and reporting that would put a decision in a round nobody
+    made it in.  It used to be done by excluding `GameObject_` from
+    `CAST_KINDS`, which threw away every ability whose only witness is what it
+    left behind -- see that constant for what that cost.
 
     The cast's instant is the earliest of those creations, and its name comes
     from whichever spawn `NAMING_KINDS` ranks highest.  Both are answers to the
@@ -439,6 +519,8 @@ def casts(
         if not made:
             continue
         first = min(made, key=lambda s: s.t_ms)
+        if _is_handover(group, opened_at):
+            continue
         namer = _namer(group)
         out.append(
             AbilityCast(
@@ -457,6 +539,24 @@ def casts(
         )
     out.sort(key=lambda c: (c.t_ms, c.codename, c.slot))
     return out
+
+
+def _is_handover(group: list[AbilitySpawn], opened_at) -> bool:
+    """
+    Whether this group is the world being handed over rather than a decision.
+
+    The group's *earliest* spawn is the one asked about, not its earliest
+    `CAST_KINDS` spawn: what reopens at a boundary is everything still standing,
+    and the question is when this agent's slot first said anything at all.
+
+    With no `opened_at` there is nothing to compare against and the answer is
+    no -- a replay with no rounds has no boundaries to be handed over at.
+    """
+    if opened_at is None:
+        return False
+    earliest = min(s.t_ms for s in group)
+    start = opened_at(earliest)
+    return start is not None and earliest - start < ROUND_OPENING_MS
 
 
 def _placements(group: list[AbilitySpawn]) -> tuple[Placement, ...]:

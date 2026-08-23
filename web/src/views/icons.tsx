@@ -21,63 +21,77 @@
  * on the cap height of the label beside it; 16px is an icon standing alone.
  * Anything else is a one-off, and the old stylesheet's fifteen distinct
  * paddings are the argument against one-offs.
+ *
+ * The set is Phosphor's, drawn at its **fill** weight, which is a solid shape
+ * carrying no stroke -- so there is no line width to set here, and what `Icon`
+ * pins in its place is `weight`.  The `*Icon`-suffixed exports are the current
+ * names; the bare ones the package still ships are deprecated.
+ *
+ * The glyphs are imported one module at a time rather than from the package
+ * barrel, which re-exports three thousand of them: through the barrel a single
+ * test file spent 4.29s collecting, and 0.37s importing the forty-five it
+ * actually draws.  The two types below come from the barrel because a type
+ * import is erased and costs nothing.
  */
 
-import {
-  ArrowLeft,
-  ArrowLeftRight,
-  ArrowUpRight,
-  Bomb,
-  Box,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  CircleAlert,
-  CircleCheck,
-  Coins,
-  Cpu,
-  Crosshair,
-  Droplet,
-  Eye,
-  EyeOff,
-  FileQuestion,
-  Grid2x2,
-  ImageOff,
-  Keyboard,
-  Layers as LayersGlyph,
-  List,
-  ListFilter,
-  LoaderCircle,
-  Map as MapGlyph,
-  MapPin,
-  Pause,
-  Play,
-  RefreshCw,
-  Repeat,
-  Route,
-  Shield,
-  SkipBack,
-  SkipForward,
-  Skull,
-  Sparkles,
-  Swords,
-  Tag,
-  Timer,
-  TriangleAlert,
-  Users,
-  X,
-  Zap,
-  ZoomIn,
-} from "lucide-react";
-import type { ComponentType, SVGProps } from "react";
+import { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+import { ArrowUpRightIcon } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
+import { ArrowsClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
+import { ArrowsLeftRightIcon } from "@phosphor-icons/react/dist/csr/ArrowsLeftRight";
+import { BombIcon } from "@phosphor-icons/react/dist/csr/Bomb";
+import { CaretDoubleLeftIcon } from "@phosphor-icons/react/dist/csr/CaretDoubleLeft";
+import { CaretDoubleRightIcon } from "@phosphor-icons/react/dist/csr/CaretDoubleRight";
+import { CaretLeftIcon } from "@phosphor-icons/react/dist/csr/CaretLeft";
+import { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { CheckCircleIcon } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { CircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
+import { CoinsIcon } from "@phosphor-icons/react/dist/csr/Coins";
+import { CpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
+import { CrosshairIcon } from "@phosphor-icons/react/dist/csr/Crosshair";
+import { CubeIcon } from "@phosphor-icons/react/dist/csr/Cube";
+import { DropIcon } from "@phosphor-icons/react/dist/csr/Drop";
+import { EyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
+import { EyeSlashIcon } from "@phosphor-icons/react/dist/csr/EyeSlash";
+import { FileXIcon } from "@phosphor-icons/react/dist/csr/FileX";
+import { FunnelSimpleIcon } from "@phosphor-icons/react/dist/csr/FunnelSimple";
+import { GridFourIcon } from "@phosphor-icons/react/dist/csr/GridFour";
+import { ImageBrokenIcon } from "@phosphor-icons/react/dist/csr/ImageBroken";
+import { KeyboardIcon } from "@phosphor-icons/react/dist/csr/Keyboard";
+import { LightningIcon } from "@phosphor-icons/react/dist/csr/Lightning";
+import { ListIcon } from "@phosphor-icons/react/dist/csr/List";
+import { MagnifyingGlassPlusIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlassPlus";
+import { MapPinIcon } from "@phosphor-icons/react/dist/csr/MapPin";
+import { MapTrifoldIcon } from "@phosphor-icons/react/dist/csr/MapTrifold";
+import { PathIcon } from "@phosphor-icons/react/dist/csr/Path";
+import { PauseIcon } from "@phosphor-icons/react/dist/csr/Pause";
+import { PlayIcon } from "@phosphor-icons/react/dist/csr/Play";
+import { RepeatIcon } from "@phosphor-icons/react/dist/csr/Repeat";
+import { ShieldIcon } from "@phosphor-icons/react/dist/csr/Shield";
+import { SkipBackIcon } from "@phosphor-icons/react/dist/csr/SkipBack";
+import { SkipForwardIcon } from "@phosphor-icons/react/dist/csr/SkipForward";
+import { SkullIcon } from "@phosphor-icons/react/dist/csr/Skull";
+import { SparkleIcon } from "@phosphor-icons/react/dist/csr/Sparkle";
+import { StackIcon } from "@phosphor-icons/react/dist/csr/Stack";
+import { SwordIcon } from "@phosphor-icons/react/dist/csr/Sword";
+import { TagIcon } from "@phosphor-icons/react/dist/csr/Tag";
+import { TimerIcon } from "@phosphor-icons/react/dist/csr/Timer";
+import { UsersIcon } from "@phosphor-icons/react/dist/csr/Users";
+import { WarningCircleIcon } from "@phosphor-icons/react/dist/csr/WarningCircle";
+import { WarningIcon } from "@phosphor-icons/react/dist/csr/Warning";
+import { XIcon } from "@phosphor-icons/react/dist/csr/X";
+import type { Icon as PhosphorGlyph, IconWeight } from "@phosphor-icons/react";
 
 /** An icon inside a control, beside its label. */
 export const ICON_INLINE = 14;
 /** An icon standing on its own -- a status light, an empty state. */
 export const ICON_ALONE = 16;
 
-type Glyph = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
+/**
+ * One glyph, as the icon set publishes it.  Exported so `ui.tsx` and the menus
+ * type their `icon` props against this rather than against a structural copy
+ * that could drift from what the package actually accepts.
+ */
+export type Glyph = PhosphorGlyph;
 
 /**
  * Draw one glyph, decoratively.
@@ -90,16 +104,18 @@ type Glyph = ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;
 export function Icon({
   glyph: Glyph,
   size = ICON_INLINE,
+  weight = "fill",
   className,
 }: {
   glyph: Glyph;
   size?: number;
+  weight?: IconWeight;
   className?: string;
 }) {
   return (
     <Glyph
       size={size}
-      strokeWidth={1.25}
+      weight={weight}
       aria-hidden="true"
       focusable={false}
       className={className}
@@ -109,63 +125,63 @@ export function Icon({
 
 /** A spinner, which is the same glyph with the stylesheet's one animation. */
 export function Spinner({ size = ICON_INLINE }: { size?: number }) {
-  return <Icon glyph={LoaderCircle} size={size} className="spin" />;
+  return <Icon glyph={CircleNotchIcon} size={size} className="spin" />;
 }
 
 export const glyphs = {
   // transport
-  toStart: SkipBack,
-  prevEvent: ChevronsLeft,
-  play: Play,
-  pause: Pause,
-  nextEvent: ChevronsRight,
-  toEnd: SkipForward,
-  keys: Keyboard,
-  loop: Repeat,
-  timeline: List,
-  clock: Timer,
+  toStart: SkipBackIcon,
+  prevEvent: CaretDoubleLeftIcon,
+  play: PlayIcon,
+  pause: PauseIcon,
+  nextEvent: CaretDoubleRightIcon,
+  toEnd: SkipForwardIcon,
+  keys: KeyboardIcon,
+  loop: RepeatIcon,
+  timeline: ListIcon,
+  clock: TimerIcon,
 
   // layers
-  view2d: Grid2x2,
-  view3d: Box,
-  utility: Zap,
-  trails: Route,
-  sight: Eye,
-  callouts: Tag,
-  layers: LayersGlyph,
-  killMarkers: Crosshair,
-  kills: Skull,
-  ultimates: Sparkles,
-  spike: Bomb,
-  firstBlood: Droplet,
-  zoom: ZoomIn,
+  view2d: GridFourIcon,
+  view3d: CubeIcon,
+  utility: LightningIcon,
+  trails: PathIcon,
+  sight: EyeIcon,
+  callouts: TagIcon,
+  layers: StackIcon,
+  killMarkers: CrosshairIcon,
+  kills: SkullIcon,
+  ultimates: SparkleIcon,
+  spike: BombIcon,
+  firstBlood: DropIcon,
+  zoom: MagnifyingGlassPlusIcon,
 
   // The mark inside a primary button's trailing cap.  A direction rather
   // than a repeat of the button's own icon: the cap says the press leads
   // somewhere, the leading glyph says what the press is.
-  capArrow: ArrowUpRight,
+  capArrow: ArrowUpRightIcon,
 
   // navigation and library
-  back: ArrowLeft,
-  map: MapGlyph,
-  mapPin: MapPin,
-  rescan: RefreshCw,
-  filter: ListFilter,
-  pagePrev: ChevronLeft,
-  pageNext: ChevronRight,
+  back: ArrowLeftIcon,
+  map: MapTrifoldIcon,
+  mapPin: MapPinIcon,
+  rescan: ArrowsClockwiseIcon,
+  filter: FunnelSimpleIcon,
+  pagePrev: CaretLeftIcon,
+  pageNext: CaretRightIcon,
 
   // viewer sections
-  players: Users,
-  rounds: Swords,
-  casts: Sparkles,
-  decode: Cpu,
+  players: UsersIcon,
+  rounds: SwordIcon,
+  casts: SparkleIcon,
+  decode: CpuIcon,
 
   // status and absence
-  ok: CircleCheck,
-  bad: CircleAlert,
-  simulated: TriangleAlert,
-  noArt: ImageOff,
-  noFile: FileQuestion,
+  ok: CheckCircleIcon,
+  bad: WarningCircleIcon,
+  simulated: WarningIcon,
+  noArt: ImageBrokenIcon,
+  noFile: FileXIcon,
 
   /*
     Roster and events.
@@ -176,21 +192,21 @@ export const glyphs = {
     player reads without thinking.  The attackers are the side that carries
     the spike, so they get the spike.
   */
-  atk: Bomb,
-  def: Shield,
+  atk: BombIcon,
+  def: ShieldIcon,
   /*
     Show and hide, as an eye and a struck-through eye.
 
-    This was `ListFilter` -- three descending bars -- on a control that filters
+    This was the filter glyph -- descending bars -- on a control that filters
     nothing: it shows and hides five markers.  Two glyphs rather than one so
     the icon flips with the state, which is what makes the current state
     readable without hovering for the tooltip.
   */
-  shown: Eye,
-  hidden: EyeOff,
-  credits: Coins,
-  swap: ArrowLeftRight,
-  close: X,
+  shown: EyeIcon,
+  hidden: EyeSlashIcon,
+  credits: CoinsIcon,
+  swap: ArrowsLeftRightIcon,
+  close: XIcon,
 } satisfies Record<string, Glyph>;
 
 /**

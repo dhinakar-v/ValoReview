@@ -30,7 +30,8 @@ import { formatRecorded } from "../model/format";
 import { sideOf } from "../model/synthetic";
 import { glyphs } from "../views/icons";
 import { MapStage } from "../views/MapStage";
-import { Failed, Loading, Page } from "../views/Shell";
+import { Failed, Page } from "../views/Shell";
+import { Block, StageSkeleton } from "../views/skeleton";
 import { Button, Chip, Panel, TabPanel, Tabs, Toolbar } from "../views/ui";
 import type { Tab } from "../views/ui";
 
@@ -272,10 +273,38 @@ export function ViewerPage() {
   );
 
   if (query.isPending) {
+    /*
+      The immersive shape, chosen before the data can say which shape it is.
+
+      `AppFrame` has already made that decision from the URL alone -- every
+      `/replay/:id` is `is-immersive`, the app bar is gone and the frame is
+      `overflow: hidden` -- so a document-shaped placeholder here contradicts
+      the frame it is sitting inside.  Every capture that has positions, which
+      is what most opened captures are, therefore loads without the page moving
+      once: this skeleton *is* the next frame.  One without them still swaps to
+      the document shape, which is what it does today from the sentence too.
+
+      BACK is the real button and not a block.  It is the one thing on this page
+      that is already known and already works, and a slow replay is exactly when
+      somebody wants to leave.
+    */
     return (
-      <Page title="Replay" actions={back}>
-        <Loading what="the replay" />
-      </Page>
+      <>
+        <header className="viewer-bar">
+          <Link to="/" className="viewer-back">
+            <Button label="BACK" icon={glyphs.back} size="sm" />
+          </Link>
+          <Block w={150} h={16} />
+          <Block w={104} h={11} />
+          <div className="spacer" />
+        </header>
+        {/* `id` and `tabIndex` because `AppFrame`'s skip link targets them, and
+            a link pointing at nothing for the length of a load is worse than
+            no link. */}
+        <main id="main" className="viewer" tabIndex={-1}>
+          <StageSkeleton what="the replay" />
+        </main>
+      </>
     );
   }
   if (query.isError) {
