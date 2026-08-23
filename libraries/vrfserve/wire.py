@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 from vrfview import abilityfacts
 from vrfview import sight as sight_mod
 from vrfview.abilities import NO_POSITION, attribute, travel
+from vrfview.model import TEAM_A, TEAM_B
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -443,7 +444,50 @@ def replay_doc(
     }
 
 
-def card(entry, replay_id: str, cache: ArtCache | None, prewarm: dict | None) -> dict:
+def card_teams(entry, cache: ArtCache | None, first_half_team: str = "") -> list | None:
+    """
+    The two teams a card draws: five agents each, and a rounds-won count.
+
+    The split itself is `vrfhome.scan.team_ids`' claim and is measured there;
+    this only resolves each UUID to its published art and decides where the
+    scoreline goes.  `first_half_team` is `vrfhome.teamorder`'s answer to the
+    one question the plain chunks cannot settle -- which half `infer` called A
+    -- and where it is absent **both rows report `null` rather than a number**,
+    because a score against the wrong five agents is a wrong claim that looks
+    like a right one.
+
+    `None` where there is no split or no art: a row of anonymous squares would
+    be a picture of a roster rather than the roster.
+    """
+    first, second = entry.agent_ids
+    if not first or cache is None:
+        return None
+    wins: tuple[int | None, int | None] = (None, None)
+    if entry.score is not None and first_half_team in (TEAM_A, TEAM_B):
+        a, b = entry.score
+        wins = (a, b) if first_half_team == TEAM_A else (b, a)
+    out = []
+    for half, won in zip((first, second), wins, strict=True):
+        agents = []
+        for uuid in half:
+            art = cache.agent_art(uuid)
+            agents.append(
+                {
+                    "name": art.name if art else "",
+                    "icon_url": asset_url(art.icon, cache.root) if art else None,
+                },
+            )
+        out.append({"agents": agents, "rounds_won": won})
+    return out
+
+
+def card(
+    entry,
+    replay_id: str,
+    cache: ArtCache | None,
+    prewarm: dict | None,
+    first_half_team: str = "",
+) -> dict:
     """
     One row of the match list, as the scanner describes it.
 
@@ -480,4 +524,10 @@ def card(entry, replay_id: str, cache: ArtCache | None, prewarm: dict | None) ->
         "playable": entry.playable,
         "positions_note": entry.positions_note,
         "prewarm": prewarm,
+        "teams": card_teams(entry, cache, first_half_team),
+        # Rounds nothing settled.  A scoreline that falls short of `rounds` is
+        # the normal case rather than the exceptional one -- a defuse or an
+        # explode records its reason and no winner -- so the shortfall travels
+        # beside it and the card can say so instead of reading as a blowout.
+        "rounds_undecided": entry.rounds_undecided,
     }

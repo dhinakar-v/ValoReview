@@ -36,7 +36,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 import vrfconfig
-from vrfhome import prewarm, scan
+from vrfhome import prewarm, scan, teamorder
 from vrfserve import schema, wire
 from vrfserve.library import Library
 from vrfview import art as art_mod
@@ -89,10 +89,11 @@ class _Preparation:
         self._statuses: dict[str, dict] = {}
         self.worker = None
 
-    def start(self, cards, registry) -> None:
+    def start(self, cards, registry, agent_name=None) -> None:
         self.worker = prewarm.Prewarmer(
             cards,
             on_change=lambda path, status: self._record(registry, path, status),
+            agent_name=agent_name,
         )
         # Seed from the worker's own queue, not from every card. `Prewarmer`
         # queues only what is playable, and reporting QUEUED for a capture that
@@ -200,7 +201,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         """Fill the position cache while nobody is asking for anything."""
         if config.prewarm:
-            preparation.start(library.result.cards, library.registry)
+            preparation.start(
+                library.result.cards,
+                library.registry,
+                config.art.agent_name,
+            )
         yield
         # Asked, not waited for: the worker is a daemon and checks between
         # captures, so it drops out inside a second.
@@ -279,18 +284,23 @@ def _add_library_routes(
         cards = scan.filter_cards(result.cards, map_name=query.map_name)
         cards = scan.sort_cards(cards, descending=True)
         root = result.root or vrfconfig.demo_root(config.demo_path)
+        order = teamorder.load()
         return {
             "root": demo_root_doc(root),
             "maps_present": scan.maps_present(result.cards),
             "page": query.page,
             "page_count": scan.page_count(cards),
             "per_page": scan.PER_PAGE,
+            # One read of the team-order cache for the whole page rather than
+            # one per row: it is a small file, and which half of a roster is
+            # team A cannot change between two cards of the same response.
             "cards": [
                 wire.card(
                     c,
                     library.id_of(c.path),
                     config.art,
                     preparation.status(library.id_of(c.path)),
+                    order.get(c.match_id, ""),
                 )
                 for c in scan.page(cards, number=query.page)
             ],
@@ -311,8 +321,31 @@ def _decode_now(library: Library, config: Settings, replay_id: str, path) -> obj
     # Again, because the codenames only exist once the stream has been read:
     # naming before the decode leaves every agent a `Hunter`.
     names.resolve(replay)
+    _remember_team_order(library, config, replay, replay_id)
     library.replace(replay_id, replay)
     return replay
+
+
+def _remember_team_order(
+    library: Library,
+    config: Settings,
+    replay,
+    replay_id: str,
+) -> None:
+    """
+    Record which half of the loadout roster this capture's team A is.
+
+    The plain chunks state the two teams but not which of them `infer` labels A
+    (see `vrfhome.teamorder`), so a match-list card can show its ten agents but
+    cannot put the scoreline beside the right five until something has read the
+    codenames.  This is that moment, for a capture decoded on request; the
+    background queue records the same letter for everything it prepares.
+    """
+    card = library.card(replay_id)
+    if card is None or not card.agent_ids[0]:
+        return
+    letter = teamorder.first_half_team(replay, card.agent_ids, config.art.agent_name)
+    teamorder.record(replay.match_id, letter)
 
 
 def _replay_doc(replay, replay_id: str, config: Settings) -> dict:
@@ -501,7 +534,7 @@ def _mount_static(app: FastAPI, config: Settings) -> None:
         # belongs.  So the mount is simply not made, and every asset URL misses.
         @app.get(f"{wire.ASSET_PREFIX}/{{path:path}}")
         def no_art(path: str) -> None:  # noqa: ARG001  (the path is the 404)
-            raise HTTPException(status_code=404, detail=art_mod.FETCH_HINT)
+            raise HTTPException(status_code=404, detail=art_mod.fetch_hint())
 
     if not config.web_built:
 

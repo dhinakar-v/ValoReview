@@ -41,7 +41,7 @@ from vrfserve import ids, schema, wire
 from vrfserve.app import Settings, create_app
 from vrfview import positionfile, sight, tracks
 from vrfview.abilities import AbilityCast
-from vrfview.art import ArtCache, Callout, MapArt, Transform
+from vrfview.art import AgentArt, ArtCache, Callout, MapArt, Transform
 from vrfview.model import Loadout, Player, Position, Replay, Round, Track
 
 REPO = Path(__file__).resolve().parents[1]
@@ -241,6 +241,78 @@ class WireBuilders(unittest.TestCase):
 
         refused = wire.replay_doc(_replay(), "abc123", None)
         assert not refused["positions_available"]
+
+    def test_a_card_carries_its_two_teams_and_validates(self):
+        """
+        The match-list row's agents and, where it can be had, its scoreline.
+
+        `wire` resolves the art and places the numbers; it decides neither the
+        split (that is `vrfhome.scan.team_ids`, measured) nor which half is
+        team A (that is `vrfhome.teamorder`, which needs a decode).  All three
+        cases below are the second of those failing, succeeding, and flipping.
+        """
+        art = ArtCache(
+            root=Path("assets"),
+            agents={
+                f"uuid-{n}": AgentArt(name=f"Agent{n}", uuid=f"uuid-{n}")
+                for n in range(10)
+            },
+        )
+        entry = scan.MatchCard(
+            path=Path("m.vrf"),
+            match_id="m-1",
+            build="++Ares-Core+release-12.10",
+            rounds=24,
+            agent_ids=(
+                tuple(f"uuid-{n}" for n in range(5)),
+                tuple(f"uuid-{n}" for n in range(5, 10)),
+            ),
+            score=(13, 9),
+            rounds_undecided=2,
+        )
+
+        # No letter: the agents are still a fact, the scoreline is not.
+        unattributed = wire.card(entry, "abc123", art, None)
+        schema.CardDoc.model_validate(unattributed)
+        assert [a["name"] for a in unattributed["teams"][0]["agents"]] == [
+            "Agent0",
+            "Agent1",
+            "Agent2",
+            "Agent3",
+            "Agent4",
+        ]
+        assert [t["rounds_won"] for t in unattributed["teams"]] == [None, None]
+        assert unattributed["rounds_undecided"] == 2
+
+        # A letter puts `infer`'s A beside whichever half it actually was, and
+        # getting this backwards is the one mistake here that looks correct.
+        first_is_a = wire.card(entry, "abc123", art, None, "A")
+        assert [t["rounds_won"] for t in first_is_a["teams"]] == [13, 9]
+        first_is_b = wire.card(entry, "abc123", art, None, "B")
+        assert [t["rounds_won"] for t in first_is_b["teams"]] == [9, 13]
+
+    def test_a_card_with_no_split_or_no_art_carries_no_teams(self):
+        entry = scan.MatchCard(path=Path("m.vrf"), agent_ids=((), ()))
+        doc = wire.card(entry, "abc123", ArtCache(), None, "A")
+        schema.CardDoc.model_validate(doc)
+        assert doc["teams"] is None
+        # Art is what names an agent, so a library with none draws no roster
+        # rather than ten anonymous squares.
+        split = scan.MatchCard(
+            path=Path("m.vrf"),
+            agent_ids=(("a", "b", "c", "d", "e"), ("f", "g", "h", "i", "j")),
+        )
+        assert wire.card(split, "abc123", None, None, "A")["teams"] is None
+
+    def test_an_unscored_card_reports_no_rounds_won_even_with_a_letter(self):
+        """A letter says *where* a score goes, never that there is one."""
+        entry = scan.MatchCard(
+            path=Path("m.vrf"),
+            agent_ids=(("a", "b", "c", "d", "e"), ("f", "g", "h", "i", "j")),
+            score=None,
+        )
+        doc = wire.card(entry, "abc123", ArtCache(root=Path("assets")), None, "A")
+        assert [t["rounds_won"] for t in doc["teams"]] == [None, None]
 
     def test_a_derived_note_and_a_looked_up_one_stay_in_separate_lists(self):
         replay = _replay()

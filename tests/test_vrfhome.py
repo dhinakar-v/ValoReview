@@ -112,13 +112,13 @@ class Arranging(unittest.TestCase):
         assert len(scan.filter_cards(cards, date="2026-06-01")) == 1
         assert len(scan.filter_cards(cards, date="2027")) == 0
 
-    def test_paging_is_ten_a_page_and_clamps(self):
-        cards = [card(f"m{i}", day=i) for i in range(25)]
-        assert scan.page_count(cards) == 3
-        assert len(scan.page(cards, 1)) == 10
-        assert len(scan.page(cards, 3)) == 5
+    def test_paging_is_seven_a_page_and_clamps(self):
+        cards = [card(f"m{i}", day=i) for i in range(12)]
+        assert scan.page_count(cards) == 2
+        assert len(scan.page(cards, 1)) == scan.PER_PAGE
+        assert len(scan.page(cards, 2)) == 12 - scan.PER_PAGE
         # Past the end shows the last page rather than nothing.
-        assert scan.page(cards, 99) == scan.page(cards, 3)
+        assert scan.page(cards, 99) == scan.page(cards, 2)
         assert scan.page(cards, 0) == scan.page(cards, 1)
 
     def test_an_empty_library_still_has_one_page(self):
@@ -245,3 +245,217 @@ class AgainstARealCapture(unittest.TestCase):
         assert not got.positions_available
         assert "no payload transform" in got.positions_note
         assert not got.playable
+
+
+def loadout(character_id: str) -> dict:
+    """One roster slot as `vrf_reader.players()` reports it."""
+    return {"subject": f"player-{character_id}", "characterId": character_id}
+
+
+def roster(*ids: str) -> list[dict]:
+    return [loadout(i) for i in ids]
+
+
+TEN = tuple("abcdefghij")
+
+
+class TheTeamSplit(unittest.TestCase):
+    """
+    The rule behind the two rows of agents on a card.
+
+    `team_ids` claims that the loadout roster's first five slots are one team
+    and the last five the other.  Nothing in the metadata says so, so the claim
+    rests on the measurement in its docstring -- and on the refusal below,
+    which is what keeps it from being applied to a capture that disagrees with
+    it.  `LoadoutSplitIsTheRealTeamSplit` re-runs the measurement itself.
+    """
+
+    def test_ten_distinct_agents_split_five_and_five(self):
+        first, second = scan.team_ids(roster(*TEN))
+        assert first == TEN[:5]
+        assert second == TEN[5:]
+
+    def test_an_agent_on_both_teams_is_ordinary_and_still_splits(self):
+        # The common case by far: 95 of the 103 reference captures carry at
+        # least one agent picked by both teams.  It is a duplicate *within* one
+        # team that would mean the order is not what this claims.
+        first, second = scan.team_ids(
+            roster("a", "b", "c", "d", "e", "a", "b", "f", "g", "h"),
+        )
+        assert first == ("a", "b", "c", "d", "e")
+        assert second == ("a", "b", "f", "g", "h")
+
+    def test_a_repeated_agent_inside_one_half_refuses_the_split(self):
+        # Two of the same agent on one team is not a thing that happens, so
+        # this file's order is not the order this rule assumes. Refuse it
+        # rather than draw five portraits of a team that never existed.
+        assert scan.team_ids(
+            roster("a", "a", "b", "c", "d", "e", "f", "g", "h", "i"),
+        ) == ((), ())
+
+    def test_a_roster_that_is_not_ten_is_refused(self):
+        assert scan.team_ids(roster("a", "b", "c", "d")) == ((), ())
+        assert scan.team_ids(roster(*TEN, "k", "l")) == ((), ())
+        assert scan.team_ids([]) == ((), ())
+
+    def test_a_blank_character_id_is_refused_rather_than_drawn_as_a_gap(self):
+        assert scan.team_ids(
+            roster("a", "b", "c", "d", "", "f", "g", "h", "i", "j"),
+        ) == ((), ())
+
+
+class TheCacheCarriesTheNewFields(unittest.TestCase):
+    """
+    A card's teams and score survive a round trip, and `None` stays `None`.
+
+    The score is the one that matters: `(0, 0)` is a real answer -- a capture
+    where the kill graph two-coloured but nothing was ever attributed -- and
+    `None` means the teams are unknown.  A rehydration that collapsed the
+    second into the first would print `0 - 0` over a match nobody can score.
+    """
+
+    def test_a_full_card_round_trips(self):
+        original = scan.MatchCard(
+            path=Path("m.vrf"),
+            match_id="m-1",
+            agent_ids=(TEN[:5], TEN[5:]),
+            score=(13, 9),
+            rounds_undecided=2,
+        )
+        back = scan._from_entry(original.path, scan._to_entry(original))
+        assert back.agent_ids == original.agent_ids
+        assert back.score == (13, 9)
+        assert back.rounds_undecided == 2
+
+    def test_an_unscored_card_comes_back_unscored(self):
+        original = scan.MatchCard(path=Path("m.vrf"), score=None)
+        back = scan._from_entry(original.path, scan._to_entry(original))
+        assert back.score is None
+
+    def test_a_zero_score_is_not_confused_with_no_score(self):
+        original = scan.MatchCard(path=Path("m.vrf"), score=(0, 0))
+        back = scan._from_entry(original.path, scan._to_entry(original))
+        assert back.score == (0, 0)
+
+    def test_a_half_written_split_is_refused_rather_than_padded(self):
+        entry = scan._to_entry(scan.MatchCard(path=Path("m.vrf")))
+        entry["agent_ids"] = [["a", "b"], ["c", "d", "e", "f", "g"]]
+        assert scan._from_entry(Path("m.vrf"), entry).agent_ids == ((), ())
+
+
+class TheTeamOrder(unittest.TestCase):
+    """
+    Which loadout half is `infer`'s team A, and the refusals around it.
+
+    This is the join that cannot be made from plain chunks, so every path that
+    is not a clean, complete, unambiguous match has to end in `""` -- an
+    unattributed scoreline costs a card two numbers, and a wrongly attributed
+    one is a fabricated result printed beside the right five faces.
+    """
+
+    HALVES = (("a", "b", "c", "d", "e"), ("f", "g", "h", "i", "j"))
+    # The catalogue names an agent UUID; here a UUID names itself.
+    NAMES = staticmethod(lambda uuid: uuid.upper())
+
+    def replay(self, team_a, team_b):
+        from vrfview.model import Player, Replay
+
+        found = Replay()
+        found.players = [
+            *[Player(actor_id=i, team="A", agent=n) for i, n in enumerate(team_a)],
+            *[
+                Player(actor_id=100 + i, team="B", agent=n)
+                for i, n in enumerate(team_b)
+            ],
+        ]
+        return found
+
+    def order(self, replay):
+        from vrfhome import teamorder
+
+        return teamorder.first_half_team(replay, self.HALVES, self.NAMES)
+
+    def test_the_first_half_is_named_when_it_is_team_a(self):
+        found = self.replay(list("ABCDE"), list("FGHIJ"))
+        assert self.order(found) == "A"
+
+    def test_the_first_half_is_named_when_it_is_team_b(self):
+        found = self.replay(list("FGHIJ"), list("ABCDE"))
+        assert self.order(found) == "B"
+
+    def test_a_disagreement_is_refused_rather_than_resolved(self):
+        # One agent in the wrong place is not a near-match to be rounded off:
+        # it means the two sources are describing different things.
+        found = self.replay(list("ABCDF"), list("EGHIJ"))
+        assert self.order(found) == ""
+
+    def test_an_incomplete_decode_is_refused(self):
+        found = self.replay(list("ABCD"), list("FGHIJ"))
+        assert self.order(found) == ""
+
+    def test_a_capture_with_no_split_is_refused(self):
+        from vrfhome import teamorder
+
+        found = self.replay(list("ABCDE"), list("FGHIJ"))
+        assert teamorder.first_half_team(found, ((), ()), self.NAMES) == ""
+
+    def test_an_unnamed_uuid_is_refused_rather_than_matched_as_blank(self):
+        # Two UUIDs the catalogue cannot name would collapse to one empty
+        # string and make a four-agent set look like a five-agent one.
+        found = self.replay(list("ABCDE"), list("FGHIJ"))
+        from vrfhome import teamorder
+
+        assert teamorder.first_half_team(found, self.HALVES, lambda _u: "") == ""
+
+
+class TheTeamOrderCache(unittest.TestCase):
+    """Letters survive a restart, and anything unreadable is simply absent."""
+
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        (root / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+        patched = mock.patch.object(vrfcache, "project_root", return_value=root)
+        patched.start()
+        self.addCleanup(patched.stop)
+
+    def test_a_recorded_letter_reads_back(self):
+        from vrfhome import teamorder
+
+        teamorder.record("m-1", "B")
+        assert teamorder.load() == {"m-1": "B"}
+
+    def test_recording_does_not_lose_what_was_already_there(self):
+        from vrfhome import teamorder
+
+        teamorder.record("m-1", "A")
+        teamorder.record("m-2", "B")
+        assert teamorder.load() == {"m-1": "A", "m-2": "B"}
+
+    def test_a_refusal_is_never_written(self):
+        from vrfhome import teamorder
+
+        teamorder.record("m-1", "")
+        assert teamorder.load() == {}
+
+    def test_a_corrupt_file_reads_as_nothing_known(self):
+        from vrfhome import teamorder
+
+        path = teamorder.cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json", encoding="utf-8")
+        assert teamorder.load() == {}
+
+    def test_a_file_from_an_older_version_is_discarded(self):
+        import json
+
+        from vrfhome import teamorder
+
+        path = teamorder.cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"version": 0, "entries": {"m-1": "A"}}),
+            encoding="utf-8",
+        )
+        assert teamorder.load() == {}

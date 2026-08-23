@@ -869,7 +869,9 @@ class TheDerivedTransformDecodesRealMatches(unittest.TestCase):
     def test_almost_every_killer_and_victim_are_within_weapon_range(self):
         inside = sum(1 for s in self.separations if s <= WEAPON_RANGE_UU)
         share = inside / len(self.separations)
-        assert share >= DERIVED_WEAPON_RANGE_SHARE, f"only {share:.1%} within weapon range"
+        assert share >= DERIVED_WEAPON_RANGE_SHARE, (
+            f"only {share:.1%} within weapon range"
+        )
 
     def test_the_typical_kill_is_a_gunfight_and_not_a_scatter(self):
         # A wrong transform does not merely widen the tail: it puts the two
@@ -887,3 +889,98 @@ class TheDerivedTransformDecodesRealMatches(unittest.TestCase):
         inside = sum(1 for e in self.pitch_errors if e <= PITCH_TOLERANCE_DEGREES)
         share = inside / len(self.pitch_errors)
         assert share >= PITCH_AGREEMENT, f"only {share:.1%} of kills inside tolerance"
+
+
+# The two rates behind the match list's team rows.  Every capture must split
+# cleanly, and every capture with a decode to check against must agree with it:
+# these are the *whole* population rather than a sample, so the bar is 100% and
+# a single failure means the ordering assumption is wrong somewhere.
+@unittest.skipUnless(Path("Demos").is_dir(), "needs the reference library")
+@unittest.skipUnless(ASSETS.is_dir(), "needs the art manifest to name an agent")
+class LoadoutSplitIsTheRealTeamSplit(unittest.TestCase):
+    """
+    That the loadout roster's first five and last five are the two teams.
+
+    The match list draws two rows of agent portraits per card and can do it for
+    *every* capture, decoded or not, because the agent UUIDs are in a plain
+    chunk.  Nothing in that chunk says "team", though, so the split rests
+    entirely on the roster's order -- and this is the evidence for it.
+
+    Two independent checks, because either alone is weak.  The first is
+    internal: an agent may be picked by both teams but never twice by one, so a
+    duplicate landing inside a half would disprove the ordering outright.  It
+    is only evidence where duplicates exist, which is 95 of the 103 captures --
+    a random split would keep them all apart in about 45.  The second is
+    external and much stronger: `infer` two-colours the kill graph, which knows
+    nothing whatever about loadout order, and on every capture with a cached
+    decode the two agree exactly.
+
+    What this does **not** establish is which half `infer` calls A -- that came
+    out 12 to 10, a coin flip -- which is why a scoreline needs
+    `vrfhome.teamorder` and why an un-decoded card shows no numbers.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from vrfview import art as art_mod
+
+        cls.art = art_mod.load()
+        if cls.art.empty:
+            raise unittest.SkipTest("no art cache to name an agent UUID with")
+        cls.paths = sorted(Path("Demos").glob("*.vrf"))
+        if not cls.paths:
+            raise unittest.SkipTest("no captures in Demos/")
+
+    def test_every_capture_splits_into_two_whole_teams(self):
+        from vrfhome import scan
+
+        refused = []
+        duplicated = 0
+        for path in self.paths:
+            card = scan.read_card(path)
+            if not card.readable:
+                continue
+            first, second = card.agent_ids
+            if not first:
+                refused.append(path.name)
+                continue
+            names = [self.art.agent_name(u) for u in (*first, *second)]
+            assert all(names), f"{path.name}: an agent UUID named nothing"
+            if len(set(names)) < len(names):
+                duplicated += 1
+        assert refused == [], f"the roster order was refused for {refused}"
+        # If this ever reached zero the check above would still pass while
+        # proving nothing, so the population that makes it evidence is pinned
+        # too.  Measured at 95 of 103.
+        assert duplicated > len(self.paths) // 2
+
+    def test_the_split_agrees_with_the_kill_graph_wherever_one_can_be_checked(self):
+        from vrfhome import scan
+        from vrfview import pipeline
+        from vrfview.model import TEAM_A, TEAM_B
+
+        checked = 0
+        for path in self.paths:
+            card = scan.read_card(path)
+            if not card.readable or not card.agent_ids[0]:
+                continue
+            replay = pipeline.open_replay(path)
+            if not replay.has_positions:
+                continue  # no codenames, so no second opinion exists
+            by_team = {TEAM_A: set(), TEAM_B: set()}
+            for player in replay.players:
+                if player.team in by_team and player.agent:
+                    by_team[player.team].add(player.agent)
+            if any(len(v) != 5 for v in by_team.values()):
+                continue  # an incomplete decode is not a disagreement
+            first, second = card.agent_ids
+            front = {self.art.agent_name(u) for u in first}
+            back = {self.art.agent_name(u) for u in second}
+            assert (front, back) in (
+                (by_team[TEAM_A], by_team[TEAM_B]),
+                (by_team[TEAM_B], by_team[TEAM_A]),
+            ), f"{path.name}: the roster halves are not the kill graph's teams"
+            checked += 1
+        if checked == 0:
+            raise unittest.SkipTest("no cached decodes to check the split against")
+        assert checked >= 1

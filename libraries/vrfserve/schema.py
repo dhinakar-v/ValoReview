@@ -65,6 +65,19 @@ class PrewarmDoc(BaseModel):
     label: str
 
 
+class CardAgentDoc(BaseModel):
+    name: str
+    icon_url: str | None
+
+
+class CardTeamDoc(BaseModel):
+    agents: list[CardAgentDoc]
+    # `None` where nothing has established which of the two halves `infer`
+    # called A, which is every capture that has not been decoded.  See
+    # `vrfhome.teamorder`.
+    rounds_won: int | None
+
+
 class CardDoc(BaseModel):
     id: str
     file_name: str
@@ -86,6 +99,10 @@ class CardDoc(BaseModel):
     # Why, when `playable` is false.  See wire.card.
     positions_note: str
     prewarm: PrewarmDoc | None
+    # The two teams, read off the loadout roster's own order -- `None` where
+    # that split was refused or there is no art to draw it with.
+    teams: list[CardTeamDoc] | None
+    rounds_undecided: int
 
 
 class LibraryDoc(BaseModel):

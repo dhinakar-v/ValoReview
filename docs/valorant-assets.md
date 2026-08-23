@@ -242,13 +242,22 @@ Range variants, Basic Training and the five Skirmish placeholders. That leaves:
 | Pearl | Pitt | 26 |
 | Piazza | — | 0 |
 | Split | Bonsai | 24 |
-| Summit | — | 24 |
+| Summit | Plummet | 24 |
 | Sunset | Juliett | 17 |
 
-The six with no codename — District, Drift, Glitch, Kasbah, Piazza, Summit — are absent
-from the viewer's `MAP_NAMES`. Five are team-deathmatch arenas, which no `.vrf` in `Demos/`
-uses; `Summit` is the one worth watching. The fetcher prints them on stderr on every run,
-so the table going stale after a Riot release is self-announcing rather than silent.
+The five with no codename — District, Drift, Glitch, Kasbah, Piazza — are absent from the
+viewer's `MAP_NAMES`, and all five are team-deathmatch arenas, which no `.vrf` in `Demos/`
+uses. The fetcher prints them on stderr on every run, so the table going stale after a Riot
+release is self-announcing rather than silent.
+
+`Summit` was the sixth and was the one worth watching, exactly as this section said it was:
+a 13.04 capture on it listed as **PLUMMET**, the raw leaf of `/Game/Maps/Plummet/Plummet`,
+because valorant-api publishes no `developerName` for it. It is `Plummet` in `MAP_NAMES`
+now, and the codename is not a guess — this manifest's own `mapUrl` for Summit *is* that
+path, so the join was already published, just not under the field `CODENAMES` inverts. A
+manifest fetched before that entry landed still says `codename: null`; `art.map_art` keys
+on `map_url` first and so resolved the radar image throughout, which is why the card
+carried Summit's own art under the wrong name.
 
 Glitch and Piazza ship zero callouts upstream. That is Riot's data, not a fetch failure.
 

@@ -40,8 +40,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from vrfhome import teamorder
 from vrfview import infer as infer_mod
-from vrfview import loader, positioncache, tracks
+from vrfview import loader, names, positioncache, tracks
 
 # What a capture's preparation is currently doing.
 QUEUED = "QUEUED"
@@ -91,7 +92,18 @@ class Prewarmer:
         self,
         cards,
         on_change: Callable[[Path, Status], None] | None = None,
+        agent_name: Callable[[str], str] | None = None,
     ) -> None:
+        """
+        `agent_name` turns an agent UUID into its published display name.
+
+        It is how a finished decode answers the one question the plain chunks
+        cannot -- which of the loadout roster's two halves is `infer`'s team A
+        -- so that the match list can put a scoreline beside the right five
+        agents.  Without it (no art on disk, or a caller that has none) the
+        decode still happens and the letter is simply never recorded, which
+        costs the card its numbers and nothing else.
+        """
         # Only what is worth decoding, in the order the list shows it.  An
         # unreadable file and an unsupported build are both refusals `scan`
         # already made; repeating them here would be a second opinion on a
@@ -104,8 +116,19 @@ class Prewarmer:
         self._resume.set()
         self._thread: threading.Thread | None = None
 
+        self.agent_name = agent_name
+        # A capture already in the position cache is ready and needs no decode
+        # -- unless nothing has yet worked out which half of its roster is team
+        # A.  That answer only exists where codenames do, so such a capture is
+        # queued anyway: `tracks.attach` will find the cache and return in
+        # milliseconds without decoding a thing, and the letter gets recorded
+        # on the way past.  Skipping them would mean a library decoded before
+        # this existed never showed a scoreline again.
+        known = teamorder.load() if agent_name is not None else {}
         for card in self.queue:
-            state = READY if positioncache.has(card.path) else QUEUED
+            cached = positioncache.has(card.path)
+            lettered = not card.agent_ids[0] or card.match_id in known
+            state = READY if cached and lettered else QUEUED
             note = CACHED_NOTE if state == READY else ""
             self._status[Path(card.path)] = Status(state=state, note=note)
 
@@ -201,9 +224,32 @@ class Prewarmer:
             return
 
         if replay.has_positions:
+            self._remember_team_order(replay, card)
             self._set(path, Status(state=READY, note=replay.position_source))
         else:
             self._set(path, Status(state=FAILED, note=replay.position_source))
+
+    def _remember_team_order(self, replay, card) -> None:
+        """
+        Record which loadout half is team A, now that the pawns have names.
+
+        `names.resolve` is what turns a decoded codename into the display name
+        the catalogue publishes, which is the only form comparable with what an
+        agent UUID resolves to.  Best-effort throughout: a capture that cannot
+        be matched keeps its agents and loses only its numbers.
+        """
+        if self.agent_name is None or not card.agent_ids[0]:
+            return
+        try:
+            names.resolve(replay)
+            letter = teamorder.first_half_team(
+                replay,
+                card.agent_ids,
+                self.agent_name,
+            )
+        except Exception:  # noqa: BLE001 - a background queue may not die
+            return
+        teamorder.record(replay.match_id, letter)
 
     def _set(self, path: Path, status: Status) -> None:
         self._status[path] = status

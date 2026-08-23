@@ -23,6 +23,7 @@ from vrfview import art as art_mod
 from vrfview import theme
 from vrfview.clock import PlaybackClock
 from vrfview.infer import annotate, two_colour
+from vrfview.loader import map_name_for
 from vrfview.model import (
     TEAM_A,
     TEAM_B,
@@ -414,6 +415,27 @@ class TestNames(unittest.TestCase):
         assert replay.subjects == ["subject-0", "subject-1"]
 
 
+class TestTheCodenameTable(unittest.TestCase):
+    """What map_name_for does with a path it knows and one it does not."""
+
+    def test_summit_is_named_rather_than_shown_as_its_codename(self):
+        """
+        The match list said PLUMMET, which is the leaf of Summit's own path.
+
+        valorant-api publishes no developerName for Summit, so the codename
+        could not be read off a fetched manifest the way every other one was;
+        the manifest's mapUrl for Summit is this path, which is the same join
+        under a different field.
+        """
+        assert map_name_for("/Game/Maps/Plummet/Plummet") == ("Summit", True)
+
+    def test_an_unknown_codename_is_shown_as_the_leaf_and_says_so(self):
+        assert map_name_for("/Game/Maps/HURM/HURM_Alley/HURM_Alley") == (
+            "HURM_Alley",
+            False,
+        )
+
+
 # A manifest in the shape fetch_assets.py writes, cut down to what art.py
 # joins on.  Ascent's four transform scalars are the real ones, because the
 # axis-swap test below checks against pixels measured off the real image.
@@ -444,10 +466,10 @@ MANIFEST = {
                 {"regionName": "Broken", "superRegionName": "", "location": {}},
             ],
         },
-        "Summit": {
+        "District": {
             "uuid": "e0b26e08-4dcb-a55b-ec53-b0862a0f8f2e",
             "codename": None,
-            "map_url": "/Game/Maps/Rig/Rig",
+            "map_url": "/Game/Maps/HURM/HURM_Alley/HURM_Alley",
             "transform": {},
             "files": {},
             "callouts": [],
@@ -510,7 +532,7 @@ class TestArt(unittest.TestCase):
         assert cache.map_art("/Game/Maps/Other/Ascent").name == "Ascent"
 
     def test_a_null_codename_never_matches_a_leaf(self):
-        """Summit has codename null; an empty codename must not match ''."""
+        """District has codename null; an empty codename must not match ''."""
         cache = self._write()
         assert cache.map_art("/Game/Maps/Nowhere/") is None
 
@@ -586,7 +608,7 @@ class TestArt(unittest.TestCase):
     def test_a_map_with_no_transform_is_not_plottable(self):
         """Riot ships the deathmatch arenas with null scalars."""
         cache = self._write()
-        assert not cache.map_art("/Game/Maps/Rig/Rig").plottable
+        assert not cache.map_art("/Game/Maps/HURM/HURM_Alley/HURM_Alley").plottable
 
     def test_coverage_reports_an_empty_cache_in_one_line(self):
         lines = art_mod.coverage(art_mod.ArtCache(), "/Game/Maps/Ascent/Ascent", [])
