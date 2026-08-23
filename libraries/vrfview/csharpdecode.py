@@ -61,8 +61,8 @@ READABLE = (1,)
 
 NOT_FOUND = (
     "the position decoder is not built; run "
-    "runners\\build-decoder.bat (it needs the .NET 10 SDK and a clone of "
-    "michel-giehl/ValorantReplayParser beside this repository)"
+    "runners\\build-decoder.bat (it needs the .NET 10 SDK; the parser it "
+    "compiles against is vendored at csharp/parser)"
 )
 
 

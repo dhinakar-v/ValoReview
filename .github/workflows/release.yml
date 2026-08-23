@@ -1,0 +1,79 @@
+# Build the Windows installer and attach it to a tag's release.
+#
+# The order here is the dependency order and not a preference: the Tauri bundle
+# copies three trees out of the working directory (`vendor/parser`, `web/dist`
+# and `desktop/packaging/dist`), so each has to exist before `tauri build` runs
+# — and `bundle.resources` fails the build if one does not, which is the right
+# way round.
+#
+# Riot's art is deliberately not fetched here. It is 86 MB the app downloads on
+# first run, this repository does not redistribute it, and putting it in an
+# installer would be doing exactly that.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # windows-latest already carries the MSVC toolchain, which is what the
+      # rust target links with; rustup alone would not be enough.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: uv sync
+
+      # Green here before anything is packaged. A bundle built from a tree that
+      # fails its own tests is worse than no bundle.
+      - run: uv run pytest -q
+
+      - name: Decoder, self-contained
+        run: .\runners\publish-decoder.bat
+
+      - name: Web interface
+        run: npm ci && npm run build
+        working-directory: web
+
+      - name: Backend sidecar
+        run: >
+          uv run pyinstaller desktop/packaging/vrf-desktop.spec --noconfirm
+          --distpath desktop/packaging/dist --workpath desktop/packaging/build
+
+      - name: Installer
+        run: npm install && npx tauri build
+        working-directory: desktop
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ValoReview-installer
+          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          body: |
+            Unsigned, so SmartScreen will say "Windows protected your PC" —
+            More info, then Run anyway. It installs per-user, with no UAC
+            prompt.
+
+            The position decoder ships under GPLv3 in its own folder with a
+            written offer of source; ValoReview itself is Apache-2.0. See
+            THIRD_PARTY.md, "Distribution".

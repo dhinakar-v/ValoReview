@@ -1,0 +1,23 @@
+# The Tauri CLI, and nothing else.
+node_modules/
+
+# Cargo's build tree. The root .gitignore already excludes `target/` at any
+# depth (it was there for Python packaging), but naming it here keeps the
+# reason with the directory it is about.
+src-tauri/target/
+
+# Written by `tauri build` from tauri.conf.json and the capabilities: schemas,
+# the generated permission list, and the ACL manifest. All derived.
+src-tauri/gen/
+
+# The frozen backend. PyInstaller writes both, from packaging/vrf-desktop.spec,
+# which is committed. The root .gitignore's `build/` and `dist/` already catch
+# these; they are named here because a reader looking for the bundle should
+# find out where it comes from.
+packaging/build/
+packaging/dist/
+
+# Rendered from web/public/favicon.svg by packaging/make-icon.mjs, and then
+# turned into src-tauri/icons/ by `tauri icon`. The mark has two committed
+# drawings already and this would be a third.
+packaging/appicon.png

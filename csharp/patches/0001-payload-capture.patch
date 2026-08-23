@@ -1,8 +1,8 @@
 diff --git a/src/Replay.Encoding/PayloadEncryption/PayloadTransformRegistry.cs b/src/Replay.Encoding/PayloadEncryption/PayloadTransformRegistry.cs
-index 7ca3557..e981138 100644
+index 5f54f4e..b4ee595 100644
 --- a/src/Replay.Encoding/PayloadEncryption/PayloadTransformRegistry.cs
 +++ b/src/Replay.Encoding/PayloadEncryption/PayloadTransformRegistry.cs
-@@ -22,13 +22,37 @@ public sealed class PayloadTransformRegistry
+@@ -22,14 +22,38 @@ public sealed class PayloadTransformRegistry
          }
      }
  
@@ -12,6 +12,7 @@ index 7ca3557..e981138 100644
 -        new ValorantSeededTransform13_00(),
 -        new ValorantSeededTransform13_01(),
 -        new ValorantSeededTransform13_02(),
+-        new ValorantSeededTransform13_04(),
 -    ]);
 +    public static PayloadTransformRegistry CreateDefault()
 +    {
@@ -22,6 +23,7 @@ index 7ca3557..e981138 100644
 +            new ValorantSeededTransform13_00(),
 +            new ValorantSeededTransform13_01(),
 +            new ValorantSeededTransform13_02(),
++            new ValorantSeededTransform13_04(),
 +        ];
 +
 +        // The capture transform is registered only while VRF_PAYLOAD_CAPTURE

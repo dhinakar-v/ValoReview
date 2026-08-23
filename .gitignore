@@ -31,6 +31,10 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+#   The desktop sidecar's spec is the exception: it is hand-written, it is the
+#   only description of what goes into that bundle, and losing it would mean
+#   rediscovering the hidden imports one failed launch at a time.
+!desktop/packaging/*.spec
 
 # Installer logs
 pip-log.txt

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ValoReview</title>
+    <!--
+      The startup window, and the only page Tauri itself serves.
+
+      It is hand-written rather than built from web/src for one reason: the SPA
+      is served over HTTP by the Python backend, which is not running yet when
+      this is on screen. So this shares nothing with it, deliberately, down to
+      the colours being literals -- theme.generated.css is a build product of a
+      process this page exists to start.
+    -->
+    <style>
+      :root {
+        color-scheme: dark;
+        --page: #0a0b0d;
+        --panel: #141619;
+        --line: #23262b;
+        --text: #e6e8ec;
+        --faint: #8a8f98;
+        --brand: #ff4655;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding: 22px 24px;
+        background: var(--page);
+        color: var(--text);
+        font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+        user-select: none;
+      }
+      h1 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      h1 b { color: var(--brand); font-weight: 700; }
+      p { margin: 0; color: var(--faint); }
+      .row { display: flex; gap: 10px; align-items: center; }
+      .grow { flex: 1 1 auto; min-width: 0; }
+      button {
+        font: inherit;
+        padding: 7px 14px;
+        color: var(--text);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        cursor: pointer;
+      }
+      button.go { background: var(--brand); border-color: var(--brand); color: #10070a; font-weight: 600; }
+      button:disabled { opacity: 0.45; cursor: default; }
+      .path {
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--faint);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        direction: rtl;
+        text-align: left;
+      }
+      .log {
+        flex: 1 1 auto;
+        overflow: hidden;
+        border-top: 1px solid var(--line);
+        padding-top: 10px;
+        color: var(--faint);
+        font-family: Consolas, "Cascadia Mono", monospace;
+        font-size: 11px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .bad { color: var(--brand); }
+    </style>
+  </head>
+  <body>
+    <h1><b>Valo</b>Review</h1>
+    <p id="what">Starting up.</p>
+
+    <div class="path" id="chosen"></div>
+
+    <div class="log" id="log"></div>
+
+    <script>
+      const { invoke } = window.__TAURI__.core;
+      const { listen } = window.__TAURI__.event;
+
+      const what = document.getElementById("what");
+      const log = document.getElementById("log");
+      const chosen = document.getElementById("chosen");
+
+      // The last few lines only: the art fetch writes one per file for over a
+      // thousand files, and a splash window is not a terminal.
+      const lines = [];
+      function write(line) {
+        lines.push(line);
+        if (lines.length > 6) lines.shift();
+        log.textContent = lines.join("\n");
+      }
+      listen("progress", (event) => write(String(event.payload)));
+
+      // There is nothing to retry with and no folder to choose, so a failure is
+      // reported and left on screen: the log holds the backend's own lines,
+      // which are the only account of what went wrong.
+      function fail(message) {
+        what.textContent = "That did not work.";
+        what.className = "bad";
+        write(String(message));
+      }
+
+      let artPresent = false;
+
+      async function run() {
+        if (!artPresent) {
+          what.textContent = "Downloading Riot's map and agent pictures. This happens once.";
+          try {
+            await invoke("fetch_art");
+            artPresent = true;
+          } catch (error) {
+            // A missing assets/ costs pictures and changes nothing the
+            // interface states, so a failed download is not a failed launch.
+            write("art download stopped: " + error);
+          }
+        }
+        what.textContent = "Reading your replay folder.";
+        await invoke("launch");
+      }
+
+      // No button and no picker: Valorant writes its captures to one directory,
+      // so the first thing this page can usefully do is start.
+      invoke("first_look")
+        .then((look) => {
+          artPresent = look.art_present;
+          chosen.textContent = look.demo_path;
+          return run();
+        })
+        .catch(fail);
+    </script>
+  </body>
+</html>
