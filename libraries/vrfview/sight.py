@@ -316,39 +316,146 @@ def _march(
     radius: float,
     occluders: tuple[Occluder, ...] = (),
 ) -> tuple[float, float]:
-    """One ray, to the first blocked cell or to `radius`, whichever comes first."""
+    """
+    One ray, to the nearest of the first wall, the first smoke and `radius`.
+
+    **The stopping distance is exact, not a whole number of cells.**  This used
+    to step a fixed `1/size` at a time and return `(i - 1) * cell`, so every
+    ray ended on a multiple of one cell whatever it had actually hit.  Two
+    neighbouring rays glancing a near-parallel wall then stopped one whole cell
+    apart, and the cone's rim came out as a sawtooth whose teeth were spaced at
+    `RAY_STEP_DEGREES` and one cell deep -- a drawing artefact of the sampling,
+    not a fact about the map, and the coarser it looked the more it invited the
+    map's own resolution to be blamed for it.
+
+    So a wall is found by grid traversal (`_wall_entry`), which visits cell
+    boundaries in order and returns the distance to the face of the first
+    blocked cell, and a smoke by solving the ray-circle quadratic
+    (`_smoke_entry`).  Both answers are the real intersection, so the rim now
+    traces the silhouette at the mask's own resolution instead of at the
+    sampling's, and a smoke's rim is a circle rather than a staircase.
+
+    Everything here is multiply, divide, add, compare, `floor` and `sqrt`, all
+    of which IEEE-754 specifies exactly, so the two implementations agree by
+    construction the way the old stepping did.  No `hypot` -- that one is
+    approximate by specification in both languages.
+    """
     u0, v0 = origin
     du, dv = direction
-    cell = 1.0 / sight.size
-    steps = max(1, int(radius / cell))
-    for i in range(1, steps + 1):
-        travelled = i * cell
-        u = u0 + du * travelled
-        v = v0 + dv * travelled
-        if i > SEED_CELLS and (sight.blocked(u, v) or _inside(occluders, u, v)):
-            # Stop on the last open cell, not inside the wall, so the polygon
-            # traces the silhouette rather than overlapping it.
-            back = (i - 1) * cell
-            return (u0 + du * back, v0 + dv * back)
-    return (u0 + du * radius, v0 + dv * radius)
+    seed_t = SEED_CELLS / sight.size
+    limit = _smoke_entry(occluders, origin, direction, radius, seed_t)
+    travelled = _wall_entry(sight, origin, direction, limit, seed_t)
+    return (u0 + du * travelled, v0 + dv * travelled)
 
 
-def _inside(occluders: tuple[Occluder, ...], u: float, v: float) -> bool:
+def _wall_entry(
+    sight: SightMap,
+    origin: tuple[float, float],
+    direction: tuple[float, float],
+    limit: float,
+    seed_t: float,
+) -> float:
     """
-    Whether this step has walked into a smoke.
+    How far the ray travels before it enters a blocked cell, capped at `limit`.
 
-    Squared distance, and that is about the TypeScript port rather than about
-    speed.  `hypot` is *approximate by specification* in both languages and
-    `sqrt` would be a needless rounding besides -- multiply, subtract and
-    compare are exactly specified in IEEE-754, so the two implementations agree
-    by construction and `tests/golden/cone.json` can compare them to the bit.
+    Amanatides-Woo traversal: hold the distance to the next boundary on each
+    axis, always cross the nearer one, and the cell index steps by one.  The
+    cell is then an *integer* pair rather than a `floor` of a sampled point,
+    which is what makes landing exactly on a boundary well defined instead of a
+    rounding question -- and the returned distance is the boundary itself, so
+    the polygon meets the wall's face.
+
+    `seed_t` is `SEED_CELLS` cells' worth of distance, ignored the way the
+    stepped version ignored its first few samples: a player standing against a
+    wall or in a doorway sits on a transparent cell often enough that refusing
+    there would blink the cone off exactly when it matters.  As a distance
+    rather than a count of crossings, because a diagonal ray crosses two
+    boundaries per cell and the seed must not shrink with the angle.
     """
+    u0, v0 = origin
+    du, dv = direction
+    size = sight.size
+    cell = 1.0 / size
+
+    col = math.floor(u0 * size)
+    row = math.floor(v0 * size)
+    step_col = 1 if du > 0 else -1 if du < 0 else 0
+    step_row = 1 if dv > 0 else -1 if dv < 0 else 0
+    if step_col == 0 and step_row == 0:
+        return limit
+
+    next_u = (
+        math.inf
+        if step_col == 0
+        else ((col + 1) * cell if step_col > 0 else col * cell)
+    )
+    next_v = (
+        math.inf
+        if step_row == 0
+        else ((row + 1) * cell if step_row > 0 else row * cell)
+    )
+    t_u = math.inf if step_col == 0 else (next_u - u0) / du
+    t_v = math.inf if step_row == 0 else (next_v - v0) / dv
+    d_u = math.inf if step_col == 0 else cell / abs(du)
+    d_v = math.inf if step_row == 0 else cell / abs(dv)
+
+    while True:
+        if t_u < t_v:
+            travelled = t_u
+            col += step_col
+            t_u += d_u
+        else:
+            travelled = t_v
+            row += step_row
+            t_v += d_v
+        if travelled >= limit:
+            return limit
+        if travelled <= seed_t:
+            continue
+        if not (0 <= col < size and 0 <= row < size):
+            return travelled
+        if not sight.cells[row * size + col]:
+            return travelled
+
+
+def _smoke_entry(
+    occluders: tuple[Occluder, ...],
+    origin: tuple[float, float],
+    direction: tuple[float, float],
+    radius: float,
+    seed_t: float,
+) -> float:
+    """
+    How far the ray travels before it enters a smoke, capped at `radius`.
+
+    The ray-circle quadratic, with `a` taken as 1 because the directions are
+    `cos`/`sin` of one angle and are unit by construction -- and taken as 1 in
+    both languages, which is what the parity fixture actually checks.  A ray
+    that starts *inside* a smoke has a negative entry root and is stopped at
+    `seed_t`, which is what the stepped version did by walking into the circle
+    on its first unseeded sample.
+
+    `sqrt` is exactly specified by IEEE-754, so this is as portable as the
+    squared-distance test it replaces; what it buys is a smoke rim that is a
+    circle rather than a staircase at the sampling interval.
+    """
+    u0, v0 = origin
+    du, dv = direction
+    nearest = radius
     for smoke in occluders:
-        du = u - smoke.u
-        dv = v - smoke.v
-        if du * du + dv * dv <= smoke.radius * smoke.radius:
-            return True
-    return False
+        fu = u0 - smoke.u
+        fv = v0 - smoke.v
+        half_b = fu * du + fv * dv
+        c = fu * fu + fv * fv - smoke.radius * smoke.radius
+        discriminant = half_b * half_b - c
+        if discriminant < 0:
+            continue
+        root = math.sqrt(discriminant)
+        if -half_b + root < seed_t:
+            continue
+        entry = -half_b - root
+        nearest = min(nearest, max(seed_t, entry))
+    return nearest
 
 
 class SightCache:

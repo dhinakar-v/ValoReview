@@ -18,18 +18,23 @@
  * canvas keeps its own `state.layers.sight` check and calls this with the
  * answer.
  *
- * Overlap is the message, so overlap is the opacity
- * -------------------------------------------------
- * This layer exists to say *which parts of the map nobody can see*, which is a
- * question about how many cones cover a point rather than about any one of
- * them.  A fixed per-cone alpha cannot answer it: ordinary source-over
- * compositing stacks k cones to `1-(1-a)^k`, which saturates, so three overlaps
- * and five overlaps converge on the same wash.
+ * The wash is flat, and overlap says nothing
+ * ------------------------------------------
+ * A side's cones are unioned into one shape and that shape is painted at
+ * `SIGHT_ALPHA`.  One cone and five overlapping cones read identically, so what
+ * the layer states is simply *where that side can see* -- a silhouette of
+ * vision, not a count of it.
  *
- * So the alpha counts.  Each cone is `1/N` and k of them read as exactly `k/N`
- * -- a crisp one-step jump wherever one cone's edge crosses another's interior.
- * See `coneAlpha` for what N is, and `paintCones` for how that arithmetic is
- * made exact.
+ * It used to weigh the count: each cone took `1/N` of its side's ink and the
+ * overlaps accumulated additively, so k cones over a point read as exactly
+ * `k/N` and a full side covering one lane painted it solid.  That answered a
+ * second question -- which parts of the map nobody can see -- and it is gone
+ * along with `coneAlpha` and its floored denominator.  A flat wash asks the
+ * reader to judge nothing, and the overlap gradient it replaces was the reason
+ * a lone survivor's cone and a five-man stack's could not be compared by eye.
+ *
+ * The offscreen buffer survives the change and is still mandatory; see
+ * `paintCones` for why, because the reason is no longer the one it was.
  */
 
 import type { MapArt } from "../api/types";
@@ -63,17 +68,15 @@ const PLACED_KINDS = new Set(["GameObject", "Zone", "Patch"]);
 export const SIGHT_RASTER = 1024;
 
 /**
- * The smallest denominator, which is one full side.
+ * How much ink one side's whole wash gets.
  *
- * Without it the wash gets heavier as people die -- N is the number of cones
- * actually drawn, so two survivors would be 50% each and the last player alive
- * would paint a solid, fully opaque wedge over the radar, in exactly the moment
- * somebody is watching a clutch most closely.  Flooring at five keeps a full
- * side reading 20% each and reaching 100% where all five overlap, which is the
- * behaviour asked for, and leaves a lone survivor at 20% rather than blanking
- * the map.
+ * One value and not a function of anything: the count of cones, who is alive
+ * and how many overlap all stop mattering here.  Deliberately not exported --
+ * it is a drawing constant with one call site, and `paintCones` needs a 2D
+ * context that jsdom does not provide, so there is nothing that could pin it
+ * below the Playwright tier anyway.
  */
-export const SIGHT_MIN_DENOM = 5;
+const SIGHT_ALPHA = 0.5;
 
 /**
  * The order the side layers are composited in.
@@ -90,11 +93,6 @@ const SIDE_ORDER = ["ATK", "DEF"];
 export interface DrawnCone {
   side: string;
   polygon: Array<[number, number]>;
-}
-
-/** How much ink one cone gets, given how many its side is drawing. */
-export function coneAlpha(count: number): number {
-  return 1 / Math.max(count, SIGHT_MIN_DENOM);
 }
 
 /**
@@ -220,28 +218,37 @@ function scratchFor(
 }
 
 /**
- * Paint every cone onto `target`: one solid colour per side, `k/N` per overlap.
+ * Paint every cone onto `target`: one side's whole union at one flat alpha.
  *
- * Why this needs a scratch canvas and two composite modes
- * ------------------------------------------------------
- * `source-over` cannot produce `k/N`.  `lighter` can -- it is the compositing
- * spec's `plus-lighter`, premultiplied per-channel addition with
- * `alpha = min(1, src + dst)`, and `globalAlpha` applies to the source *before*
- * the operator -- so k fills at `1/N` accumulate to exactly `k/N`.  What it
- * must not do is add to the radar underneath, which would brighten the map
- * rather than shade it; hence an offscreen buffer and a plain blit at the end.
+ * Why this still needs a scratch canvas and two composite modes
+ * ------------------------------------------------------------
+ * The alpha is on the **blit**, not on the fills, and that is the whole reason
+ * the buffer survives a flat wash.  Filling each cone onto the target at
+ * `SIGHT_ALPHA` directly would composite them against each other -- two cones
+ * over a point would read 75% and three 87.5%, the saturating curve that the
+ * old `1/N` arithmetic was built to escape -- so the union has to be
+ * accumulated somewhere that is not the picture, and stamped once.
+ *
+ * The fills therefore go on at `globalAlpha = 1`, and on `lighter` rather than
+ * `source-over`: at full alpha the two agree over a cone's interior, but a
+ * `lighter` fill also saturates the antialiased seam where two of one side's
+ * polygons abut, where `source-over` leaves a visible rim down the join.  What
+ * `lighter` must never touch is the target itself -- it would add to Riot's
+ * radar and brighten the map rather than shade it.
  *
  * The colour is then made solid **structurally** rather than arithmetically.
- * The cones are filled in white, so the scratch holds nothing but a coverage
- * count in its alpha channel, and one `source-in` rectangle stamps the side's
- * colour through it (`Ar = Ad`, `Cr = C`).  Filling in the colour directly
- * would also work today -- the floored denominator means `k/N` can never exceed
- * 1 -- but it would fail *silently*, whitening the wash, the day somebody
- * changes the denominator.  This way there is no arithmetic left to get wrong.
+ * The cones are filled in white, so the scratch holds nothing but coverage in
+ * its alpha channel, and one `source-in` rectangle stamps the side's colour
+ * through it (`Ar = Ad`, `Cr = C`).
+ *
+ * `target.globalAlpha` is restored afterwards, and that is load-bearing rather
+ * than tidy: `MinimapCanvas` draws markers, trails and the spike onto this same
+ * context after the cones, and a leaked alpha would half-fade every one of them
+ * -- a whole canvas quietly washed out by a layer that had finished drawing.
  *
  * A requirement rather than a preference: **no stroke.**  An outline is a
- * second ink whose weight counts nothing, and it would draw a hard line through
- * the middle of the very gradient this layer is made of.
+ * second ink whose weight counts nothing, and it would cut a hard line around
+ * the very shape this layer is made of.
  */
 export function paintCones(
   target: CanvasRenderingContext2D,
@@ -285,7 +292,7 @@ export function paintCones(
     context.setTransform(size.scale, 0, 0, size.scale, 0, 0);
     context.clearRect(0, 0, size.width, size.height);
     context.globalCompositeOperation = "lighter";
-    context.globalAlpha = coneAlpha(group.length);
+    context.globalAlpha = 1;
     context.fillStyle = "#ffffff";
     for (const { polygon } of group) {
       context.beginPath();
@@ -309,6 +316,8 @@ export function paintCones(
     // than clearing and this frame's ATK bleeds into its DEF.
     context.globalCompositeOperation = "source-over";
 
+    target.globalAlpha = SIGHT_ALPHA;
     target.drawImage(context.canvas, 0, 0, size.width, size.height);
+    target.globalAlpha = 1;
   }
 }

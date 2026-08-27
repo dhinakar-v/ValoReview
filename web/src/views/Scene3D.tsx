@@ -522,12 +522,13 @@ function Spike({
  * agree with the minimap instead of merely resembling it.  The overlap opacity
  * this layer is built on -- k cones over a point reading as exactly `k/N` --
  * cannot be had from k separate transparent meshes: fixed-function alpha
- * blending stacks them to `1-(1-a)^k`, so five cones at 20% would come out at
- * 67% rather than 100%, and an additive blend would brighten the radar instead
- * of shading it.  Coverage has to be accumulated somewhere that is not the
- * framebuffer.  So `sightlayer` rasterises the cones exactly as it does for the
- * 2D canvas, and the result arrives here as a texture -- same selection, same
- * gates, same colours, same arithmetic, one implementation.
+ * blending composites them against each other, so two overlapping cones at 50%
+ * would come out at 75% and three at 87.5% instead of the flat 50% a side's
+ * wash is, and an additive blend would brighten the radar instead of shading
+ * it.  The union has to be accumulated somewhere that is not the framebuffer.
+ * So `sightlayer` rasterises the cones exactly as it does for the 2D canvas,
+ * and the result arrives here as a texture -- same selection, same gates, same
+ * colours, same arithmetic, one implementation.
  *
  * What is *not* the same is edge fidelity: the minimap rasterises in screen
  * space and stays crisp at any zoom, where this is a fixed `SIGHT_RASTER` grid

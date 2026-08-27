@@ -643,14 +643,15 @@ function drawSpike(
  * which parts of it nobody can see.  A selection has nothing to say about that,
  * so the marker keeps `PICKED_SCALE` and the cone does not.
  *
- * The weight is the count instead: `sightlayer.paintCones` gives each cone
- * `1/N` of its side's ink and accumulates overlap additively, so k cones over a
- * point read as exactly `k/N` and a full side covering one lane paints it
- * solid.  No stroke -- an outline is a second ink that counts nothing and cuts
- * a hard line through the gradient this layer is made of.
+ * There is no weight at all now: `sightlayer.paintCones` unions each side's
+ * cones and paints the union at one flat alpha, so a lone survivor's wedge and
+ * a five-man stack read exactly the same.  It weighed the count for a while --
+ * `1/N` per cone, accumulated additively, so k of them read as `k/N` -- and
+ * that gradient is gone.  No stroke either: an outline is a second ink that
+ * counts nothing and cuts a hard line around the shape this layer is made of.
  *
  * `Scene3D` paints the identical picture from the identical two functions, at
- * the identical alphas; the only difference is that it rasterises in uv onto a
+ * the identical alpha; the only difference is that it rasterises in uv onto a
  * ground quad where this rasterises in screen space.
  */
 function drawSight(

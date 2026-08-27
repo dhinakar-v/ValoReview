@@ -1,11 +1,15 @@
 /**
- * Which cones exist, and how much ink each one gets.
+ * Which cones exist.
  *
- * Both halves are silent failures, which is why they are pinned here rather
- * than left to the pixel suite.  A cone drawn for a dead player, or for a side
- * whose markers are hidden, is an extra wedge on a busy canvas that nobody
- * counts; a denominator that drifts is a wash that is merely a bit darker than
- * it was.  Neither throws, and neither shows up in a screenshot as a fault.
+ * A silent failure, which is why it is pinned here rather than left to the
+ * pixel suite: a cone drawn for a dead player, or for a side whose markers are
+ * hidden, is an extra wedge on a busy canvas that nobody counts.  It does not
+ * throw, and it does not show up in a screenshot as a fault.
+ *
+ * How much ink a cone gets used to be pinned here too, back when it was `1/N`
+ * of its side's ink and `coneAlpha` was a pure function anything could call.
+ * The wash is a flat `SIGHT_ALPHA` on the blit now, so there is no arithmetic
+ * left to check and nothing exported to check it through.
  *
  * The compositing itself is deliberately *not* tested here: jsdom has no 2D
  * context, so `paintCones` cannot run at all.  That is what
@@ -19,7 +23,7 @@ import type { MapArt, Replay } from "../api/types";
 import type { ReplayModel } from "../model/replay";
 import type { SightMask, SightSettings } from "../model/sight";
 import type { Snapshot } from "../model/state";
-import { SIGHT_MIN_DENOM, coneAlpha, sightCones } from "./sightlayer";
+import { sightCones } from "./sightlayer";
 
 /** Wide open: every ray runs to its full radius and every cone is a full fan. */
 const OPEN: SightMask = { size: 8, cells: new Uint8Array(8 * 8).fill(1) };
@@ -121,36 +125,5 @@ describe("which players get a cone", () => {
     const [first] = cones(snapshot([0]));
     // One apex plus one point per ray, so a canvas can fill it directly.
     expect(first!.polygon.length).toBeGreaterThan(3);
-  });
-});
-
-describe("how much ink one cone gets", () => {
-  it("splits a full side's opacity evenly, so five overlapping reach 100%", () => {
-    expect(coneAlpha(5)).toBeCloseTo(0.2, 10);
-    expect(coneAlpha(5) * 5).toBeCloseTo(1, 10);
-  });
-
-  it("never lets a thinning side darken, so a lone survivor is not opaque", () => {
-    /*
-      Without the floor N is the live count, so the last player alive would be
-      1/1 -- a solid wedge with the radar gone underneath it, arriving exactly
-      when somebody is watching a clutch most closely.
-    */
-    for (const alive of [1, 2, 3, 4, 5]) {
-      expect(coneAlpha(alive)).toBeCloseTo(1 / SIGHT_MIN_DENOM, 10);
-    }
-  });
-
-  it("keeps thinning past a full side, so overlap can still reach 100%", () => {
-    // Above the floor the denominator is the real count again: N cones over
-    // one point is always full opacity, whatever N is.
-    expect(coneAlpha(8)).toBeCloseTo(0.125, 10);
-    expect(coneAlpha(8) * 8).toBeCloseTo(1, 10);
-  });
-
-  it("never exceeds full opacity, however many cones overlap", () => {
-    for (const count of [1, 2, 5, 10, 20]) {
-      expect(coneAlpha(count) * count).toBeLessThanOrEqual(1);
-    }
   });
 });
