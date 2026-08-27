@@ -44,7 +44,7 @@ import type { Replay, Round, Weapon } from "../api/types";
 import type { Side } from "../model/synthetic";
 import { sideOf, weaponArt, weaponInRound } from "../model/synthetic";
 
-export type Kind = "kill" | "ability" | "ultimate" | "spike" | "first";
+export type Kind = "kill" | "ability" | "ultimate" | "spike" | "first" | "start";
 
 export interface RoundEvent {
   key: string;
@@ -226,6 +226,27 @@ export function roundEvents(
     });
   }
 
+  /*
+    The round's own beginning.
+
+    `round.start_ms` is when `roundStarted` fired, which is the start of the buy
+    phase; `action_start_ms` is when the barrier drops, and it is the moment a
+    reader means by "the round".  It is skipped where the two are equal, which
+    is `roundrules`' clamp saying the round was shorter than its own buy phase
+    and there is no such instant inside it.
+  */
+  if (round !== null && round.action_start_ms > round.start_ms) {
+    rows.push({
+      key: `start-${round.action_start_ms}`,
+      tMs: round.action_start_ms,
+      kind: "start",
+      // Sideless, like the spike: it is the round beginning, not somebody acting.
+      side: null,
+      spikeKind: null,
+      body: <span className="ev-thing">Round starts</span>,
+    });
+  }
+
   for (const event of replay.spike.filter((s) => inRound(s.t_ms))) {
     rows.push({
       key: `spike-${event.t_ms}-${event.kind}`,
@@ -243,6 +264,9 @@ export function roundEvents(
   // millisecond, and sorting by key alphabetically put `first-` above `kill-`
   // so the round opened with a tag for an event that had not been listed yet.
   const rank: Record<Kind, number> = {
+    // Ahead of everything: where anything shares the millisecond, the round
+    // beginning is the line to read first.
+    start: -1,
     spike: 0,
     ability: 1,
     ultimate: 2,

@@ -22,9 +22,22 @@ import { expect, test } from "@playwright/test";
 
 import type { Transform } from "../src/api/types";
 import type { ReplayModel } from "../src/model/replay";
-import { decodeMask, cone, forwardUv, uvRadius, type SightSettings } from "../src/model/sight";
+import {
+  decodeMask,
+  cone,
+  forwardUv,
+  uvRadius,
+  type SightSettings,
+} from "../src/model/sight";
 import { positionOf, spikeLocation, stateAt } from "../src/model/state";
-import { applyTransform, placeSquare, uvToPixels, type Box } from "../src/model/transform";
+import {
+  applyTransform,
+  placeSquare,
+  uvToPixels,
+  type Box,
+} from "../src/model/transform";
+import { smokesAt } from "../src/views/sightlayer";
+import { tracersAt, type Tracer } from "../src/views/tracers";
 import {
   firstCrowdedEvent,
   momentAt,
@@ -61,13 +74,22 @@ function clockText(ms: number): string {
 }
 
 /** Every pixel within tolerance of one of the given colours. */
-function colouredPixels(image: Pixels, colours: Array<[number, number, number]>): Array<[number, number]> {
+function colouredPixels(
+  image: Pixels,
+  colours: Array<[number, number, number]>,
+): Array<[number, number]> {
   const found: Array<[number, number]> = [];
   for (let y = 0; y < image.height; y += 1) {
     for (let x = 0; x < image.width; x += 1) {
       const i = (y * image.width + x) * 4;
-      const rgb: [number, number, number] = [image.data[i]!, image.data[i + 1]!, image.data[i + 2]!];
-      if (colours.some((colour) => rgbDistance(rgb, colour) <= COLOUR_TOLERANCE)) {
+      const rgb: [number, number, number] = [
+        image.data[i]!,
+        image.data[i + 1]!,
+        image.data[i + 2]!,
+      ];
+      if (
+        colours.some((colour) => rgbDistance(rgb, colour) <= COLOUR_TOLERANCE)
+      ) {
         found.push([x, y]);
       }
     }
@@ -167,8 +189,74 @@ function uncoveredPlant(
   return null;
 }
 
+/** World to canvas, the same two steps every drawing here goes through. */
+function screenPoint(
+  transform: Transform,
+  box: Box,
+  x: number,
+  y: number,
+): [number, number] {
+  const [u, v] = applyTransform(transform, x, y);
+  return uvToPixels(box, u, v);
+}
+
+/** How far a pixel is from a line segment, which is what "on the line" means. */
+function distanceToSegment(
+  x: number,
+  y: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const span = dx * dx + dy * dy;
+  const t =
+    span === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / span));
+  return Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
+}
+
+/**
+ * The first kill this capture draws exactly one tracer for, long enough to see.
+ *
+ * **One**, because the test measures the difference between two reads and a
+ * second line in the frame would be counted as a stray off the first one's
+ * path.  **Long**, because both ends of a tracer are underneath a player
+ * marker -- the killer's and the victim's -- and a shot taken from three feet
+ * away is entirely covered by the two portraits, which is the drawing behaving
+ * as designed rather than something to loosen an assertion for.
+ */
+function firstLoneTracer(
+  model: ReplayModel,
+  transform: Transform,
+  box: Box,
+): { moment: Moment; tracer: Tracer } | null {
+  for (const kill of model.replay.kills) {
+    if (!model.replay.event_times.includes(kill.t_ms)) {
+      continue;
+    }
+    const drawn = tracersAt(model, stateAt(model, kill.t_ms));
+    if (drawn.length !== 1) {
+      continue;
+    }
+    const tracer = drawn[0]!;
+    const [ax, ay] = screenPoint(transform, box, tracer.from.x, tracer.from.y);
+    const [bx, by] = screenPoint(transform, box, tracer.to.x, tracer.to.y);
+    if (Math.hypot(bx - ax, by - ay) < 3 * MARKER_REACH) {
+      continue;
+    }
+    return { moment: momentAt(model, kill.t_ms), tracer };
+  }
+  return null;
+}
+
 test.describe("the 2D minimap", () => {
-  test("draws every player the model can place, and nothing else", async ({ page }) => {
+  test("draws every player the model can place, and nothing else", async ({
+    page,
+  }) => {
     const { replay, art, model } = await openFirstPlayable(page);
     const canvas = page.locator("canvas.minimap");
 
@@ -181,6 +269,14 @@ test.describe("the 2D minimap", () => {
       budget until it stopped catching what it exists to catch, which is a
       marker drawn where nobody is. The cones have their own spec below.
     */
+    /*
+      And tracers off, for the same reason SIGHT is off: a tracer is drawn
+      in a side colour, and this counts side-coloured pixels. It is on screen
+      for half a second before its kill and most of another after, and
+      `stepToEvent` seeks to an `event_times` entry -- which is often a kill,
+      landing the playhead on one at full opacity. Its own test is below.
+    */
+    await setLayer(page, "TRACERS (SIM)", false);
     await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
 
@@ -191,7 +287,9 @@ test.describe("the 2D minimap", () => {
     // It reads *into the round* over the round's own length, because the
     // transport is scoped to a round -- a scrubber spanning twenty-six minutes
     // gave round four about forty pixels.
-    const round = replay.rounds.find((entry) => entry.number === moment.roundNo)!;
+    const round = replay.rounds.find(
+      (entry) => entry.number === moment.roundNo,
+    )!;
     await expect(page.locator(".clock-readout")).toHaveText(
       `${clockText(tMs - round.start_ms)} / ${clockText(round.duration_ms)}`,
     );
@@ -201,14 +299,24 @@ test.describe("the 2D minimap", () => {
     const snap = stateAt(model, tMs);
 
     const expected = replay.players
-      .map((player) => ({ player, position: positionOf(snap, player.actor_id) }))
+      .map((player) => ({
+        player,
+        position: positionOf(snap, player.actor_id),
+      }))
       .filter((entry) => entry.position !== null)
       .map((entry) => {
-        const [u, v] = applyTransform(art.transform, entry.position!.x, entry.position!.y);
+        const [u, v] = applyTransform(
+          art.transform,
+          entry.position!.x,
+          entry.position!.y,
+        );
         const [x, y] = uvToPixels(box, u, v);
         return { player: entry.player, x, y };
       });
-    expect(expected.length, "the chosen instant has players to draw").toBeGreaterThanOrEqual(8);
+    expect(
+      expected.length,
+      "the chosen instant has players to draw",
+    ).toBeGreaterThanOrEqual(8);
 
     const colours = await palette(page);
     const teams = new Set(expected.map((marker) => marker.player.team));
@@ -220,7 +328,10 @@ test.describe("the 2D minimap", () => {
       parseColour(team === "A" ? colours.a! : colours.b!),
     );
     const matched = colouredPixels(image, teamColours);
-    expect(matched.length, "team colours are on the canvas at all").toBeGreaterThan(0);
+    expect(
+      matched.length,
+      "team colours are on the canvas at all",
+    ).toBeGreaterThan(0);
 
     // Every predicted player is drawn where the model says.
     const claimed = new Set<number>();
@@ -241,7 +352,10 @@ test.describe("the 2D minimap", () => {
     // And nothing in a team colour is anywhere else. A handful of stray pixels
     // is antialiasing; a marker is hundreds.
     const unclaimed = matched.length - claimed.size;
-    expect(unclaimed, "team-coloured pixels away from any predicted player").toBeLessThan(200);
+    expect(
+      unclaimed,
+      "team-coloured pixels away from any predicted player",
+    ).toBeLessThan(200);
   });
 
   test("every living player gets a cone, pointing where they are facing", async ({
@@ -249,6 +363,14 @@ test.describe("the 2D minimap", () => {
   }) => {
     const { art, sight, model } = await openFirstPlayable(page);
     const canvas = page.locator("canvas.minimap");
+    /*
+      And tracers off, for the same reason SIGHT is off: a tracer is drawn
+      in a side colour, and this counts side-coloured pixels. It is on screen
+      for half a second before its kill and most of another after, and
+      `stepToEvent` seeks to an `event_times` entry -- which is often a kill,
+      landing the playhead on one at full opacity. Its own test is below.
+    */
+    await setLayer(page, "TRACERS (SIM)", false);
     await setLayer(page, "SIGHT", false);
     await toggleLayer(page, "UTILITY");
 
@@ -282,25 +404,52 @@ test.describe("the 2D minimap", () => {
       predicts, and any turn of the whole set does not.
     */
     const drawn = model.replay.players
-      .map((player) => ({ player, position: snap.positions.get(player.actor_id) }))
-      .filter((e) => e.position !== undefined && snap.alive.has(e.player.actor_id))
+      .map((player) => ({
+        player,
+        position: snap.positions.get(player.actor_id),
+      }))
+      .filter(
+        (e) => e.position !== undefined && snap.alive.has(e.player.actor_id),
+      )
       .map(({ player, position }) => {
         const [u, v] = applyTransform(art.transform, position!.x, position!.y);
         return {
           player,
           origin: uvToPixels(box, u, v),
+          /*
+              The same occluders the canvas passes, and not an empty list.
+
+              `MinimapCanvas` and `Scene3D` both hand `smokesAt(art, snap)` to
+              `cone`, so a cone recomputed without them is a *different* cone --
+              longer wherever a smoke is standing in it -- and the coverage this
+              spec measures would read as the layer failing to paint what it was
+              told to.  It went unnoticed while the moment this lands on was the
+              capture's first millisecond, where no utility is out at all; the
+              transport opens a round at the barrier drop now, and five pieces
+              are out within a frame of it.
+            */
           polygon: cone(
             mask,
             [u, v],
-            forwardUv(art.transform, position!.x, position!.y, position!.yaw, settings.probe_uu),
+            forwardUv(
+              art.transform,
+              position!.x,
+              position!.y,
+              position!.yaw,
+              settings.probe_uu,
+            ),
             uvRadius(art.transform, settings.max_range_uu),
             settings,
+            smokesAt(art, snap),
           ),
         };
       })
       .filter((entry) => entry.polygon.length > 2);
 
-    expect(drawn.length, "several players have a cone to draw here").toBeGreaterThan(2);
+    expect(
+      drawn.length,
+      "several players have a cone to draw here",
+    ).toBeGreaterThan(2);
 
     await setLayer(page, "SIGHT", true);
     const lit = await readCanvas(page, canvas);
@@ -324,7 +473,15 @@ test.describe("the 2D minimap", () => {
             continue;
           }
           sampled += 1;
-          if (rgbDistance(before, after) > 8) {
+          /*
+            Four, not eight: `SIGHT_ALPHA` is a quarter now and was a half, so
+            the delta this looks for is half the size it was. The question is
+            "did this pixel change at all" -- leaving the threshold where it
+            was would quietly turn it into "did it change a lot" and drop every
+            sample over the paler parts of the radar, which is a different test
+            passing under the same name.
+          */
+          if (rgbDistance(before, after) > 4) {
             changed += 1;
           }
         }
@@ -341,13 +498,19 @@ test.describe("the 2D minimap", () => {
       `cones ${drawn.length}: forward ${forward.toFixed(3)} left ${left.toFixed(3)} ` +
         `right ${right.toFixed(3)} behind ${behind.toFixed(3)}`,
     );
-    expect(forward, "the wash covers the cones the model computed").toBeGreaterThan(0.6);
-    expect(forward, "and covers them better than the same cones turned").toBeGreaterThan(
-      Math.max(left, right, behind) + 0.15,
-    );
+    expect(
+      forward,
+      "the wash covers the cones the model computed",
+    ).toBeGreaterThan(0.6);
+    expect(
+      forward,
+      "and covers them better than the same cones turned",
+    ).toBeGreaterThan(Math.max(left, right, behind) + 0.15);
   });
 
-  test("scrubbing backwards lands on exactly the same frame", async ({ page }) => {
+  test("scrubbing backwards lands on exactly the same frame", async ({
+    page,
+  }) => {
     const { model } = await openFirstPlayable(page);
     const canvas = page.locator("canvas.minimap");
     await toggleLayer(page, "UTILITY");
@@ -374,11 +537,17 @@ test.describe("the 2D minimap", () => {
     ).toEqual([there.width, there.height]);
     let differing = 0;
     for (let i = 0; i < there.data.length; i += 4) {
-      if (there.data[i] !== back.data[i] || there.data[i + 1] !== back.data[i + 1]) {
+      if (
+        there.data[i] !== back.data[i] ||
+        there.data[i + 1] !== back.data[i + 1]
+      ) {
         differing += 1;
       }
     }
-    expect(differing, "the same instant is drawn identically from either side").toBe(0);
+    expect(
+      differing,
+      "the same instant is drawn identically from either side",
+    ).toBe(0);
   });
 
   /*
@@ -425,7 +594,10 @@ test.describe("the 2D minimap", () => {
     // Every playable capture in the reference library has a located plant, but
     // a library that had none -- or none the planter ever walks away from --
     // should skip rather than fail: this is about the drawing.
-    test.skip(found === null, "no located plant this capture ever leaves uncovered");
+    test.skip(
+      found === null,
+      "no located plant this capture ever leaves uncovered",
+    );
     const { at, moment } = found!;
 
     // `Replay.event_times` includes every spike event, so `>>` lands on the
@@ -464,7 +636,9 @@ test.describe("the 2D minimap", () => {
         stray.push([px, py]);
       }
     }
-    expect(near, `spike at (${x.toFixed(1)}, ${y.toFixed(1)})`).toBeGreaterThan(20);
+    expect(near, `spike at (${x.toFixed(1)}, ${y.toFixed(1)})`).toBeGreaterThan(
+      20,
+    );
     /*
       And nowhere else -- but as the largest *patch* rather than as a total.
 
@@ -486,5 +660,122 @@ test.describe("the 2D minimap", () => {
       largestPatch(stray),
       "an amber patch away from the plant, as large as the plant's own",
     ).toBeLessThan(near);
+  });
+  /*
+    The tracer, which is the one mark on this canvas that nothing decoded.
+
+    A `.vrf` holds no shot: what is read is that two players were in two known
+    places at one known millisecond, and the line between them is drawn by this
+    project.  So the assertion cannot be "a line is where the file says", the
+    way the spike's is -- it is that the line is where the *model* says, in the
+    killer's own side colour, and nowhere else.
+
+    It is measured as a **difference** between two reads of the same instant
+    rather than as a colour count, and that is what makes it specific.  Both
+    team colours are already all over this canvas as player markers; a total
+    could be satisfied by the markers alone.  The playhead does not move between
+    the two reads and `stateAt` accumulates nothing, so the only pixels that can
+    differ are the ones this layer painted.
+  */
+  test("draws the fatal shot between the two players, in the killer's colour", async ({
+    page,
+  }) => {
+    const { model, art } = await openFirstPlayable(page);
+    const canvas = page.locator("canvas.minimap");
+    await setLayer(page, "SIGHT", false);
+    await toggleLayer(page, "UTILITY");
+
+    const [width, height] = await canvas.evaluate((element) => [
+      element.clientWidth,
+      element.clientHeight,
+    ]);
+    const box = placeSquare(width, height);
+
+    const found = firstLoneTracer(model, art.transform, box);
+    // A capture whose kills all land on top of each other, or whose killers
+    // have no track at the instant they fired, has nothing to photograph here.
+    test.skip(
+      found === null,
+      "no kill this capture draws a lone, long tracer for",
+    );
+    const { moment, tracer } = found!;
+
+    // `Replay.event_times` carries every kill, so `>>` lands on the shot
+    // itself -- which is the instant the bullet *lands*, so the whole line is
+    // drawn at full opacity. The flight is the second before this.
+    await stepToEvent(page, moment);
+
+    await setLayer(page, "TRACERS (SIM)", false);
+    const without = await readCanvas(page, canvas);
+    await setLayer(page, "TRACERS (SIM)", true);
+    const with_ = await readCanvas(page, canvas);
+
+    const changed: Array<[number, number]> = [];
+    for (let y = 0; y < Math.min(with_.height, without.height); y += 1) {
+      for (let x = 0; x < Math.min(with_.width, without.width); x += 1) {
+        const lit = pixelAt(with_, x, y);
+        const dark = pixelAt(without, x, y);
+        if (lit !== null && dark !== null && rgbDistance(lit, dark) > 20) {
+          changed.push([x, y]);
+        }
+      }
+    }
+    expect(
+      changed.length,
+      "the layer painted something at all",
+    ).toBeGreaterThan(40);
+
+    const [ax, ay] = screenPoint(
+      art.transform,
+      box,
+      tracer.from.x,
+      tracer.from.y,
+    );
+    const [bx, by] = screenPoint(art.transform, box, tracer.to.x, tracer.to.y);
+    /*
+      Everything it painted is on the line it claims to be.
+
+      The slack is the stroke and its glow: `TRACER_WIDTH` is 2 and
+      `TRACER_TRAIL_GLOW` spreads a further six, and a `shadowBlur` of six
+      reaches about that far before it is lost in the radar. Plus the half
+      pixel a clipped element screenshot can drift by.
+    */
+    const strays = changed.filter(
+      ([x, y]) => distanceToSegment(x, y, ax, ay, bx, by) > 10,
+    );
+    expect(
+      strays.length / changed.length,
+      "pixels this layer changed that are not on the killer-to-victim line",
+    ).toBeLessThan(0.1);
+
+    /*
+      And it is the killer's side that colours it, which is the whole of what
+      "red or blue" means here: the side, never the team, so it stays right
+      across the halftime swap.
+
+      Measured as the **shift** each pixel took rather than the colour it
+      ended at, and that is a correction rather than a loosening. Most of a
+      glow is gradient -- a few percent of the side's colour over Riot's grey
+      -- so asking whether the pixel is *within 36 of red* answers "no" for
+      ink that is unmistakably red to a reader, and the assertion measured the
+      hardness of the stroke instead of its hue. What actually has to be true
+      is that the light this layer added is the killer's: for an attacker the
+      pixel moved further toward red than toward blue, and for a defender the
+      other way. That is the same red-minus-blue test `scene.spec.ts` uses on
+      the markers, and it survives any alpha.
+    */
+    const towardMine = changed.filter(([x, y]) => {
+      const lit = pixelAt(with_, x, y);
+      const dark = pixelAt(without, x, y);
+      if (lit === null || dark === null) {
+        return false;
+      }
+      const warmer = lit[0] - dark[0] - (lit[2] - dark[2]);
+      return tracer.side === "ATK" ? warmer > 0 : warmer < 0;
+    });
+    expect(
+      towardMine.length / changed.length,
+      `the light this tracer added is the ${tracer.side} colour`,
+    ).toBeGreaterThan(0.9);
   });
 });

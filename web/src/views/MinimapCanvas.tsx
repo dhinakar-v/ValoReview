@@ -48,6 +48,7 @@ import { markerScale, panBy, viewBox, zoomAt } from "../model/viewport";
 import { palette, sideColour, useImages } from "./images";
 import { usePlayback, selectedActor, teamShown } from "./playback";
 import { paintCones, sightCones, smokesAt } from "./sightlayer";
+import { tracersAt } from "./tracers";
 
 /** Marker sizes, in CSS pixels, carried over from the desktop viewer. */
 const AVATAR_PX = 26;
@@ -108,8 +109,28 @@ const HOVER_RING = 3;
  * One constant where there were two: `KILL_MARK` sized the kill cross and
  * `DEAD_RADIUS` the dead player's own circle, and both were drawn at the same
  * point on the same player.  See `drawDeathMark`.
+ *
+ * 4.5 rather than 5, which is the smallest half of a correction: a round with
+ * six kills in one choke drew six crosses at very nearly a portrait's own
+ * width, and the mark for somebody who is *gone* was reading louder than the
+ * marker for somebody who is standing there.
  */
-const DEATH_MARK = 5;
+const DEATH_MARK = 4.5;
+
+/*
+ * How dark the keyline under a death cross is allowed to be.
+ *
+ * The keyline exists so the mark survives Ascent's pale mid, and at a full
+ * 4px of opaque canvas colour it was doing considerably more than that -- a
+ * dark halo two pixels proud of every arm, which is the *bulk* a reader sees
+ * before they see the colour.  Half-strength and one pixel narrower still
+ * separates the cross from the radar and stops it from being the heaviest
+ * thing on a crowded map.  The mark itself stays fully opaque: a stroke
+ * blended toward the radar drifts outside the 36-RGB window `minimap.spec.ts`
+ * counts as a team colour, so fading *that* would make a dead player pass its
+ * check by luck rather than by being drawn.
+ */
+const DEATH_KEYLINE_ALPHA = 0.45;
 
 /** How far right of a marker the hover card sits, matching the reference. */
 const TIP_OFFSET_PX = 14;
@@ -127,6 +148,39 @@ const SPIKE_HALF = 8;
  * cap the agent label used before it was removed.
  */
 const MARK_SCALE_CAP = 1.4;
+
+/**
+ * A tracer's stroke, and the dash that says it was not decoded.
+ *
+ * Two pixels rather than one: a hairline that appears and vanishes is a flicker
+ * rather than a mark.  The dash is longer than `drawRange`'s `[4, 4]` because
+ * this is a line and that is a circle -- a 4px dash around a 60px ring reads as
+ * dashed, and along a 300px line it reads as a dotted rule.
+ */
+const TRACER_WIDTH = 2;
+const TRACER_DASH = [7, 5];
+
+/**
+ * The glow, which is the first `shadowBlur` in this interface.
+ *
+ * A tracer is on screen for well under two seconds, crosses whatever is under
+ * it, and is the one mark here a reader is meant to catch out of the corner of
+ * an eye.  A canvas shadow is the only glow a 2D context has, and it is
+ * confined to the canvas: `review.spec.ts`'s flat-and-square sweep reads
+ * `getComputedStyle().boxShadow` off DOM nodes and cannot see this.  **A CSS
+ * shadow on the `<canvas>` element itself would be a different matter** -- that
+ * spec does see those, and neither `canvas.minimap` nor `.stage-canvas` is on
+ * its floating allowlist.
+ *
+ * Soft along the trail and hard at the head, because they answer different
+ * questions: the trail is the geometry of the shot and has to stay a readable
+ * dashed line, where the head is the event and has to be unmissable.
+ */
+const TRACER_TRAIL_GLOW = 6;
+const TRACER_HEAD_GLOW = 12;
+
+/** The bullet itself, in CSS pixels before the zoom scale. */
+const TRACER_HEAD_RADIUS = 3;
 
 /**
  * How far ahead the facing probe is placed, in Unreal units.
@@ -336,6 +390,9 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
           icons: castIcons,
           showRange: state.layers.abilityRange,
         });
+      }
+      if (state.layers.tracers) {
+        drawTracers(context, { model, snap, world, colours, scale });
       }
       /*
         The spike, if it is on the ground.
@@ -632,6 +689,83 @@ function drawSpike(
   context.restore();
 }
 
+
+/**
+ * The fatal shot: a glowing bullet crossing a dashed line to the victim.
+ *
+ * **Dashed because it is generated.**  Every other stroke on this canvas is
+ * around something the capture states; a `.vrf` has no shot in it at all, and
+ * `views/tracers.ts` carries the whole argument for what is read here, what is
+ * drawn, and why the flight is on screen before the kill it ends at.  The dash
+ * is the same token `drawRange` uses for a looked-up radius.
+ *
+ * The trail is drawn only as far as the bullet has flown, so what a reader
+ * follows is a head with a line behind it rather than a line with a dot on it.
+ * Once it lands the whole line is there and holds, which is what makes the
+ * geometry readable on a paused playhead -- an animation nobody can stop on is
+ * no use to somebody reviewing a round.
+ *
+ * Under the players and under the spike, like everything else, and with no
+ * arrowhead: the bullet is the direction, and the victim end already has
+ * `drawDeathMark` on it.
+ */
+function drawTracers(
+  context: CanvasRenderingContext2D,
+  args: {
+    model: ReplayModel;
+    snap: Snapshot;
+    world: (x: number, y: number) => [number, number];
+    colours: Record<string, string>;
+    scale: number;
+  },
+): void {
+  const { model, snap, world, colours, scale } = args;
+  const tracers = tracersAt(model, snap);
+  if (tracers.length === 0) {
+    return;
+  }
+  const mark = Math.min(Math.max(scale, 1), MARK_SCALE_CAP);
+  /*
+    `save`/`restore` rather than putting anything back by hand: the player loop
+    draws into this same context afterwards, and a leaked `globalAlpha`,
+    `shadowBlur` or dash would quietly repaint a whole canvas from a layer that
+    had finished drawing.
+  */
+  context.save();
+  context.lineCap = "round";
+  for (const tracer of tracers) {
+    const [x1, y1] = world(tracer.from.x, tracer.from.y);
+    const [x2, y2] = world(tracer.to.x, tracer.to.y);
+    const hx = x1 + (x2 - x1) * tracer.progress;
+    const hy = y1 + (y2 - y1) * tracer.progress;
+    const colour = sideColour(colours, tracer.side ?? "");
+
+    context.globalAlpha = tracer.alpha;
+    context.strokeStyle = colour;
+    context.shadowColor = colour;
+    context.shadowBlur = TRACER_TRAIL_GLOW * mark;
+    context.lineWidth = TRACER_WIDTH * mark;
+    context.setLineDash(TRACER_DASH);
+    context.beginPath();
+    context.moveTo(x1, y1);
+    context.lineTo(hx, hy);
+    context.stroke();
+
+    // The bullet: a hot core inside the side's own glow, so it reads as a
+    // light rather than as a third, larger marker on a canvas full of discs.
+    context.setLineDash([]);
+    context.shadowBlur = TRACER_HEAD_GLOW * mark;
+    context.fillStyle = colour;
+    context.beginPath();
+    context.arc(hx, hy, TRACER_HEAD_RADIUS * mark, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = colours.text!;
+    context.beginPath();
+    context.arc(hx, hy, TRACER_HEAD_RADIUS * mark * 0.45, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
+}
 
 /**
  * Every living player's approximate view cone, one wedge each.
@@ -1012,11 +1146,13 @@ function drawFacing(
  * landed cast, filled triangle the spike, and this is the only bare cross.
  *
  * Keyline first and then the mark, which is how the agent label used to stay
- * readable over Ascent's pale mid before it was removed.  Fully opaque: the
- * old 0.55 and 0.8 were half the illegibility, and a stroke blended toward the
- * radar underneath can also drift outside the 36-RGB window `minimap.spec.ts`
- * counts as a team colour -- so a dead player was being *checked* by luck as
- * well as read by squinting.
+ * readable over Ascent's pale mid before it was removed.  The *mark* is fully
+ * opaque: the old 0.55 and 0.8 were half the illegibility, and a stroke blended
+ * toward the radar underneath can also drift outside the 36-RGB window
+ * `minimap.spec.ts` counts as a team colour -- so a dead player was being
+ * *checked* by luck as well as read by squinting.  The keyline is not the mark
+ * and takes `DEATH_KEYLINE_ALPHA` instead; round caps rather than square for
+ * the same reason, a squared arm end reading as a stub of a thicker stroke.
  */
 function drawDeathMark(
   context: CanvasRenderingContext2D,
@@ -1031,11 +1167,13 @@ function drawDeathMark(
   path.lineTo(x + arm, y - arm);
 
   context.save();
-  context.lineCap = "square";
-  context.lineWidth = 4;
+  context.lineCap = "round";
+  context.globalAlpha = DEATH_KEYLINE_ALPHA;
+  context.lineWidth = 3;
   context.strokeStyle = keyline;
   context.stroke(path);
-  context.lineWidth = 2;
+  context.globalAlpha = 1;
+  context.lineWidth = 1.75;
   context.strokeStyle = colour;
   context.stroke(path);
   context.restore();

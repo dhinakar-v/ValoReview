@@ -101,7 +101,6 @@ export function IconButton({
   pressed,
   disabled = false,
   variant = "ghost",
-  silent = false,
 }: {
   label: string;
   icon: Glyph;
@@ -109,8 +108,6 @@ export function IconButton({
   pressed?: boolean;
   disabled?: boolean;
   variant?: "default" | "ghost";
-  /** For the sound toggle itself, which has to make its own noise, after. */
-  silent?: boolean;
 }) {
   return (
     <button
@@ -120,14 +117,7 @@ export function IconButton({
       title={label}
       disabled={disabled}
       className={`icon-only${variant === "ghost" ? " ghost" : ""}`}
-      onClick={() => {
-        if (!silent) {
-          if (pressed === undefined) {
-          } else {
-          }
-        }
-        onClick?.();
-      }}
+      onClick={onClick}
     >
       <Icon glyph={icon} size={ICON_ALONE} />
     </button>

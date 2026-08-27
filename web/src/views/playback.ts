@@ -47,6 +47,8 @@ export interface Layers {
   killMarkers: boolean;
   /** A looked-up radius, drawn dashed. See DEFAULT_LAYERS. */
   abilityRange: boolean;
+  /** The fatal shot as a line, drawn dashed. See DEFAULT_LAYERS. */
+  tracers: boolean;
   casts: boolean;
   kills: boolean;
   ultimates: boolean;
@@ -83,6 +85,19 @@ export const DEFAULT_LAYERS: Layers = {
     for deliberately, drawn dashed, and labelled `RANGE (SIM)` on its own row.
   */
   abilityRange: false,
+  /*
+    On, unlike the other generated geometry on this canvas, and the difference
+    is what is generated.  `abilityRange` invents a *number* -- a radius nobody
+    in the file states, looked up in community research about a game that
+    rebalances every few weeks -- so it is asked for deliberately.  Both ends of
+    a tracer are decoded: two players, in two places, at one real millisecond.
+    What is invented is only the straight line between them, which is why it is
+    dashed and why the label carries the word.
+
+    It lives for `TRACER_MS` and nothing else on the map moves that fast, so it
+    is also the one layer here that costs nothing to leave on.
+  */
+  tracers: true,
   casts: true,
   kills: true,
   ultimates: true,

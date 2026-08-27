@@ -75,8 +75,17 @@ export const SIGHT_RASTER = 1024;
  * it is a drawing constant with one call site, and `paintCones` needs a 2D
  * context that jsdom does not provide, so there is nothing that could pin it
  * below the Playwright tier anyway.
+ *
+ * A quarter and not a half.  At 0.5 a full team's wash took the radar with it:
+ * the callouts, the ramps and the site outlines under the shape were all but
+ * gone, and this layer is a claim *about* the map that has to be read against
+ * it.  What the number has to buy is only that the shape is unmistakable, and
+ * a quarter does that over Riot's greys while leaving the map underneath
+ * legible.  The pixel suite measures it as a *changed* pixel rather than as a
+ * strong one, so its detector moved with this -- see `minimap.spec.ts` and
+ * `scene.spec.ts`.
  */
-const SIGHT_ALPHA = 0.5;
+const SIGHT_ALPHA = 0.25;
 
 /**
  * The order the side layers are composited in.
@@ -224,10 +233,11 @@ function scratchFor(
  * ------------------------------------------------------------
  * The alpha is on the **blit**, not on the fills, and that is the whole reason
  * the buffer survives a flat wash.  Filling each cone onto the target at
- * `SIGHT_ALPHA` directly would composite them against each other -- two cones
- * over a point would read 75% and three 87.5%, the saturating curve that the
- * old `1/N` arithmetic was built to escape -- so the union has to be
- * accumulated somewhere that is not the picture, and stamped once.
+ * `SIGHT_ALPHA` directly would composite them against each other -- at a
+ * quarter, two cones over a point would read 43.75% and three 57.8%, the
+ * saturating curve that the old `1/N` arithmetic was built to escape -- so the
+ * union has to be accumulated somewhere that is not the picture, and stamped
+ * once.
  *
  * The fills therefore go on at `globalAlpha = 1`, and on `lighter` rather than
  * `source-over`: at full alpha the two agree over a cone's interior, but a

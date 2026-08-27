@@ -110,6 +110,17 @@ export const MAP_LAYERS: Entry[] = [
       is3d ? "2D only: the death marks are drawn on the radar, not in the scene." : null,
   },
   {
+    key: "tracers",
+    // `(SIM)` for the same reason `RANGE (SIM)` carries it, and about a
+    // narrower thing: both ends of this line are decoded -- two players, two
+    // places, one real millisecond -- and the line between them is not. A
+    // `.vrf` holds no shot at all.
+    label: "TRACERS (SIM)",
+    icon: glyphs.tracers,
+    hint: "The fatal shot, killer to victim -- a line drawn between two decoded positions",
+    drawnIn: ["2d", "3d"],
+  },
+  {
     key: "abilityRange",
     // The word is in the label on purpose: a row reading `RANGE` claims a
     // measurement, and this is the one layer here nothing decoded.

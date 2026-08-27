@@ -40,6 +40,10 @@ const ROUND = {
   start_ms: 0,
   end_ms: 60_000,
   duration_ms: 60_000,
+  // Round one, so a 45s buy phase: the round-start marker sits three quarters
+  // along this rail, and nothing else is put there.
+  buy_phase_ms: 45_000,
+  action_start_ms: 45_000,
   winner: "A",
   reason: "wipe",
   decided: true,
@@ -64,13 +68,16 @@ const REPLAY: Replay = {
   rounds: [ROUND],
   // 15s in, a quarter of the way along the rail.
   kills: [{ t_ms: 15_000, killer: 1, victim: 2, round_no: 1, is_suicide: false }],
-  // 45s in, three quarters along.
-  ultimates: [{ t_ms: 45_000, actor_id: 2, round_no: 1 }],
+  // 52s in, and deliberately not 45s: that is where the round-start marker
+  // lands, and an ultimate sharing the millisecond would make every assertion
+  // about either mark an assertion about both.
+  ultimates: [{ t_ms: 52_000, actor_id: 2, round_no: 1 }],
   // 30s in, halfway -- with two casts a millisecond apart beside it.
   spike: [{ t_ms: 30_000, kind: "planted", round_no: 1, x: null, y: null, z: null }],
   loadouts: [],
   ability_casts: [cast(30_000, 1, "Hunter", "Sova", "Owl Drone"), cast(30_001, 2, "Rift", "Jett", "Cloudburst")],
-  event_times: [15_000, 30_000, 45_000],
+  // 45s is the round-start marker, which is what a round contributes now.
+  event_times: [15_000, 30_000, 45_000, 52_000],
   score: [1, 0],
   has_positions: false,
   has_abilities: true,
@@ -248,8 +255,49 @@ describe("the rail's marks", () => {
     pointAt(rail, 15_000);
     expect(tip()).toBeNull();
     // And the marks that are still switched on are untouched.
-    pointAt(rail, 45_000);
+    pointAt(rail, 52_000);
     expect(tip()!.textContent).toContain("ultimate");
+  });
+
+  /*
+    The round's own beginning.
+
+    `start_ms` is when `roundStarted` fired, which is the start of the buy
+    phase -- thirty or forty-five seconds of ten people stood behind a barrier.
+    The mark is at the barrier drop, and there is deliberately no mark at
+    `start_ms`: a rail with a tick at both would be claiming two beginnings.
+  */
+  it("marks where the round starts and says so", () => {
+    const rail = show();
+    pointAt(rail, 45_000);
+    expect(tip()!.textContent).toContain("Round starts");
+  });
+
+  it("puts no mark on the buy phase's own start", () => {
+    const rail = show();
+    pointAt(rail, 0);
+    expect(tip()).toBeNull();
+  });
+
+  /*
+    The marker has no layer switch, which is the whole reason to assert it here:
+    it is the round's structure rather than an overlay on it, so turning every
+    switch off must leave it drawn.  `LayersMenu.test` proves the other half --
+    that `LAYER_FOR` names no switch for it.
+  */
+  it("survives every layer being switched off", () => {
+    usePlayback.setState({
+      layers: {
+        ...DEFAULT_LAYERS,
+        kills: false,
+        casts: false,
+        ultimates: false,
+        spike: false,
+      },
+    });
+    const rail = show();
+    pointAt(rail, 45_000);
+    expect(tip()!.textContent).toContain("Round starts");
   });
 
   it("keeps the clock readout to two clocks and nothing else", () => {

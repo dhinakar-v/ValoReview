@@ -264,11 +264,22 @@ class LoadoutDoc(BaseModel):
 
 
 class RoundDoc(BaseModel):
+    """
+    One round, buy phase included.
+
+    `start_ms` is when `roundStarted` fired, which is the start of
+    the buy phase; `action_start_ms` is when the barrier drops and the round
+    becomes playable, which is looked up rather than read -- see
+    `vrfview.roundrules` for the rule and the measurement behind it.
+    """
+
     number: int
     index: int
     start_ms: int
     end_ms: int
     duration_ms: int
+    buy_phase_ms: int
+    action_start_ms: int
     winner: str
     reason: str
     decided: bool

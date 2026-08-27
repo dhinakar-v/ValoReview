@@ -55,8 +55,8 @@ function editing(target: EventTarget | null): boolean {
  * Two claims are real here and both were bugs:
  *
  *   * **Space presses a focused `<button>`.**  Taking it left Enter as the only
- *     way to work UTILITY, TRAILS, SIGHT, CALLOUTS and the sound toggle
- *     from the keyboard -- every button on the page, for as long as a stage was
+ *     way to work UTILITY, TRAILS, SIGHT, CALLOUTS and the mute from the
+ *     keyboard -- every button on the page, for as long as a stage was
  *     mounted.
  *   * **A tablist moves with the arrow keys and Home/End.**  The timeline's
  *     strip is one, so ArrowRight in it changed the tab *and* stepped the

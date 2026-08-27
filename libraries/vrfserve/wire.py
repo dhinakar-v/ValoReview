@@ -384,6 +384,8 @@ def replay_doc(
                 "start_ms": r.start_ms,
                 "end_ms": r.end_ms,
                 "duration_ms": r.duration_ms,
+                "buy_phase_ms": r.buy_phase_ms,
+                "action_start_ms": r.action_start_ms,
                 "winner": r.winner,
                 "reason": r.reason,
                 "decided": r.decided,

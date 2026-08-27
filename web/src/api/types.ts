@@ -178,9 +178,20 @@ export interface Loadout {
 export interface Round {
   number: number;
   index: number;
+  /** When `roundStarted` fired, which is the start of the buy phase. */
   start_ms: number;
   end_ms: number;
   duration_ms: number;
+  buy_phase_ms: number;
+  /**
+   * When the barrier drops and the round becomes playable.
+   *
+   * Looked up rather than read -- nothing in a capture states a buy phase --
+   * and computed once in `vrfview.roundrules` so the browser does no arithmetic
+   * of its own.  Clamped to `end_ms`, where it means the round was shorter than
+   * its own buy phase and there is no such instant in it.
+   */
+  action_start_ms: number;
   winner: string;
   reason: string;
   decided: boolean;

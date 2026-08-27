@@ -197,6 +197,12 @@ that came off the bar the module became unreachable: a store nothing could set,
 six voices nothing could play. Dead code that still runs in every test is worse
 than no feature, so it went with the icon.
 
+It has come back as one voice rather than seven -- the shot a kill makes -- and
+what changed is the part that killed it: the mute is on the *stage head*, beside
+the tracer it is about, rather than on a bar that is over every page including
+the ones that make no noise. Still synthesised, still no audio files. A module
+ships the sounds something plays.
+
 **The decoder light.** It reported a property of the *machine* -- whether a
 `.NET` build exists -- on every page, including the many where nothing could be
 decoded. Where the answer actually decides something, the DECODE POSITIONS
@@ -247,9 +253,9 @@ inherit from the page on some platforms.
 **A skip link that moves the focus, not just the scroll.** `AppFrame` renders
 it first in the DOM, hidden until focused. Reaching the map from the keyboard
 was seven presses on every navigation -- brand, breadcrumb, decoder light,
-sound, and three more in the viewer's page head; four of those are gone and the
-viewer's bar is down to two controls, but the link stays, because it is the
-cheap half of the fix. The element it lands on takes `id="main"` and
+sound, and three more in the viewer's page head; four of those are gone from the
+bar and the viewer's is down to two controls, but the link stays, because it is
+the cheap half of the fix. The element it lands on takes `id="main"` and
 `tabIndex={-1}` -- `Shell.Page`'s `<main>` on the match list, and the viewer's
 own `<main className="viewer">` on the immersive shape. A link that only
 scrolls leaves the focus in the bar, so the next Tab returns to the first thing
@@ -351,9 +357,12 @@ Each of these is load-bearing, and each is pinned by a test in
 - **A sight cone means the same thing in both views.** `views/sightlayer.ts`
   owns the selection, the gates, the colours and the ink, and the two canvases
   call it — so a cone cannot be drawn for everybody here and for one picked
-  player there, which is what they did for months. The opacity is the overlap:
-  each cone is `1/N` of its side, accumulated additively on an offscreen buffer,
-  because ordinary compositing saturates and stops counting.
+  player there, which is what they did for months. The wash is **flat**: a
+  side's cones are unioned on an offscreen buffer and stamped once at
+  `SIGHT_ALPHA`, so one cone and five overlapping ones read identically and the
+  layer says only *where that side can see*. It weighed the count once — each
+  cone `1/N` of its side, accumulated additively — and that gradient is gone.
+  The buffer stays, because the alpha is on the blit and not on the fills.
 - **Where `Track.at` refuses, nothing is drawn.** Not a last-known position, in
   either view. The refusal exists to stop a plausible coordinate being
   invented, and a fallback downstream of it would undo exactly that.

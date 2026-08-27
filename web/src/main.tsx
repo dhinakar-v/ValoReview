@@ -16,8 +16,8 @@ const client = new QueryClient({
   },
 });
 
-// Both pages hang off one layout route so the bar, the breadcrumb, the decoder
-// light and the sound toggle survive a navigation.  `AppFrame` renders an
+// Both pages hang off one layout route so the bar and the breadcrumb survive a
+// navigation.  `AppFrame` renders an
 // `<Outlet/>` and nothing the pages read, which is what keeps the page tests --
 // which mount `MatchListPage` and `MapStage` directly, with no router at all --
 // independent of it.

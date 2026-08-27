@@ -58,6 +58,7 @@ import { GridFourIcon } from "@phosphor-icons/react/dist/csr/GridFour";
 import { ImageBrokenIcon } from "@phosphor-icons/react/dist/csr/ImageBroken";
 import { KeyboardIcon } from "@phosphor-icons/react/dist/csr/Keyboard";
 import { LightningIcon } from "@phosphor-icons/react/dist/csr/Lightning";
+import { LineSegmentIcon } from "@phosphor-icons/react/dist/csr/LineSegment";
 import { ListIcon } from "@phosphor-icons/react/dist/csr/List";
 import { MagnifyingGlassPlusIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlassPlus";
 import { MapPinIcon } from "@phosphor-icons/react/dist/csr/MapPin";
@@ -71,6 +72,8 @@ import { SkipBackIcon } from "@phosphor-icons/react/dist/csr/SkipBack";
 import { SkipForwardIcon } from "@phosphor-icons/react/dist/csr/SkipForward";
 import { SkullIcon } from "@phosphor-icons/react/dist/csr/Skull";
 import { SparkleIcon } from "@phosphor-icons/react/dist/csr/Sparkle";
+import { SpeakerHighIcon } from "@phosphor-icons/react/dist/csr/SpeakerHigh";
+import { SpeakerSlashIcon } from "@phosphor-icons/react/dist/csr/SpeakerSlash";
 import { StackIcon } from "@phosphor-icons/react/dist/csr/Stack";
 import { SwordIcon } from "@phosphor-icons/react/dist/csr/Sword";
 import { TagIcon } from "@phosphor-icons/react/dist/csr/Tag";
@@ -150,11 +153,17 @@ export const glyphs = {
   callouts: TagIcon,
   layers: StackIcon,
   killMarkers: CrosshairIcon,
+  tracers: LineSegmentIcon,
   kills: SkullIcon,
   ultimates: SparkleIcon,
   spike: BombIcon,
   firstBlood: DropIcon,
   zoom: MagnifyingGlassPlusIcon,
+
+  // The stage head's mute.  Two glyphs for one control, because a speaker
+  // with no waves beside it is a speaker somebody has to look twice at.
+  sound: SpeakerHighIcon,
+  muted: SpeakerSlashIcon,
 
   // The mark inside a primary button's trailing cap.  A direction rather
   // than a repeat of the button's own icon: the cap says the press leads

@@ -29,6 +29,7 @@ import type { Decoder, MapArt, Replay, SightMaskDoc } from "../api/types";
 import { SIMULATED_NOTE } from "../model/synthetic";
 import { MapStage } from "./MapStage";
 import { DEFAULT_LAYERS, usePlayback } from "./playback";
+import { useSound } from "./sound";
 
 const REPLAY: Replay = {
   id: "abc123",
@@ -155,6 +156,9 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   // The playback store outlives a render, which is the point of it.
+  // The sound preference outlives a render too, and its own store is why:
+  // resetting `usePlayback` must not reach it.
+  useSound.setState({ enabled: true });
   usePlayback.setState({
     layers: { ...DEFAULT_LAYERS },
     mode: "2d",
@@ -322,5 +326,35 @@ describe("the simulated notice", () => {
   it("always says which numbers are generated", async () => {
     show({ has_positions: true });
     expect(await screen.findByText(SIMULATED_NOTE)).toBeTruthy();
+  });
+});
+
+describe("the tracer layer and its sound", () => {
+  it("is offered as a switch that names what it generates", async () => {
+    show({ has_positions: true });
+    await openLayers();
+    expect(await screen.findByRole("checkbox", { name: "TRACERS (SIM)" })).toBeTruthy();
+  });
+
+  /*
+    A mute, and the only control for the one sound this interface makes.  The
+    module it drives was deleted once for the opposite reason -- it was off by
+    default and its toggle came off the app bar, so nothing could reach it --
+    and this is the standing check that the control is on the page.
+
+    The name stays `SOUND` in both states.  `aria-pressed` carries on or off,
+    and a button that renames itself to `UNMUTE` is one a reader who found it
+    once cannot find again.
+  */
+  it("carries a mute whose name does not change when it is pressed", async () => {
+    show({ has_positions: true });
+    const button = await screen.findByRole("button", { name: "SOUND" });
+    const before = button.getAttribute("aria-pressed");
+
+    fireEvent.click(button);
+
+    const after = await screen.findByRole("button", { name: "SOUND" });
+    expect(after.getAttribute("aria-pressed")).not.toBe(before);
+    expect(useSound.getState().enabled).toBe(after.getAttribute("aria-pressed") === "true");
   });
 });

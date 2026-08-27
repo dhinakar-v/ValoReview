@@ -62,9 +62,10 @@ import { MarkerTip } from "./MarkerTip";
 import { MinimapCanvas } from "./MinimapCanvas";
 import { RosterPanel } from "./RosterPanel";
 import { Failed } from "./Shell";
+import { useKillSounds, useSound } from "./sound";
 import { RendererSkeleton, StageSkeleton } from "./skeleton";
 import { Transport } from "./Transport";
-import { Button, Chip, EmptyState, Panel, Segmented } from "./ui";
+import { Button, Chip, EmptyState, IconButton, Panel, Segmented } from "./ui";
 import { useImages } from "./images";
 import { seek, usePlayback, usePlaybackDriver } from "./playback";
 
@@ -145,6 +146,18 @@ export function MapStage({
   const roundNo = usePlayback((state) => state.roundNo);
   const weapons = useWeapons();
   const snap = useLiveSnapshot(model);
+  const muted = !useSound((sound) => sound.enabled);
+  const toggleSound = useSound((sound) => sound.toggle);
+  /*
+    The gunfire, and it is deliberately not inside either canvas.
+
+    A canvas is mounted per view, so the same kill would fire once in 2D, once
+    in 3D, and twice across the frame somebody switched between them.  Here it
+    is one subscription for both, and it costs nothing on the branches below
+    that return before a transport is mounted: with no playhead moving, nothing
+    is ever crossed.
+  */
+  useKillSounds(model);
 
   /*
     Open on the first round, not on millisecond zero.
@@ -163,7 +176,9 @@ export function MapStage({
       return;
     }
     usePlayback.setState({ roundNo: first.number });
-    seek(clock, first.start_ms);
+    // The barrier drop and not `start_ms`, which is where the buy phase begins:
+    // a capture opens on the round rather than on ten people stood in spawn.
+    seek(clock, first.action_start_ms);
   }, [clock, replay.id, replay.rounds]);
 
   if (!replay.has_positions) {
@@ -308,6 +323,21 @@ export function MapStage({
         */}
         <ClockPill round={round} snap={snap} />
         <div className="spacer" />
+        {/*
+          Mute, and the only control for the one sound this interface makes.
+
+          The name is `SOUND` in both states rather than flipping to `UNMUTE`:
+          `aria-pressed` is what carries on or off, and a control that renames
+          itself is one a reader cannot find twice. It sits beside the view
+          switch because the shot is about what is being watched, which is what
+          everything else on this row is about.
+        */}
+        <IconButton
+          label="SOUND"
+          icon={muted ? glyphs.muted : glyphs.sound}
+          pressed={!muted}
+          onClick={toggleSound}
+        />
         <Segmented
           label="Which view"
           options={["2D", "3D"] as const}
