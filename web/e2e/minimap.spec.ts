@@ -36,6 +36,7 @@ import {
   uvToPixels,
   type Box,
 } from "../src/model/transform";
+import { castsAt } from "../src/views/castlayer";
 import { smokesAt } from "../src/views/sightlayer";
 import { tracersAt, type Tracer } from "../src/views/tracers";
 import {
@@ -253,6 +254,125 @@ function firstLoneTracer(
   return null;
 }
 
+/**
+ * Every disc this layer will paint at one instant, in canvas pixels.
+ *
+ * Derived from `castsAt` and the published figures on the wire -- the model --
+ * rather than from the drawing's own constants, which is the rule the spike's
+ * `SPIKE_CLEARANCE` states: a test that read the canvas's numbers would agree
+ * with the canvas however wrong the canvas was.
+ *
+ * A disc rather than a ring per mark, because one cast can put two concentric
+ * rings on the map -- Chamber's Trademark searches ten metres and slows six --
+ * and the claim being checked is *where* this layer is allowed to paint, not
+ * which of its own rings a given pixel belongs to. The failure that matters is
+ * a ring drawn around the **caster** instead of around the placement, which is
+ * the mistake `abilities.PLACING_KINDS` exists to prevent and which puts the
+ * ink hundreds of pixels from here.
+ *
+ * A wall is a *capsule* rather than a disc: it is a line hundreds of pixels
+ * long, so predicting a circle at one of its ends would report most of the
+ * stroke as ink painted where this layer never claimed anything.
+ */
+interface Disc {
+  x: number;
+  y: number;
+  radius: number;
+  /** The far end, for a wall. Null for a disc, which is most of them. */
+  toX: number | null;
+  toY: number | null;
+  ring: number | null;
+}
+
+/** Whether a point is inside a predicted area, disc or capsule alike. */
+function insideArea(x: number, y: number, disc: Disc, slack: number): boolean {
+  const reach = disc.radius + slack;
+  if (disc.toX === null || disc.toY === null) {
+    return Math.hypot(x - disc.x, y - disc.y) <= reach;
+  }
+  const dx = disc.toX - disc.x;
+  const dy = disc.toY - disc.y;
+  const span = dx * dx + dy * dy;
+  const t = span === 0 ? 0 : Math.min(1, Math.max(0, ((x - disc.x) * dx + (y - disc.y) * dy) / span));
+  return Math.hypot(x - (disc.x + dx * t), y - (disc.y + dy * t)) <= reach;
+}
+
+function predictedDiscs(model: ReplayModel, tMs: number, transform: Transform, box: Box): Disc[] {
+  const out: Disc[] = [];
+  for (const drawn of castsAt(model, stateAt(model, tMs))) {
+    const { phase } = drawn;
+    if (phase.kind === "wall") {
+      // Half the stroke width, which is what a line paints either side of
+      // itself, plus the pixel the rasteriser takes at the ends.
+      const [x, y] = screenPoint(transform, box, phase.from.x, phase.from.y);
+      const [toX, toY] = screenPoint(transform, box, phase.to.x, phase.to.y);
+      out.push({ x, y, toX, toY, radius: 3, ring: null });
+      continue;
+    }
+    // A flight is a line rather than a disc, and the transport cannot stop
+    // inside one: `stepToEvent` reaches `Replay.event_times` entries only, and
+    // a cast's own event time is the millisecond its first channel opened, so
+    // the throw is at the very start of its arc there.
+    const uu: number[] = [];
+    if (drawn.detectionUu !== null && phase.kind !== "arming") {
+      uu.push(drawn.detectionUu);
+    }
+    /*
+      Including `placed`, which this used to leave out while the canvas drew a
+      filled ring for it -- so every extent belonging to a thing that stands
+      was ink the prediction did not claim. It cost nothing while almost no
+      persisting ability had a radius, and it would start reporting a correct
+      drawing as stray the moment one did.
+    */
+    if (drawn.radiusUu !== null) {
+      uu.push(drawn.radiusUu);
+    }
+    if (uu.length === 0) {
+      continue;
+    }
+    const [x, y] = screenPoint(transform, box, phase.at.x, phase.at.y);
+    out.push({
+      x,
+      y,
+      toX: null,
+      toY: null,
+      radius: Math.max(...uu.map((each) => uvRadius(transform, each) * box.side)),
+      // The area-of-effect ring, where there is one, so the test can check that
+      // this layer actually strokes a rim rather than only tinting a middle.
+      ring:
+        drawn.radiusUu !== null && (phase.kind === "active" || phase.kind === "expiring")
+          ? uvRadius(transform, drawn.radiusUu) * box.side
+          : null,
+    });
+  }
+  return out;
+}
+
+/** The first instant the transport can reach at which this layer paints. */
+function firstDrawnMechanics(
+  model: ReplayModel,
+  transform: Transform,
+  box: Box,
+): { moment: Moment; discs: ReturnType<typeof predictedDiscs> } | null {
+  for (const tMs of model.replay.event_times) {
+    let moment: Moment;
+    try {
+      moment = momentAt(model, tMs);
+    } catch {
+      // Inside a buy phase, which `momentAt` refuses rather than mis-counting.
+      continue;
+    }
+    if (moment.presses === 0) {
+      continue;
+    }
+    const discs = predictedDiscs(model, tMs, transform, box);
+    if (discs.some((disc) => disc.ring !== null)) {
+      return { moment, discs };
+    }
+  }
+  return null;
+}
+
 test.describe("the 2D minimap", () => {
   test("draws every player the model can place, and nothing else", async ({
     page,
@@ -278,6 +398,18 @@ test.describe("the 2D minimap", () => {
     */
     await setLayer(page, "TRACERS (SIM)", false);
     await setLayer(page, "SIGHT", false);
+    /*
+      And the ability mechanics, which draw a side-coloured dashed line from
+      where a thing was thrown to where it landed, plus rings around it while
+      it stands. That is hundreds of side-coloured pixels away from any player
+      and it would eat the budget below on its own.
+
+      Stated rather than relied on: the layer is off by default today, so this
+      line changes nothing, and it is here so that a later decision to turn it
+      on cannot quietly make this test count ink it was never written to allow.
+      `setLayer` asserts the end state, so it is a guard either way.
+    */
+    await setLayer(page, "MECHANICS (SIM)", false);
     await toggleLayer(page, "UTILITY");
 
     const moment = firstCrowdedEvent(model);
@@ -372,6 +504,18 @@ test.describe("the 2D minimap", () => {
     */
     await setLayer(page, "TRACERS (SIM)", false);
     await setLayer(page, "SIGHT", false);
+    /*
+      And the ability mechanics, which draw a side-coloured dashed line from
+      where a thing was thrown to where it landed, plus rings around it while
+      it stands. That is hundreds of side-coloured pixels away from any player
+      and it would eat the budget below on its own.
+
+      Stated rather than relied on: the layer is off by default today, so this
+      line changes nothing, and it is here so that a later decision to turn it
+      on cannot quietly make this test count ink it was never written to allow.
+      `setLayer` asserts the end state, so it is a guard either way.
+    */
+    await setLayer(page, "MECHANICS (SIM)", false);
     await toggleLayer(page, "UTILITY");
 
     const moment = firstCrowdedEvent(model);
@@ -677,6 +821,92 @@ test.describe("the 2D minimap", () => {
     the two reads and `stateAt` accumulates nothing, so the only pixels that can
     differ are the ones this layer painted.
   */
+  /*
+    The ability mechanics layer, measured the way the tracer is.
+
+    What this draws is two different kinds of claim and the test has to respect
+    the difference. Where the ring *is* was decoded -- a placed channel opened
+    at that coordinate and `Placement.t_ms` says when -- so the centre is
+    checked hard. How *wide* it is was looked up in community research, so the
+    radius is checked as a bound rather than as a measurement: what has to be
+    true is that this layer paints inside the area it claims and nowhere else,
+    not that a wiki figure is correct, which nothing here could know.
+
+    As with the tracer, it is a **difference between two reads of one instant**
+    rather than a colour count. Both team colours are already all over this
+    canvas as player markers, so a total could be satisfied without this layer
+    drawing anything at all.
+  */
+  test("draws a standing ability inside the area it claims, and nowhere else", async ({
+    page,
+  }) => {
+    const { model, art } = await openFirstPlayable(page);
+    const canvas = page.locator("canvas.minimap");
+    await setLayer(page, "SIGHT", false);
+    await setLayer(page, "TRACERS (SIM)", false);
+    await toggleLayer(page, "UTILITY");
+
+    const [width, height] = await canvas.evaluate((element) => [
+      element.clientWidth,
+      element.clientHeight,
+    ]);
+    const box = placeSquare(width, height);
+
+    const found = firstDrawnMechanics(model, art.transform, box);
+    // A capture whose casts are all pawns, or whose agents are none of the
+    // sixteen the table names, has nothing for this layer to draw.
+    test.skip(found === null, "no instant this capture stands a ring at");
+    const { moment, discs } = found!;
+
+    await stepToEvent(page, moment);
+
+    await setLayer(page, "MECHANICS (SIM)", false);
+    const without = await readCanvas(page, canvas);
+    await setLayer(page, "MECHANICS (SIM)", true);
+    const with_ = await readCanvas(page, canvas);
+
+    const changed: Array<[number, number]> = [];
+    for (let y = 0; y < Math.min(with_.height, without.height); y += 1) {
+      for (let x = 0; x < Math.min(with_.width, without.width); x += 1) {
+        const lit = pixelAt(with_, x, y);
+        const dark = pixelAt(without, x, y);
+        if (lit !== null && dark !== null && rgbDistance(lit, dark) > 8) {
+          changed.push([x, y]);
+        }
+      }
+    }
+    expect(changed.length, "the layer painted something at all").toBeGreaterThan(40);
+
+    /*
+      Everything it painted is inside an area it claims.
+
+      The slack is the stroke and the countdown arc drawn on the rim -- two
+      pixels of line centred on the circumference, so it reaches one either
+      side -- plus the half pixel a clipped element screenshot can drift by.
+      Deliberately not a generous number: what this catches is ink around the
+      caster rather than around the placement, which lands hundreds of pixels
+      away and is the one mistake here that would look entirely correct.
+    */
+    const strays = changed.filter(
+      ([x, y]) => !discs.some((disc) => insideArea(x, y, disc, 4)),
+    );
+    expect(
+      strays.length / changed.length,
+      "pixels this layer changed that are outside every area it claims",
+    ).toBeLessThan(0.05);
+
+    /*
+      And it reached a rim rather than only tinting a middle: the ring is the
+      mark, and a fill with no stroke would satisfy the bound above while
+      drawing none of the geometry this layer exists for.
+    */
+    const rims = discs.filter((disc) => disc.ring !== null);
+    const onRim = changed.filter(([x, y]) =>
+      rims.some((disc) => Math.abs(Math.hypot(x - disc.x, y - disc.y) - disc.ring!) <= 3),
+    );
+    expect(onRim.length, "pixels on a ring itself").toBeGreaterThan(10);
+  });
+
   test("draws the fatal shot between the two players, in the killer's colour", async ({
     page,
   }) => {

@@ -121,6 +121,21 @@ export const MAP_LAYERS: Entry[] = [
     drawnIn: ["2d", "3d"],
   },
   {
+    key: "castMechanics",
+    // `(SIM)` covers both halves of what this draws, which have different
+    // standing and are deliberately not split into two switches. The throw is
+    // decoded at both ends and in its timing -- only the straight line between
+    // them is invented, exactly as for TRACERS. The rings and the countdown are
+    // looked up in community research, exactly as for RANGE. One ability, one
+    // story, one switch, everything dashed.
+    label: "MECHANICS (SIM)",
+    icon: glyphs.utility,
+    hint: "A thrown ability crossing to where it landed, then arming, standing and expiring",
+    drawnIn: ["2d"],
+    why: ({ is3d }) =>
+      is3d ? "2D only: the ability mechanics are drawn on the radar, not in the scene." : null,
+  },
+  {
     key: "abilityRange",
     // The word is in the label on purpose: a row reading `RANGE` claims a
     // measurement, and this is the one layer here nothing decoded.

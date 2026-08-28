@@ -136,6 +136,9 @@ function cast(tMs: number, caster: number, codename: string, agent: string, name
     smoke_radius_uu: null,
     smoke_duration_ms: null,
     smoke_source: null,
+    mechanics: null,
+    flights: [],
+    walls: [],
   };
 }
 

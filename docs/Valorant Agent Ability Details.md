@@ -156,7 +156,7 @@ Fade channels fear essence to track down targets and inflict severe debuffs12.
 
 Breach fires seismic shockwaves directly through terrain to daze and blind defenders15.
 
-* **Aftershock (C)**: Cost: 200 Credits | Max Charges: 1 | Function: Wall-piercing explosive charge delivering 3 heavy pulses4.  
+* **Aftershock (C)**: Cost: 200 Credits | Max Charges: 1 | Radius: 3.0 m | Function: Wall-piercing explosive charge delivering 2 heavy pulses. *Corrected 28 August 2026 against wiki.playvalorant.com and Riot's own patch notes: this said three pulses, and v7.04 cut the ticks 3 >>> 2 while raising damage 60 >>> 80. The radius is Riot's, from patch v3.0 -- "Explosion radius increased 260 >>> 300" -- and the blast is a cylinder roughly 10 m long projected in front of the wall rather than a sphere, so the 3.0 m is its radius and not its extent.*  
 * **Flashpoint (Q)**: Cost: 250 Credits | Max Charges: 2 | Function: Wall-piercing flash burst blinding players on the far side4.  
 * **Fault Line (E \- Signature)**: Cost: Free | Max Charges: 1 | Windup Delay: 1.1s | Cooldown: 60s | Debuff: 2.5s Concuss20. Fires a straight seismic quake through terrain, concussing caught targets20.  
 * **Rolling Thunder (X \- Ultimate)**: Cost: 8 Ultimate Points | Function: Large directional quake that knocks enemies airborne and concusses them15.

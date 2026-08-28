@@ -237,8 +237,15 @@ def loadout(entry, cache: ArtCache | None) -> dict:
 
 
 def placement(entry) -> dict:
-    """One actor a cast put in the world, at the coordinate it appeared at."""
+    """
+    One actor a cast put in the world, at the coordinate it appeared at.
+
+    `t_ms` is when its channel opened.  Never moving is what makes that one
+    instant worth carrying: it says how long the throw before it took and how
+    long the thing has stood since, and both were decoded.
+    """
     return {
+        "t_ms": entry.t_ms,
         "actor_id": entry.actor_id,
         "kind": entry.kind,
         "name": entry.name,
@@ -246,6 +253,26 @@ def placement(entry) -> dict:
         "x": entry.x,
         "y": entry.y,
         "z": entry.z,
+    }
+
+
+def wall(entry) -> dict:
+    """
+    One wall, as the two ends of the line its own segment actors describe.
+
+    Decoded outright: every coordinate here comes from a spawn transform and
+    nothing is looked up, which is why it travels as geometry rather than as a
+    length the browser would have to lay out for itself.  See
+    `abilities.Wall`.
+    """
+    return {
+        "t_ms": entry.t_ms,
+        "segments": entry.segments,
+        "x1": entry.x1,
+        "y1": entry.y1,
+        "x2": entry.x2,
+        "y2": entry.y2,
+        "length_uu": entry.length_uu,
     }
 
 
@@ -290,17 +317,36 @@ def ability_cast(
     stay there -- it had in fact been re-derived, by hand and untested, in
     `MinimapCanvas`.
     """
+    # Keyed on the codename and slot, which is what the archetype path states
+    # outright.  The internal name splits for the same ability and the slot
+    # cannot -- see `abilityfacts`, which measures both.
+    facts = abilityfacts.mechanics_for(cast.codename, cast.slot)
     published = None
     icon = None
     if cache is not None and cast.agent:
         art = cache.agent_art_by_name(cast.agent)
-        slot = art.ability(cast.slot) if art else None
+        # By published name first, and by slot only where no name is known.
+        #
+        # `abilityfacts` says which ability sits in this internal slot and the
+        # manifest says what each published ability is called and looks like,
+        # so the join is an identity rather than a mapping: 68 of 68, none
+        # ambiguous. It is also the only thing that lets Q and E carry a
+        # picture at all, because no arrangement of *letters* joins the two
+        # catalogues -- each is shuffled against the keybind, and they are
+        # shuffled differently.
+        #
+        # The slot fallback is X only now. It answered for C as well and was
+        # wrong for eight of the sixteen agents measured, putting Stim Beacon's
+        # icon on Brimstone's Sky Smoke -- see `art.AgentArt.ability`.
+        slot = None
+        if art is not None:
+            if facts is not None:
+                slot = art.ability_named(facts.ability)
+            if slot is None:
+                slot = art.ability(cast.slot)
         if slot is not None:
             published = slot.name
             icon = asset_url(slot.icon, cache.root)
-    published_range = abilityfacts.facts_for(cast.agent, cast.display_name)
-    # Keyed on the codename and slot, not the agent and internal name: the
-    # internal name splits for the same ability -- see `abilityfacts._SMOKES`.
     smoke = abilityfacts.smoke_for(cast.codename, cast.slot)
     distance = None
     for actor_id in cast.pawns:
@@ -328,13 +374,92 @@ def ability_cast(
         "has_track": cast.has_track,
         "travel_uu": distance,
         "travel_note": None if distance is not None else NO_POSITION,
-        "range_uu": published_range.radius_uu if published_range else None,
-        "range_source": published_range.source if published_range else None,
+        "range_uu": _value(facts.radius_uu) if facts else None,
+        "range_source": _source(facts.radius_uu) if facts else None,
         "smoke_radius_uu": smoke.radius_uu if smoke else None,
         "smoke_duration_ms": smoke.duration_ms if smoke else None,
         "smoke_source": smoke.source if smoke else None,
+        "mechanics": mechanics(facts),
         "placements": [placement(p) for p in cast.placements],
         "landed": placement(cast.landed) if cast.landed is not None else None,
+        "flights": [flight(f) for f in cast.flights],
+        "walls": [wall(w) for w in cast.walls],
+    }
+
+
+def _value(figure: abilityfacts.Figure | None) -> float | None:
+    return None if figure is None else figure.value
+
+
+def _source(figure: abilityfacts.Figure | None) -> str | None:
+    return None if figure is None else figure.source
+
+
+def mechanics(facts: abilityfacts.AbilityMechanics | None) -> dict | None:
+    """
+    What is published about this ability, or null where nothing is.
+
+    Every figure travels beside its own source, because one citation covering
+    a row of numbers stands behind numbers it never backed.  Null is the
+    ordinary answer for most of them and the browser must draw nothing for a
+    null rather than reaching for another figure: there is no default radius
+    and no default duration anywhere in this project.
+
+    `keybind` is the key the *game* binds and `AbilityCast.slot` is the letter
+    the archetype path states, and the two disagree for six of the sixteen
+    agents in the table.  Both travel so a reader can be shown the one they
+    would recognise without anything joining them by letter.
+    """
+    if facts is None:
+        return None
+    return {
+        "ability": facts.ability,
+        "keybind": facts.keybind,
+        "radius_uu": _value(facts.radius_uu),
+        "radius_source": _source(facts.radius_uu),
+        "detection_radius_uu": _value(facts.detection_radius_uu),
+        "detection_radius_source": _source(facts.detection_radius_uu),
+        "windup_ms": _value(facts.windup_ms),
+        "windup_source": _source(facts.windup_ms),
+        "activation_delay_ms": _value(facts.activation_delay_ms),
+        "activation_delay_source": _source(facts.activation_delay_ms),
+        "duration_ms": _value(facts.duration_ms),
+        "duration_source": _source(facts.duration_ms),
+        "cooldown_ms": _value(facts.cooldown_ms),
+        "cooldown_source": _source(facts.cooldown_ms),
+        "charges": _value(facts.charges),
+        "charges_source": _source(facts.charges),
+        "deployable_hp": _value(facts.deployable_hp),
+        "deployable_hp_source": _source(facts.deployable_hp),
+        "wall": facts.wall,
+        "wall_source": facts.wall_source or None,
+        "persists": facts.persists,
+        "destroyed_on_caster_death": facts.destroyed_on_caster_death,
+        "sees": facts.sees,
+        "blocks_sight": facts.blocks_sight,
+    }
+
+
+def flight(entry) -> dict:
+    """
+    One throw, as two decoded ends and the decoded interval between them.
+
+    There is no path here and there must never be one: only `Pawn_` actors
+    emit movement, so nothing in the file says where a thrown thing was
+    halfway.  A client draws a straight line and says so.
+    """
+    return {
+        "start_ms": entry.start_ms,
+        "end_ms": entry.end_ms,
+        "duration_ms": entry.duration_ms,
+        "from_actor_id": entry.origin.actor_id,
+        "from_x": entry.origin.x,
+        "from_y": entry.origin.y,
+        "from_z": entry.origin.z,
+        "to_actor_id": entry.landing.actor_id,
+        "to_x": entry.landing.x,
+        "to_y": entry.landing.y,
+        "to_z": entry.landing.z,
     }
 
 

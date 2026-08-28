@@ -2649,6 +2649,30 @@ main.viewer {
   object-fit: contain;
 }
 
+/*
+  Two kinds of number on an event row, told apart the way the canvas tells them
+  apart.
+
+  `.ev-decoded` is read out of the capture -- a throw's flight time is two
+  channel openings the file states -- so it is set in the ordinary muted text
+  every other read fact on the row uses.
+
+  `.ev-figure` is looked up in community research about a game that rebalances
+  every few weeks, so it carries the row's equivalent of the canvas's dashed
+  stroke: a dotted underline. Dashed is this interface's token for *generated*,
+  and a figure that looked like a reading would be the whole problem.
+*/
+.ev-decoded {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-figure {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px dashed var(--text-faint);
+}
+
 .ev-tag {
   font-size: var(--text-2xs);
   letter-spacing: var(--track-wider);

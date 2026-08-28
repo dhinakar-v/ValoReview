@@ -113,11 +113,18 @@ export interface DrawnCone {
  * made-up width standing for a made-up time is exactly the plausible wrong
  * answer this project refuses.
  *
- * `cast.t_ms` is when the ability was *cast*, and a thrown smoke lands about a
- * second later; the wire carries no time on a placement, so a smoke starts
- * blocking slightly early.  Expiry is computed here rather than in
- * `abilitiesAt`, which keeps a cast until the round ends on purpose and is
- * parity-tested in both languages.
+ * **Each smoke runs from its own arrival, not from the cast.**  This used to
+ * age every placement from `cast.t_ms`, with a note that the wire carried no
+ * time on a placement so a thrown smoke started blocking slightly early.  It
+ * does now, and "slightly" was worth measuring: across the reference library a
+ * thrown thing lands a median 831 ms after the projectile leaves the hand and
+ * a p95 of 2.3 s, so a smoke was blocking sight for up to two seconds before
+ * it existed -- and a cast that drops several smokes started all of them on
+ * the first one's clock.  `place.t_ms` is the instant that channel opened,
+ * which is when the smoke is actually there.
+ *
+ * Expiry is computed here rather than in `abilitiesAt`, which keeps a cast
+ * until the round ends on purpose and is parity-tested in both languages.
  */
 export function smokesAt(art: MapArt, snap: Snapshot): Occluder[] {
   const out: Occluder[] = [];
@@ -126,15 +133,15 @@ export function smokesAt(art: MapArt, snap: Snapshot): Occluder[] {
     if (radiusUu === null || life === null) {
       continue;
     }
-    const age = snap.t_ms - cast.t_ms;
-    if (age < 0 || age > life) {
-      continue;
-    }
     const radius = uvRadius(art.transform, radiusUu);
     // Every placement, not just `landed`: two smokes from one agent in one
     // round are a single `AbilityCast`, and `landed` names only the first.
     for (const place of cast.placements) {
       if (!PLACED_KINDS.has(place.kind)) {
+        continue;
+      }
+      const age = snap.t_ms - place.t_ms;
+      if (age < 0 || age > life) {
         continue;
       }
       const [u, v] = applyTransform(art.transform, place.x, place.y);
@@ -196,6 +203,61 @@ export function sightCones(args: {
       continue;
     }
     out.push({ side: sideOf(model.replay, player.team, snap.t_ms), polygon });
+  }
+
+  /*
+    A drone sees, and its cone is as decoded as a player's.
+
+    An ability pawn has a real track, and that track carries a yaw that really
+    turns -- measured on Owl Drones, it sweeps across a flight (187 to 192
+    degrees, 78 to 44, 266 to 325) rather than sitting at whatever it spawned
+    at. So this is the same claim about the same map as a player's cone, drawn
+    from the same `sight.cone` through the same `forwardUv`, and it belongs
+    under the same switch rather than under one of its own.
+
+    *Which* pawns is looked up rather than guessed from the kind: a Boom Bot
+    and a Blast Pack are pawns too and neither of them looks at anything, so it
+    is `mechanics.sees` -- Sova's Owl Drone and Tejo's Stealth Drone, and
+    nothing else until somebody argues for more.
+
+    It costs the wash nothing. `paintCones` unions a side's cones on a scratch
+    at full alpha and stamps the union once, so one cone and six read
+    identically; a drone adds coverage and cannot darken anything. Under the
+    old `1/N` weighting it would have diluted every player's cone by joining
+    the denominator, which is one more thing the flat wash bought.
+  */
+  const teamByActor = new Map<number, string>();
+  for (const player of model.replay.players) {
+    teamByActor.set(player.actor_id, player.team);
+  }
+  for (const cast of snap.roundCasts) {
+    if (cast.mechanics?.sees !== true || cast.player_actor_id === null) {
+      continue;
+    }
+    const team = teamByActor.get(cast.player_actor_id);
+    // Unattributable: two players share the agent, so there is no side to draw
+    // it as. The same refusal every other claim about a caster makes here.
+    if (team === undefined || !shown(team)) {
+      continue;
+    }
+    for (const actorId of cast.pawns) {
+      const here = snap.abilityPositions.get(actorId);
+      if (here === undefined) {
+        continue;
+      }
+      const polygon = cone(
+        silhouette,
+        applyTransform(art.transform, here.x, here.y),
+        forwardUv(art.transform, here.x, here.y, here.yaw, settings.probe_uu),
+        reach,
+        settings,
+        smokes,
+      );
+      if (polygon.length < 3) {
+        continue;
+      }
+      out.push({ side: sideOf(model.replay, team, snap.t_ms), polygon });
+    }
   }
   return out;
 }

@@ -88,6 +88,7 @@ consumer may supply is the path it took to get there.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from itertools import pairwise
@@ -220,6 +221,39 @@ PLACING_KINDS = (
 
 NO_POSITION = "no position on wire"
 
+# The kinds that are the thing an ability left standing, as opposed to the
+# throw that delivered it.  `PLACING_KINDS` ranks all six for the purpose of
+# picking one; this names the subset that is a destination.
+PLACED_KINDS = (KIND_GAMEOBJECT, KIND_ZONE, KIND_PATCH)
+
+# How long a throw may take before it stops being a throw.
+#
+# Measured over the 23 cached decodes, as the interval between a projectile
+# channel and the placed channel it pairs with, across every cast that opened
+# equal numbers of each -- 2,552 forward pairs.  What separates the two
+# populations is **density**, not a gap:
+#
+#     under 3,000 ms   2,500 pairs     833 per second
+#     3,000-9,000 ms      20 pairs     3.3 per second
+#     over 9,000 ms       32 pairs     scattered out to 72 seconds
+#
+# The rate falls by a factor of 250 at three seconds and never recovers, so
+# this is a boundary between two things rather than a number tuned until the
+# picture looked right -- the same shape of argument `ROUND_OPENING_MS` and
+# `replay.OFF_WORLD_DROP_UU` are made from, and it holds 97.96% of forward
+# pairs.  Everything above is a remote activation: a Killjoy Nanoswarm
+# detonated half a minute after it was thrown, a Cypher cage triggered from
+# across the site.  That is a decision the caster made later, not a projectile
+# in the air, and drawing a line for one would show a grenade hanging over the
+# map for a minute.
+#
+# It is deliberately **not** argued from an empty bin.  An earlier reading of
+# this distribution found nothing between four and five seconds and took that
+# for the gap; at three samples per second an empty 250 ms bin up there is a
+# coincidence, and the sparse tail runs continuously from three seconds to
+# seventy-two.
+FLIGHT_MAX_MS = 3000
+
 # How many *distinct agents* have to spawn an ability on one exact millisecond
 # before that instant is read as the engine re-replicating the world rather
 # than as people using abilities.  Two is deliberately allowed: a coordinated
@@ -227,6 +261,17 @@ NO_POSITION = "no position on wire"
 # Three separate agents on the same millisecond is not a coincidence, it is a
 # snapshot -- measured, the real ones peak at two and the snapshots carry five.
 SNAPSHOT_CODENAMES = 3
+
+# The token a wall segment's own internal name carries.  Sage's barrier arrives
+# as `Wall_Fortifying` for the manager and `Wall_Segment_Fortifying` per
+# segment, so this is what separates the pieces of the wall from the record
+# that one was cast.  Matched as a whole token rather than as a substring: a
+# name that merely contains the letters is not a segment of anything.
+_SEGMENT = "Segment"
+
+# How many segments make a line.  One is a point, and a point has no
+# orientation -- which is the whole reason a wall is otherwise refused.
+MIN_SEGMENTS = 2
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
@@ -269,8 +314,19 @@ class AbilityRef:
 
 @dataclass(frozen=True)
 class Placement:
-    """One actor a cast put in the world, at the coordinate it appeared at."""
+    """
+    One actor a cast put in the world, at the coordinate it appeared at.
 
+    `t_ms` is when its channel opened, and it is here because *never moving*
+    is exactly what makes that one instant worth keeping.  A pawn has a track
+    and its position is a question about now; this thing has one position for
+    ever, so the only thing left to know about it in time is when it arrived --
+    and that is what says how long a throw took to get here and how long the
+    thing has been standing since.  It has no default: every `Placement` is
+    built from an `AbilitySpawn`, which already requires one.
+    """
+
+    t_ms: int
     actor_id: int
     kind: str
     name: str
@@ -281,6 +337,70 @@ class Placement:
     @property
     def display(self) -> str:
         return humanise(self.name)
+
+
+@dataclass(frozen=True)
+class Flight:
+    """
+    One throw: where it left, where it arrived, and how long that took.
+
+    Both ends are `Placement`s, so both coordinates and both instants were
+    decoded.  Nothing here describes the path, because nothing decoded one --
+    see `AbilityCast.flights` for the four cases this refuses and why.
+    """
+
+    origin: Placement
+    landing: Placement
+
+    @property
+    def start_ms(self) -> int:
+        return self.origin.t_ms
+
+    @property
+    def end_ms(self) -> int:
+        return self.landing.t_ms
+
+    @property
+    def duration_ms(self) -> int:
+        """Always positive: a non-positive span is refused rather than built."""
+        return self.landing.t_ms - self.origin.t_ms
+
+
+@dataclass(frozen=True)
+class Wall:
+    """
+    A wall the decode states outright, as the two ends of one straight line.
+
+    Almost everything a cast leaves behind is one actor at one point, which is
+    why `abilityfacts` refuses a radius for a wall: a circle around a single
+    coordinate blocks behind the caster and leaves the far ends open.  Sage's
+    Barrier Orb is the exception and it has been on disk all along.  It opens
+    one `Wall_Fortifying` manager channel and, at the same millisecond, one
+    `Wall_Segment_Fortifying` channel per segment, each carrying its own spawn
+    transform -- so the wall's line, its length and its orientation are all
+    decoded and none of them is looked up.
+
+    Measured over the 23 cached decodes, 126 barriers: 125 spawn four segments
+    and one spawns three; every one of them is **exactly collinear**, with a
+    maximum perpendicular deviation of 0.0 uu; the outer segment centres span
+    780 uu at a uniform 260 uu spacing.  A segment's own width is that spacing,
+    so the wall reaches half a spacing past the outermost centre at each end
+    and the full extent is 1,040 uu -- which is arithmetic over decoded
+    coordinates rather than a figure from anywhere.
+
+    `tests/test_abilities.py` re-runs the collinearity and the spacing.
+    """
+
+    t_ms: int
+    segments: int
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+    @property
+    def length_uu(self) -> float:
+        return math.hypot(self.x2 - self.x1, self.y2 - self.y1)
 
 
 @dataclass(frozen=True)
@@ -368,8 +488,125 @@ class AbilityCast:
         return humanise(self.name)
 
     @property
+    def flights(self) -> tuple[Flight, ...]:
+        """
+        Every throw in this cast whose two ends are both decoded.
+
+        A `Projectile_` channel opens where the caster is standing -- a median
+        42 uu from them, inside their own capsule -- and a placed channel opens
+        where the thing came to rest.  So a throw is two coordinates this file
+        decoded and one interval it decoded as well, and the **only** invented
+        part is the straight line between them.  That is the same shape the
+        kill tracer has, and it is drawn the same way.
+
+        There is still no arc: only `Pawn_` actors emit movement, so nothing
+        here knows where the thing was halfway, and no consumer may draw a
+        curve through the middle.
+
+        Four refusals, each measured over the 23 cached decodes:
+
+          * **unequal counts.**  A cast is one agent, one slot, one round, so
+            Brimstone dropping three smokes is one cast with three of each.
+            Pairing k projectiles to j landings is a guess as soon as the two
+            disagree, and 2,870 of 6,304 casts disagree -- so pair only when
+            the counts match, in time order, and refuse otherwise.  The naive
+            earliest-to-earliest rule produced a throw lasting 72 seconds.
+          * **no interval.**  237 of 1,300 one-to-one casts open both channels
+            on the same millisecond: nothing was in the air, or nothing that
+            this file can see time passing through.  A zero-length flight is
+            drawn as no flight rather than as an instantaneous line.
+          * **backwards.**  40 of 1,300 land before they are thrown, every one
+            of them by more than half a second, so they are a population and
+            not jitter: the thing was already standing and the projectile is
+            what set it off.  A remote detonation is not a throw.
+          * **too slow.**  Above `FLIGHT_MAX_MS`, which sits in an empty band.
+        """
+        origins = sorted(
+            (p for p in self.placements if p.kind == KIND_PROJECTILE),
+            key=lambda p: (p.t_ms, p.actor_id),
+        )
+        landings = sorted(
+            (p for p in self.placements if p.kind in PLACED_KINDS),
+            key=lambda p: (p.t_ms, p.actor_id),
+        )
+        if not origins or len(origins) != len(landings):
+            return ()
+        found = []
+        for origin, landing in zip(origins, landings, strict=True):
+            span = landing.t_ms - origin.t_ms
+            if span <= 0 or span > FLIGHT_MAX_MS:
+                continue
+            found.append(Flight(origin=origin, landing=landing))
+        return tuple(found)
+
+    @property
+    def walls(self) -> tuple[Wall, ...]:
+        """
+        Every wall this cast built out of its own segment actors.
+
+        Grouped by the instant the segments appeared, because a cast is one
+        agent's whole use of one slot in one round and a second barrier in the
+        same round would otherwise be joined to the first across the map.  Two
+        segments are the minimum: one is a point and a point has no direction.
+
+        The line is the segments' own principal axis rather than first-to-last
+        in spawn order -- the channels do not open in positional order, and the
+        first two segments of a Sage wall are its outer edges.  The ends then
+        reach half a spacing beyond the outermost centres, which is where the
+        outer segments' own far edges are.
+
+        Nothing is looked up here.  See `Wall`.
+        """
+        segments: dict[int, list[Placement]] = {}
+        for place in self.placements:
+            if place.kind not in PLACED_KINDS:
+                continue
+            if _SEGMENT not in place.name.split("_"):
+                continue
+            segments.setdefault(place.t_ms, []).append(place)
+        found = []
+        for t_ms, group in sorted(segments.items()):
+            wall = _wall_from(t_ms, group)
+            if wall is not None:
+                found.append(wall)
+        return tuple(found)
+
+    @property
     def has_track(self) -> bool:
         return bool(self.pawns)
+
+
+def _wall_from(t_ms: int, group: list[Placement]) -> Wall | None:
+    """One instant's segments as a line, or None if there are too few."""
+    if len(group) < MIN_SEGMENTS:
+        return None
+    count = len(group)
+    cx = sum(p.x for p in group) / count
+    cy = sum(p.y for p in group) / count
+    # The principal axis of the points, from the 2x2 covariance.  For a set
+    # this collinear the axis is the line itself; the halved arctangent is the
+    # standard closed form for the eigenvector of a symmetric 2x2.
+    sxx = sum((p.x - cx) ** 2 for p in group)
+    syy = sum((p.y - cy) ** 2 for p in group)
+    sxy = sum((p.x - cx) * (p.y - cy) for p in group)
+    angle = 0.5 * math.atan2(2.0 * sxy, sxx - syy)
+    ux, uy = math.cos(angle), math.sin(angle)
+    along = sorted((p.x - cx) * ux + (p.y - cy) * uy for p in group)
+    span = along[-1] - along[0]
+    if span <= 0:
+        return None
+    # A segment is as wide as the gap between two of them, so the wall reaches
+    # half of one past the outermost centre at either end.
+    reach = span / (count - 1) / 2.0
+    low, high = along[0] - reach, along[-1] + reach
+    return Wall(
+        t_ms=t_ms,
+        segments=count,
+        x1=cx + ux * low,
+        y1=cy + uy * low,
+        x2=cx + ux * high,
+        y2=cy + uy * high,
+    )
 
 
 def parse(archetype_path: str) -> AbilityRef | None:
@@ -571,6 +808,7 @@ def _placements(group: list[AbilitySpawn]) -> tuple[Placement, ...]:
     """
     return tuple(
         Placement(
+            t_ms=spawn.t_ms,
             actor_id=spawn.actor_id,
             kind=spawn.ref.kind,
             name=spawn.ref.name,

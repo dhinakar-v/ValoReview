@@ -49,6 +49,8 @@ export interface Layers {
   abilityRange: boolean;
   /** The fatal shot as a line, drawn dashed. See DEFAULT_LAYERS. */
   tracers: boolean;
+  /** What an ability is doing right now, not just where it is. See DEFAULT_LAYERS. */
+  castMechanics: boolean;
   casts: boolean;
   kills: boolean;
   ultimates: boolean;
@@ -79,12 +81,21 @@ export const DEFAULT_LAYERS: Layers = {
   callouts: false,
   killMarkers: true,
   /*
-    Off, because it is the only thing this canvas draws that nothing decoded.
-    A published radius is looked up in `vrfview.abilityfacts` -- community
-    research about a game that rebalances every few weeks -- so it is asked
-    for deliberately, drawn dashed, and labelled `RANGE (SIM)` on its own row.
+    On, and it draws the radius for the marks `castMechanics` is *not*
+    animating -- an ability the table names no lifetime for, and every mark at
+    all when the mechanics layer is switched off. The two never draw the same
+    circle twice: `drawAbilities` hands its ring over entirely while the
+    mechanics layer is on.
+
+    It shipped off, on the argument that a looked-up number should be asked
+    for deliberately. That argument still holds for the *number* and is why
+    the ring is dashed and the row says `(SIM)`; what it got wrong is that an
+    ability marker with no extent at all is not a neutral picture either. A
+    smoke is a fifteen-metre hole in the map and a molly is a room you cannot
+    walk through, and drawing both as an eight-pixel diamond says they are
+    pinpricks. The honest reading is the published extent, marked as looked up.
   */
-  abilityRange: false,
+  abilityRange: true,
   /*
     On, unlike the other generated geometry on this canvas, and the difference
     is what is generated.  `abilityRange` invents a *number* -- a radius nobody
@@ -98,6 +109,32 @@ export const DEFAULT_LAYERS: Layers = {
     is also the one layer here that costs nothing to leave on.
   */
   tracers: true,
+  /*
+    On, and that was a correction rather than the first answer.
+
+    It shipped off, on the reasoning that the clock it counts down is a
+    looked-up figure and looked-up things are asked for deliberately -- which
+    is the argument that keeps `abilityRange` off. What that missed is what the
+    layer is *for*. With it off, a placed ability is a mark that appears and
+    then stays on the map for the rest of the round, so a reader watching a
+    site cannot tell a smoke that has just landed from one that went out
+    twenty seconds ago, and every ability ever used in the round accumulates on
+    screen at once. That is not a neutral default; it is a map that quietly
+    claims a dozen utilities are still standing.
+
+    The half of this that says *when* a thing is there is also the better
+    evidenced half: a throw's two ends and its duration are decoded, and an
+    expiry is a looked-up lifetime measured from a decoded arrival. So the
+    default follows `tracers` -- on, dashed, and labelled `(SIM)` -- rather
+    than `abilityRange`, which invents a *number* nobody in the file states and
+    stays off.
+
+    Splitting the throw and the rings into two switches was considered and
+    refused: they are one continuous story about one ability, and a thrown
+    thing that arrives and then never lands anywhere is a worse picture than
+    either half alone.
+  */
+  castMechanics: true,
   casts: true,
   kills: true,
   ultimates: true,
