@@ -22,6 +22,10 @@ import {
   roundOf,
 } from "../roundclock";
 
+// The same rule `vrfview.roundrules` states, mirrored here rather than a
+// hardcoded number, so a fixture round cannot quietly disagree with the server.
+const buyMs = (number: number) => ([1, 13, 25].includes(number) ? 45_000 : 30_000);
+
 function round(number: number, startMs: number, durationMs: number): Round {
   return {
     number,
@@ -29,6 +33,8 @@ function round(number: number, startMs: number, durationMs: number): Round {
     start_ms: startMs,
     end_ms: startMs + durationMs,
     duration_ms: durationMs,
+    buy_phase_ms: buyMs(number),
+    action_start_ms: Math.min(startMs + buyMs(number), startMs + durationMs),
     winner: "A",
     reason: "wipe",
     decided: true,

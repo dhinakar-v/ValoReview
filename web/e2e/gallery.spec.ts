@@ -53,7 +53,8 @@ test("every view, rendered and saved for a person to look at", async ({ page }, 
   await toggleLayer(page, "TRAILS");
 
   // The cones no longer care about a selection -- every living player gets
-  // one, at the same weight, and overlap is what varies. The click stays
+  // one, at the same weight, and overlap no longer varies either: a side's
+  // cones are unioned and washed at one flat alpha. The click stays
   // because a picked *marker* is still a feature worth having in the gallery:
   // it is three times the size with a light ring and its own hover card. It
   // lands where the model says a player is, since clicking empty canvas

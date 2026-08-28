@@ -47,7 +47,11 @@ import { sideOf } from "../model/synthetic";
 import { markerScale, panBy, viewBox, zoomAt } from "../model/viewport";
 import { palette, sideColour, useImages } from "./images";
 import { usePlayback, selectedActor, teamShown } from "./playback";
+import type { Point } from "./castlayer";
+import { castsAt, phaseOf } from "./castlayer";
 import { paintCones, sightCones, smokesAt } from "./sightlayer";
+import { spikeBody, spikeCore, spikePip } from "./spikeglyph";
+import { tracersAt } from "./tracers";
 
 /** Marker sizes, in CSS pixels, carried over from the desktop viewer. */
 const AVATAR_PX = 26;
@@ -108,8 +112,28 @@ const HOVER_RING = 3;
  * One constant where there were two: `KILL_MARK` sized the kill cross and
  * `DEAD_RADIUS` the dead player's own circle, and both were drawn at the same
  * point on the same player.  See `drawDeathMark`.
+ *
+ * 4.5 rather than 5, which is the smallest half of a correction: a round with
+ * six kills in one choke drew six crosses at very nearly a portrait's own
+ * width, and the mark for somebody who is *gone* was reading louder than the
+ * marker for somebody who is standing there.
  */
-const DEATH_MARK = 5;
+const DEATH_MARK = 4.5;
+
+/*
+ * How dark the keyline under a death cross is allowed to be.
+ *
+ * The keyline exists so the mark survives Ascent's pale mid, and at a full
+ * 4px of opaque canvas colour it was doing considerably more than that -- a
+ * dark halo two pixels proud of every arm, which is the *bulk* a reader sees
+ * before they see the colour.  Half-strength and one pixel narrower still
+ * separates the cross from the radar and stops it from being the heaviest
+ * thing on a crowded map.  The mark itself stays fully opaque: a stroke
+ * blended toward the radar drifts outside the 36-RGB window `minimap.spec.ts`
+ * counts as a team colour, so fading *that* would make a dead player pass its
+ * check by luck rather than by being drawn.
+ */
+const DEATH_KEYLINE_ALPHA = 0.45;
 
 /** How far right of a marker the hover card sits, matching the reference. */
 const TIP_OFFSET_PX = 14;
@@ -127,6 +151,110 @@ const SPIKE_HALF = 8;
  * cap the agent label used before it was removed.
  */
 const MARK_SCALE_CAP = 1.4;
+
+/**
+ * A tracer's stroke, and the dash that says it was not decoded.
+ *
+ * Two pixels rather than one: a hairline that appears and vanishes is a flicker
+ * rather than a mark.  The dash is longer than `drawRange`'s `[4, 4]` because
+ * this is a line and that is a circle -- a 4px dash around a 60px ring reads as
+ * dashed, and along a 300px line it reads as a dotted rule.
+ */
+const TRACER_WIDTH = 2;
+const TRACER_DASH = [7, 5];
+
+/**
+ * The glow, which is the first `shadowBlur` in this interface.
+ *
+ * A tracer is on screen for well under two seconds, crosses whatever is under
+ * it, and is the one mark here a reader is meant to catch out of the corner of
+ * an eye.  A canvas shadow is the only glow a 2D context has, and it is
+ * confined to the canvas: `review.spec.ts`'s flat-and-square sweep reads
+ * `getComputedStyle().boxShadow` off DOM nodes and cannot see this.  **A CSS
+ * shadow on the `<canvas>` element itself would be a different matter** -- that
+ * spec does see those, and neither `canvas.minimap` nor `.stage-canvas` is on
+ * its floating allowlist.
+ *
+ * Soft along the trail and hard at the head, because they answer different
+ * questions: the trail is the geometry of the shot and has to stay a readable
+ * dashed line, where the head is the event and has to be unmissable.
+ */
+const TRACER_TRAIL_GLOW = 6;
+const TRACER_HEAD_GLOW = 12;
+
+/** The bullet itself, in CSS pixels before the zoom scale. */
+const TRACER_HEAD_RADIUS = 3;
+
+/*
+  A thrown ability's trail, and its head.
+
+  Its own constants rather than the tracer's, because the two marks answer
+  different questions and should not have to move together: a bullet is on
+  screen for a second and wants to read as fast, where a throw crosses the
+  map over a decoded second or two and sits under an icon. The dash is
+  shorter so a slow line still reads as dashed at low zoom.
+*/
+/*
+  How an ability's published extent is inked.
+
+  Bolder than it was, and the previous values are worth recording because they
+  were each individually defensible and together invisible: a 1px stroke at
+  0.4 alpha over a 0.12 fill, in a side colour, on top of a grey radar. On a
+  smoke's forty-pixel ring that is a suggestion of a circle; against Riot's own
+  white map lines it disappears entirely.
+
+  Still dashed and still faint compared with anything decoded -- dashed is this
+  canvas's token for *generated* and the layer is labelled `(SIM)` -- but a
+  reader has to be able to see the shape before the token means anything. The
+  dash is longer for the same reason `TRACER_DASH` is longer than the old
+  `[4, 4]`: at two pixels wide, a four-pixel dash reads as a dotted rule.
+*/
+const RING_WIDTH = 2;
+const RING_DASH = [6, 5];
+const RING_LINE_ALPHA = 0.75;
+const RING_FILL_ALPHA = 0.18;
+
+/*
+  How a *detection* range is inked, which is a different claim from the ring
+  above and has to look like one.
+
+  An area of effect is where the ability does something; a detection range is
+  where it *notices* somebody -- a trap's search, a bot's hunt, a bolt's scan --
+  and Chamber's Trademark publishes both at once, a 10 m search around a 6 m
+  slow. Drawn in the same ink they would read as one thing with a halo.
+
+  It was an unfilled hairline at 0.22, which on Sova's 30 m Recon Bolt is a
+  faint circle a quarter of the way across the map with nothing inside it: a
+  reader sees an outline and no area. So it is a wash now -- a fill so faint it
+  cannot be mistaken for the effect's, under a long sparse dash that cannot be
+  mistaken for the effect's either. No countdown arc is ever drawn on one: that
+  belongs to the effect and this is not one.
+*/
+const DETECTION_DASH = [3, 8];
+const DETECTION_LINE_ALPHA = 0.4;
+const DETECTION_FILL_ALPHA = 0.07;
+
+/*
+  How a wall is inked.
+
+  Thicker than a ring because a wall is a piece of geometry rather than an
+  extent around a point, and **solid or dashed by where it came from**: Sage's
+  barrier is drawn from its own four segment actors' decoded coordinates and is
+  therefore solid, like every other stroke on this canvas around something that
+  was decoded, while a wall inferred from the caster's facing is dashed like
+  every other generated mark. `castlayer` decides which; this only draws it.
+*/
+const WALL_WIDTH = 3;
+
+/**
+ * The dot inside a marker whose ability nothing here can name, as a fraction
+ * of the marker's own half-width.  Small enough to read as a centre mark
+ * rather than as a filled marker, which is what a player is.
+ */
+const UNNAMED_DOT = 0.3;
+
+const THROW_DASH = [5, 4];
+const THROW_HEAD_RADIUS = 5;
 
 /**
  * How far ahead the facing probe is placed, in Unreal units.
@@ -335,7 +463,27 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
           colours,
           icons: castIcons,
           showRange: state.layers.abilityRange,
+          liveOnly: state.layers.castMechanics,
         });
+      }
+      /*
+        What each ability is doing at this instant, rather than only where it
+        is.  Drawn after the static marks so a live ring sits over the diamond
+        it belongs to, and before the tracers and the players: a bullet and a
+        person both have to stay on top of the map's furniture.
+      */
+      if (state.layers.castMechanics) {
+        drawCastMechanics(context, {
+          model,
+          snap,
+          world,
+          uvRadiusOf,
+          colours,
+          icons: castIcons,
+        });
+      }
+      if (state.layers.tracers) {
+        drawTracers(context, { model, snap, world, colours, scale });
       }
       /*
         The spike, if it is on the ground.
@@ -581,10 +729,14 @@ export function MinimapCanvas({ model, art, radar, mask }: MinimapProps) {
  * spike was not merely hard to tell from an attacker, it was arithmetically
  * the same colour.  See `libraries/vrfview/theme.py`.
  *
- * An upward triangle, because the canvas vocabulary is closed and every member
- * has to be distinct at six pixels: circle is a living person, square a live
- * ability pawn, hollow diamond a landed cast, X a death, and this is the only
- * filled triangle standing on its own.
+ * The spike's own mark, and it is **drawn here because nobody publishes one**:
+ * `assets/manifest.json` has no spike and no bomb in it, and Riot's content
+ * API has none either, so the alternative was the bare triangle this replaces.
+ * `views/spikeglyph.ts` carries the mark and the argument for it being an
+ * original rather than a trace.  The canvas vocabulary stays closed and every
+ * member stays distinct at six pixels: circle is a living person, square a
+ * live ability pawn, hollow diamond a landed cast, X a death, and this is the
+ * only filled upward mark standing on its own.
  *
  * Near-constant in screen space, like the death mark: the spike is a thing
  * being pointed at rather than a person occupying room, and a marker that
@@ -606,12 +758,11 @@ function drawSpike(
     return;
   }
   const [x, y] = world(at.x, at.y);
+  // Unchanged from the triangle this replaces, and that is a constraint rather
+  // than inertia: `minimap.spec.ts` finds the plant by counting amber pixels
+  // within 26 px of it, so the mark's screen footprint is part of a test.
   const half = SPIKE_HALF * Math.min(Math.max(scale, 0.9), MARK_SCALE_CAP);
-  const path = new Path2D();
-  path.moveTo(x, y - half);
-  path.lineTo(x + half * 0.9, y + half * 0.7);
-  path.lineTo(x - half * 0.9, y + half * 0.7);
-  path.closePath();
+  const path = spikeBody(x, y, half);
 
   context.save();
   // Keyline first, so the mark reads over Ascent's pale mid as well as over
@@ -621,6 +772,13 @@ function drawSpike(
   context.stroke(path);
   context.fillStyle = colours.spikeArmed!;
   context.fill(path);
+  // The core, painted *over* the body in the canvas colour rather than cut out
+  // of it: a hole would break the amber into a ring and a pip, and the spec
+  // requires the plant to be the largest connected amber patch on the canvas.
+  context.fillStyle = colours.canvas!;
+  context.fill(spikeCore(x, y, half));
+  context.fillStyle = colours.spikeArmed!;
+  context.fill(spikePip(x, y, half));
   // A ring at a fixed radius, so the eye finds it in a crowded site without
   // the mark itself having to be large enough to cover somebody.
   context.beginPath();
@@ -634,6 +792,83 @@ function drawSpike(
 
 
 /**
+ * The fatal shot: a glowing bullet crossing a dashed line to the victim.
+ *
+ * **Dashed because it is generated.**  Every other stroke on this canvas is
+ * around something the capture states; a `.vrf` has no shot in it at all, and
+ * `views/tracers.ts` carries the whole argument for what is read here, what is
+ * drawn, and why the flight is on screen before the kill it ends at.  The dash
+ * is the same token `drawRange` uses for a looked-up radius.
+ *
+ * The trail is drawn only as far as the bullet has flown, so what a reader
+ * follows is a head with a line behind it rather than a line with a dot on it.
+ * Once it lands the whole line is there and holds, which is what makes the
+ * geometry readable on a paused playhead -- an animation nobody can stop on is
+ * no use to somebody reviewing a round.
+ *
+ * Under the players and under the spike, like everything else, and with no
+ * arrowhead: the bullet is the direction, and the victim end already has
+ * `drawDeathMark` on it.
+ */
+function drawTracers(
+  context: CanvasRenderingContext2D,
+  args: {
+    model: ReplayModel;
+    snap: Snapshot;
+    world: (x: number, y: number) => [number, number];
+    colours: Record<string, string>;
+    scale: number;
+  },
+): void {
+  const { model, snap, world, colours, scale } = args;
+  const tracers = tracersAt(model, snap);
+  if (tracers.length === 0) {
+    return;
+  }
+  const mark = Math.min(Math.max(scale, 1), MARK_SCALE_CAP);
+  /*
+    `save`/`restore` rather than putting anything back by hand: the player loop
+    draws into this same context afterwards, and a leaked `globalAlpha`,
+    `shadowBlur` or dash would quietly repaint a whole canvas from a layer that
+    had finished drawing.
+  */
+  context.save();
+  context.lineCap = "round";
+  for (const tracer of tracers) {
+    const [x1, y1] = world(tracer.from.x, tracer.from.y);
+    const [x2, y2] = world(tracer.to.x, tracer.to.y);
+    const hx = x1 + (x2 - x1) * tracer.progress;
+    const hy = y1 + (y2 - y1) * tracer.progress;
+    const colour = sideColour(colours, tracer.side ?? "");
+
+    context.globalAlpha = tracer.alpha;
+    context.strokeStyle = colour;
+    context.shadowColor = colour;
+    context.shadowBlur = TRACER_TRAIL_GLOW * mark;
+    context.lineWidth = TRACER_WIDTH * mark;
+    context.setLineDash(TRACER_DASH);
+    context.beginPath();
+    context.moveTo(x1, y1);
+    context.lineTo(hx, hy);
+    context.stroke();
+
+    // The bullet: a hot core inside the side's own glow, so it reads as a
+    // light rather than as a third, larger marker on a canvas full of discs.
+    context.setLineDash([]);
+    context.shadowBlur = TRACER_HEAD_GLOW * mark;
+    context.fillStyle = colour;
+    context.beginPath();
+    context.arc(hx, hy, TRACER_HEAD_RADIUS * mark, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = colours.text!;
+    context.beginPath();
+    context.arc(hx, hy, TRACER_HEAD_RADIUS * mark * 0.45, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
+}
+
+/**
  * Every living player's approximate view cone, one wedge each.
  *
  * Nobody is picked out any more, and that is the point rather than a
@@ -643,14 +878,15 @@ function drawSpike(
  * which parts of it nobody can see.  A selection has nothing to say about that,
  * so the marker keeps `PICKED_SCALE` and the cone does not.
  *
- * The weight is the count instead: `sightlayer.paintCones` gives each cone
- * `1/N` of its side's ink and accumulates overlap additively, so k cones over a
- * point read as exactly `k/N` and a full side covering one lane paints it
- * solid.  No stroke -- an outline is a second ink that counts nothing and cuts
- * a hard line through the gradient this layer is made of.
+ * There is no weight at all now: `sightlayer.paintCones` unions each side's
+ * cones and paints the union at one flat alpha, so a lone survivor's wedge and
+ * a five-man stack read exactly the same.  It weighed the count for a while --
+ * `1/N` per cone, accumulated additively, so k of them read as `k/N` -- and
+ * that gradient is gone.  No stroke either: an outline is a second ink that
+ * counts nothing and cuts a hard line around the shape this layer is made of.
  *
  * `Scene3D` paints the identical picture from the identical two functions, at
- * the identical alphas; the only difference is that it rasterises in uv onto a
+ * the identical alpha; the only difference is that it rasterises in uv onto a
  * ground quad where this rasterises in screen space.
  */
 function drawSight(
@@ -700,9 +936,11 @@ function drawAbilities(
     colours: Record<string, string>;
     icons: Map<string, HTMLImageElement>;
     showRange: boolean;
+    /** Whether a placed mark disappears once its published lifetime is up. */
+    liveOnly: boolean;
   },
 ): void {
-  const { model, snap, world, uvRadiusOf, colours, icons, showRange } = args;
+  const { model, snap, world, uvRadiusOf, colours, icons, showRange, liveOnly } = args;
   const byActor = new Map<number, Player>();
   for (const player of model.replay.players) {
     byActor.set(player.actor_id, player);
@@ -736,7 +974,16 @@ function drawAbilities(
         drawTrail(context, track, snap.t_ms - PAWN_TRAIL_MS, snap.t_ms, world, colour, 0.45);
       }
       const [x, y] = world(here.x, here.y);
-      drawRange(context, { x, y, cast, colour, uvRadiusOf, show: showRange });
+      /*
+        Not handed over, and that was a real regression. `castsAt` skips a cast
+        with a pawn on purpose -- a pawn has a decoded track and a spawn point
+        beside it is a staler answer to the same question -- so with MECHANICS
+        on, handing the ring over meant nobody drew one at all: Sova's drone,
+        Killjoy's turret and alarmbot, Raze's Boom Bot, Cypher's camera and
+        Deadlock's net each lost their published extent entirely. A ring is
+        handed over only to a layer that will actually draw it.
+      */
+      drawRange(context, { x, y, cast, colour, uvRadiusOf, show: showRange, handedOver: false });
       // A square, so it is never mistaken for a player: circles are people and
       // squares are utility, and at this size that has to survive a glance.
       context.fillStyle = colour;
@@ -744,16 +991,39 @@ function drawAbilities(
       context.lineWidth = 1;
       context.fillRect(x - UTILITY_HALF, y - UTILITY_HALF, UTILITY_HALF * 2, UTILITY_HALF * 2);
       context.strokeRect(x - UTILITY_HALF, y - UTILITY_HALF, UTILITY_HALF * 2, UTILITY_HALF * 2);
-      drawUtilityMark(context, { x, y, icon, cast, colours, over: colours.background! });
+      drawUtilityMark(context, { x, y, icon, colours, over: colours.background! });
     }
 
-    // A cast with no pawn: one coordinate, no path, and no arc anywhere. The
-    // hollow diamond says "something is here" without implying it moved.
+    /*
+      A cast with no pawn: one coordinate, no path, and no arc anywhere. The
+      hollow diamond says "something is here" without implying it moved.
+
+      `liveOnly` is what makes it stop saying so. Without it the diamond is
+      drawn from the moment the cast is reached until the round ends, so a
+      smoke that went out twenty seconds ago sits on the map beside one that
+      has just landed, and by the end of a round every utility anybody used is
+      on screen at once. That is not a neutral picture: it claims a dozen
+      things are standing that are not.
+
+      It is a *phase* test rather than an age test, so it fixes the other end
+      too -- `phaseOf` returns null before a throw's origin channel opened, so
+      the mark no longer appears at the landing point while the thing is still
+      in the air.
+
+      Gated on the mechanics layer because the lifetime it reads is looked up:
+      switch that off and this goes back to being the round's full record,
+      which is what `abilitiesAt` keeps and what the parity fixtures pin. An
+      ability the table publishes no lifetime for stays `placed` for ever and
+      is unaffected either way.
+    */
     if (cast.landed === null) {
       continue;
     }
+    if (liveOnly && phaseOf(cast, cast.landed, snap.t_ms) === null) {
+      continue;
+    }
     const [x, y] = world(cast.landed.x, cast.landed.y);
-    drawRange(context, { x, y, cast, colour, uvRadiusOf, show: showRange });
+    drawRange(context, { x, y, cast, colour, uvRadiusOf, show: showRange, handedOver: liveOnly });
     context.save();
     context.translate(x, y);
     context.rotate(Math.PI / 4);
@@ -765,12 +1035,12 @@ function drawAbilities(
     // the identity, and an ability icon rotated 45 degrees stops being
     // recognisable as itself.
     context.restore();
-    drawUtilityMark(context, { x, y, icon, cast, colours, over: colours.canvas! });
+    drawUtilityMark(context, { x, y, icon, colours, over: colours.canvas! });
   }
 }
 
 /**
- * What a utility marker says it is: Riot's icon, or the keybind it was cast on.
+ * What a utility marker says it is: Riot's own icon, or nothing at all.
  *
  * The marker used to carry `\`${cast.slot} ${cast.internal_name}\`` as text
  * beside it -- `Q Possessable Camera` across the map at nine pixels, colliding
@@ -778,13 +1048,17 @@ function drawAbilities(
  * The icon identifies the ability the way the agent portrait identifies the
  * player, and it cannot smear because it sits inside the marker's own box.
  *
- * `icon_url` resolves for X and C only: `art.AgentArt.ability` refuses Q and E
- * because Riot's `Ability1`/`Ability2` map to them in an order that varies by
- * agent, and the archetype path's own letters do not track the game's current
- * keybinds either -- see `vrfview.abilityfacts`.  So the fallback is the one
- * character that **was** read rather than guessed: the slot the path named.
- * One glyph inside the box, which is why the label-collision machinery this
- * canvas used to need is gone.
+ * **The fallback is a dot, and it used to be a letter.**  `icon_url` now
+ * resolves for all four slots of every agent `abilityfacts` names, because the
+ * join is by Riot's published ability name -- so what is left over is an agent
+ * the table does not name at all, and for those the letter was actively
+ * misleading. It is the *archetype's internal slot*, which is not the key the
+ * player pressed: Sova's Recon Bolt decodes as `Q` and the game binds it to E,
+ * so an `E` on the map beside a `Q` in the timeline described one ability two
+ * ways. The `Passive` slot printed the whole word. A dot says "an ability this
+ * project cannot name", which is the visibly-absent answer this tree prefers
+ * to a confident wrong one; the marker's own square or diamond has already
+ * said that something was cast here, and its colour has said by which side.
  */
 function drawUtilityMark(
   context: CanvasRenderingContext2D,
@@ -792,23 +1066,21 @@ function drawUtilityMark(
     x: number;
     y: number;
     icon: HTMLImageElement | undefined;
-    cast: AbilityCast;
     colours: Record<string, string>;
     over: string;
   },
 ): void {
-  const { x, y, icon, cast, colours, over } = args;
+  const { x, y, icon, colours, over } = args;
   if (icon !== undefined) {
     const box = UTILITY_HALF * 2 - 2;
     context.drawImage(icon, x - box / 2, y - box / 2, box, box);
     return;
   }
   context.save();
-  context.font = `700 9px ${LABEL_FONT}`;
-  context.textAlign = "center";
-  context.textBaseline = "middle";
+  context.beginPath();
+  context.arc(x, y, UTILITY_HALF * UNNAMED_DOT, 0, Math.PI * 2);
   context.fillStyle = over === colours.canvas! ? colours.text! : over;
-  context.fillText(cast.slot, x, y + 0.5);
+  context.fill();
   context.restore();
 }
 
@@ -834,10 +1106,12 @@ function drawRange(
     colour: string;
     uvRadiusOf: (uu: number) => number;
     show: boolean;
+    /** Whether the mechanics layer is drawing this cast's ring instead. */
+    handedOver: boolean;
   },
 ): void {
-  const { x, y, cast, colour, uvRadiusOf, show } = args;
-  if (!show || cast.range_uu === null) {
+  const { x, y, cast, colour, uvRadiusOf, show, handedOver } = args;
+  if (!show || handedOver || cast.range_uu === null) {
     return;
   }
   const radius = uvRadiusOf(cast.range_uu);
@@ -847,12 +1121,257 @@ function drawRange(
   context.save();
   context.beginPath();
   context.arc(x, y, radius, 0, Math.PI * 2);
-  context.globalAlpha = 0.12;
+  context.globalAlpha = RING_FILL_ALPHA;
   context.fillStyle = colour;
   context.fill();
-  context.globalAlpha = 0.4;
-  context.setLineDash([4, 4]);
+  context.globalAlpha = RING_LINE_ALPHA;
+  context.setLineDash(RING_DASH);
+  context.lineWidth = RING_WIDTH;
+  context.strokeStyle = colour;
+  context.stroke();
+  context.restore();
+}
+
+/**
+ * What each ability is doing at this instant: flying, arming, standing, going.
+ *
+ * Everything here is dashed, because everything here is either a looked-up
+ * figure or a straight line this project drew between two decoded points --
+ * and dashed is this canvas's token for *generated*, the way solid is its
+ * token for a coordinate that was decoded.
+ *
+ * The four phases are drawn as four different things rather than four shades
+ * of one, because the request they answer is "what happened here and when",
+ * and a reader has to separate them at a glance on a busy site:
+ *
+ *   * **in flight** -- a dashed line from the throw origin to where the thing
+ *     is now, with a head at the leading end.  Both ends and the clock were
+ *     decoded; the straightness was not, and there is no arc because nothing
+ *     records where a projectile was halfway.
+ *   * **arming** -- a dashed ring with no fill, in `--text-muted` rather than
+ *     the caster's side colour.  A device that has landed and not yet armed is
+ *     not doing anything to anybody, and painting it in the ink that means
+ *     "this side owns this ground" would say it is.
+ *   * **active** -- the side's colour, a dashed ring with the faint fill, and a
+ *     solid arc around the rim that sweeps away as the published lifetime runs
+ *     out.  The arc is the one thing on this canvas that answers *how much
+ *     longer*.
+ *   * **expiring** -- the same ring fading out over `EXPIRE_MS`.
+ *
+ * A trigger range is drawn as its own ring, wider and fainter and never
+ * filled: Chamber's Trademark searches 10 m and slows 6, and a single ring
+ * would merge a question about who it notices with a claim about what it does.
+ *
+ * Nothing here reports which players were inside anything.  See `castlayer`.
+ */
+function drawCastMechanics(
+  context: CanvasRenderingContext2D,
+  args: {
+    model: ReplayModel;
+    snap: Snapshot;
+    world: (x: number, y: number) => [number, number];
+    uvRadiusOf: (uu: number) => number;
+    colours: Record<string, string>;
+    icons: Map<string, HTMLImageElement>;
+  },
+): void {
+  const { model, snap, world, uvRadiusOf, colours, icons } = args;
+  context.save();
+  for (const drawn of castsAt(model, snap)) {
+    const colour = drawn.side === null ? colours.unknown! : sideColour(colours, drawn.side);
+    const icon = drawn.cast.icon_url === null ? undefined : icons.get(drawn.cast.icon_url);
+    const { phase } = drawn;
+    if (phase.kind === "flight") {
+      drawThrow(context, { phase, world, colour, colours, icon });
+      continue;
+    }
+    if (phase.kind === "wall") {
+      drawWall(context, { phase, world, colour });
+      continue;
+    }
+    const [x, y] = world(phase.at.x, phase.at.y);
+    // The trigger range first, so the smaller area of effect draws over it.
+    if (drawn.detectionUu !== null && phase.kind !== "arming") {
+      drawDashedRing(context, {
+        x,
+        y,
+        radius: uvRadiusOf(drawn.detectionUu),
+        colour,
+        alpha: DETECTION_LINE_ALPHA,
+        fill: true,
+        dash: DETECTION_DASH,
+        fillAlpha: DETECTION_FILL_ALPHA,
+      });
+    }
+    if (drawn.radiusUu === null) {
+      continue;
+    }
+    const radius = uvRadiusOf(drawn.radiusUu);
+    if (phase.kind === "arming") {
+      drawDashedRing(context, {
+        x,
+        y,
+        radius,
+        colour: colours.muted!,
+        alpha: 0.5,
+        fill: false,
+      });
+      continue;
+    }
+    if (phase.kind === "placed") {
+      /*
+        A thing that stands, or one the table says nothing about: its extent
+        is drawn and nothing counts down, because nothing here knows when it
+        ends. `drawAbilities` has handed its ring over to this layer, so
+        skipping here would leave a turret with no extent at all.
+      */
+      drawDashedRing(context, { x, y, radius, colour, alpha: RING_LINE_ALPHA, fill: true });
+      continue;
+    }
+    const alpha = phase.kind === "expiring" ? phase.alpha : 1;
+    drawDashedRing(context, { x, y, radius, colour, alpha: RING_LINE_ALPHA * alpha, fill: true });
+    if (phase.kind === "active") {
+      drawRemaining(context, { x, y, radius, colour, left: 1 - phase.progress });
+    }
+  }
+  context.restore();
+}
+
+/** The thrown thing, part way along the straight line between its two ends. */
+function drawThrow(
+  context: CanvasRenderingContext2D,
+  args: {
+    phase: { from: Point; to: Point; at: Point; progress: number };
+    world: (x: number, y: number) => [number, number];
+    colour: string;
+    colours: Record<string, string>;
+    icon: HTMLImageElement | undefined;
+  },
+): void {
+  const { phase, world, colour, colours, icon } = args;
+  const [fromX, fromY] = world(phase.from.x, phase.from.y);
+  const [atX, atY] = world(phase.at.x, phase.at.y);
+  context.save();
+  context.beginPath();
+  context.moveTo(fromX, fromY);
+  context.lineTo(atX, atY);
+  context.setLineDash(THROW_DASH);
+  context.lineWidth = 1.5;
+  context.globalAlpha = 0.7;
+  context.strokeStyle = colour;
+  context.stroke();
+  // The head, which is the thing itself rather than the trail behind it, so it
+  // is solid where the trail is dashed and carries the ability's own icon
+  // where Riot publishes one for this slot.
+  context.setLineDash([]);
+  context.globalAlpha = 1;
+  context.beginPath();
+  context.arc(atX, atY, THROW_HEAD_RADIUS, 0, Math.PI * 2);
+  context.fillStyle = colour;
+  context.fill();
   context.lineWidth = 1;
+  context.strokeStyle = colours.background!;
+  context.stroke();
+  if (icon !== undefined) {
+    const box = THROW_HEAD_RADIUS * 2;
+    context.drawImage(icon, atX - box / 2, atY - box / 2, box, box);
+  }
+  context.restore();
+}
+
+/** A published extent: dashed, because nothing in the capture states it. */
+function drawDashedRing(
+  context: CanvasRenderingContext2D,
+  args: {
+    x: number;
+    y: number;
+    radius: number;
+    colour: string;
+    alpha: number;
+    fill: boolean;
+    /** The dash, so a detection range cannot be inked as an area of effect. */
+    dash?: number[];
+    /** Passed rather than derived from `alpha`, for the same reason. */
+    fillAlpha?: number;
+  },
+): void {
+  const { x, y, radius, colour, alpha, fill } = args;
+  const dash = args.dash ?? RING_DASH;
+  const fillAlpha = args.fillAlpha ?? RING_FILL_ALPHA;
+  if (!Number.isFinite(radius) || radius <= 0) {
+    return;
+  }
+  context.save();
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  if (fill) {
+    context.globalAlpha = alpha * fillAlpha;
+    context.fillStyle = colour;
+    context.fill();
+  }
+  context.globalAlpha = alpha;
+  context.setLineDash(dash);
+  context.lineWidth = RING_WIDTH;
+  context.strokeStyle = colour;
+  context.stroke();
+  context.restore();
+}
+
+/**
+ * A wall, from the two ends `castlayer` read out of its own segment actors.
+ *
+ * **Solid**, and it is the one thing this layer draws that is: every other
+ * mark here is a looked-up radius or a straight line between two decoded
+ * points, where a wall's line, length and orientation were all decoded. The
+ * dash is this canvas's token for *generated* and there is nothing generated
+ * about this one. See `castlayer.wallsOf` for why there is no second kind.
+ */
+function drawWall(
+  context: CanvasRenderingContext2D,
+  args: {
+    phase: { from: Point; to: Point };
+    world: (x: number, y: number) => [number, number];
+    colour: string;
+  },
+): void {
+  const { phase, world, colour } = args;
+  const [fromX, fromY] = world(phase.from.x, phase.from.y);
+  const [toX, toY] = world(phase.to.x, phase.to.y);
+  context.save();
+  context.beginPath();
+  context.moveTo(fromX, fromY);
+  context.lineTo(toX, toY);
+  context.lineWidth = WALL_WIDTH;
+  context.lineCap = "butt";
+  context.globalAlpha = RING_LINE_ALPHA;
+  context.strokeStyle = colour;
+  context.stroke();
+  context.restore();
+}
+
+/**
+ * How much of the published lifetime is left, as an arc around the rim.
+ *
+ * Solid where the ring under it is dashed, and that is not an inconsistency:
+ * the ring is a claim about *size*, which is looked up, and this is a reading
+ * of the playhead against a clock -- so the two are different kinds of thing
+ * and are drawn as two. It starts at twelve o'clock and unwinds clockwise,
+ * which is the direction every countdown a person has ever seen unwinds.
+ */
+function drawRemaining(
+  context: CanvasRenderingContext2D,
+  args: { x: number; y: number; radius: number; colour: string; left: number },
+): void {
+  const { x, y, radius, colour, left } = args;
+  if (!Number.isFinite(radius) || radius <= 0 || left <= 0) {
+    return;
+  }
+  const top = -Math.PI / 2;
+  context.save();
+  context.beginPath();
+  context.arc(x, y, radius, top, top + Math.PI * 2 * left);
+  context.globalAlpha = 0.85;
+  context.lineWidth = 2;
   context.strokeStyle = colour;
   context.stroke();
   context.restore();
@@ -1011,11 +1530,13 @@ function drawFacing(
  * landed cast, filled triangle the spike, and this is the only bare cross.
  *
  * Keyline first and then the mark, which is how the agent label used to stay
- * readable over Ascent's pale mid before it was removed.  Fully opaque: the
- * old 0.55 and 0.8 were half the illegibility, and a stroke blended toward the
- * radar underneath can also drift outside the 36-RGB window `minimap.spec.ts`
- * counts as a team colour -- so a dead player was being *checked* by luck as
- * well as read by squinting.
+ * readable over Ascent's pale mid before it was removed.  The *mark* is fully
+ * opaque: the old 0.55 and 0.8 were half the illegibility, and a stroke blended
+ * toward the radar underneath can also drift outside the 36-RGB window
+ * `minimap.spec.ts` counts as a team colour -- so a dead player was being
+ * *checked* by luck as well as read by squinting.  The keyline is not the mark
+ * and takes `DEATH_KEYLINE_ALPHA` instead; round caps rather than square for
+ * the same reason, a squared arm end reading as a stub of a thicker stroke.
  */
 function drawDeathMark(
   context: CanvasRenderingContext2D,
@@ -1030,11 +1551,13 @@ function drawDeathMark(
   path.lineTo(x + arm, y - arm);
 
   context.save();
-  context.lineCap = "square";
-  context.lineWidth = 4;
+  context.lineCap = "round";
+  context.globalAlpha = DEATH_KEYLINE_ALPHA;
+  context.lineWidth = 3;
   context.strokeStyle = keyline;
   context.stroke(path);
-  context.lineWidth = 2;
+  context.globalAlpha = 1;
+  context.lineWidth = 1.75;
   context.strokeStyle = colour;
   context.stroke(path);
   context.restore();

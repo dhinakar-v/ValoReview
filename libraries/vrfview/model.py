@@ -46,6 +46,8 @@ from __future__ import annotations
 from bisect import bisect_left
 from dataclasses import dataclass, field
 
+from vrfview import roundrules
+
 TEAM_A = "A"
 TEAM_B = "B"
 TEAM_UNKNOWN = "?"
@@ -340,6 +342,25 @@ class Round:
         return self.end_ms - self.start_ms
 
     @property
+    def buy_phase_ms(self) -> int:
+        """How long this round spends behind the barrier. See vrfview.roundrules."""
+        return roundrules.buy_phase_ms(self.number)
+
+    @property
+    def action_start_ms(self) -> int:
+        """
+        When the barrier drops and the round is playable, looked up not read.
+
+        Clamped to `end_ms`, which is the whole of the special-casing this needs:
+        a round shorter than its own buy phase -- a surrender, a recording that
+        stops mid-round, a synthetic fixture -- would otherwise place the instant
+        the round begins after the instant it ends.  Where the clamp bites this
+        equals `end_ms`, and every window in this model is half-open, so the
+        marker simply falls outside its own round and nothing draws it.
+        """
+        return min(self.start_ms + self.buy_phase_ms, self.end_ms)
+
+    @property
     def decided(self) -> bool:
         return self.winner in (TEAM_A, TEAM_B)
 
@@ -424,11 +445,20 @@ class Replay:
 
     @property
     def event_times(self) -> list[int]:
-        """Every event instant, sorted -- the step-to-next-event targets."""
+        """
+        Every event instant, sorted -- the step-to-next-event targets.
+
+        A round contributes `action_start_ms` and not `start_ms`: stepping back
+        from the first kill should land where the round became playable, not on
+        thirty seconds of ten people stood behind a barrier.  It is the same one
+        stop per round either way, moved rather than added, so nothing counting
+        presses gains an entry.  A round whose clamp bit contributes its `end_ms`,
+        which the next round contributes as its own start anyway.
+        """
         ts = {k.t_ms for k in self.kills}
         ts |= {u.t_ms for u in self.ultimates}
         ts |= {s.t_ms for s in self.spike}
-        ts |= {r.start_ms for r in self.rounds}
+        ts |= {r.action_start_ms for r in self.rounds}
         ts |= {c.t_ms for c in self.ability_casts}
         return sorted(ts)
 

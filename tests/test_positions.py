@@ -984,3 +984,282 @@ class LoadoutSplitIsTheRealTeamSplit(unittest.TestCase):
         if checked == 0:
             raise unittest.SkipTest("no cached decodes to check the split against")
         assert checked >= 1
+
+
+def abilities_mod():
+    """`vrfview.abilities`, imported the way the rest of this file imports."""
+    from vrfview import abilities
+
+    return abilities
+
+
+# What the flight measurement is scored against.  Every figure here was
+# measured over the 23 cached decodes in the reference library, 6,304 casts.
+FLIGHT_ORDERED_SHARE = 0.85
+FLIGHT_PAIRED_CASTS = 1500
+FLIGHT_SPAN_FLOOR_UU = 500.0
+FLIGHT_CAST_SHARE = (0.15, 0.45)
+
+
+class AThrownAbilityLandsAfterItIsThrown(unittest.TestCase):
+    """
+    That a throw has two decoded ends and a decoded duration between them.
+
+    This is what lets the viewer animate a thrown ability without inventing
+    anything but the straightness of the line -- the same standing this
+    project already gives a kill tracer.  A `Projectile_` channel opens where
+    the caster is standing, a `GameObject_`/`Zone_`/`Patch_` channel opens
+    where the thing came to rest, and `Placement.t_ms` says when each of them
+    did.  There is still no arc anywhere: only `Pawn_` actors emit movement.
+
+    Measured over the whole library, 6,304 casts:
+
+      * 2,006 casts open the same number of projectiles as landings, which is
+        the only shape `flights` will pair.  Of the 2,842 pairs that makes,
+        290 open on the same millisecond or backwards and 43 are slower than
+        `FLIGHT_MAX_MS`, leaving **2,509 flights across 1,704 casts (27.0%)**;
+      * the flight time is a median **831 ms**, p95 2,323 ms, max 3,983 ms;
+      * the distance covered is a median **1,485 uu**, about fifteen metres;
+      * and the band from 4 to 5 seconds is **empty**, which is the whole
+        argument for where `FLIGHT_MAX_MS` sits.
+
+    The failure modes this catches are the ones that would look entirely
+    plausible on screen: a reversed pairing draws the line from the smoke back
+    to the thrower, a k-to-j pairing draws it between two unrelated smokes
+    across the map, and a ceiling raised until it stopped refusing anything
+    turns a remote detonation into a projectile that hung in the air for
+    half a minute.
+    """
+
+    casts: ClassVar[list] = []
+    deltas: ClassVar[list] = []
+    spans: ClassVar[list] = []
+    with_flight: ClassVar[int] = 0
+
+    @classmethod
+    def setUpClass(cls):
+        from vrfview import abilities, pipeline
+
+        paths = sorted(Path("Demos").glob("*.vrf"))
+        if not paths:
+            raise unittest.SkipTest("no captures in Demos/")
+        casts = []
+        deltas = []
+        spans = []
+        with_flight = 0
+        for path in paths:
+            replay = pipeline.open_replay(path)
+            for cast in replay.ability_casts:
+                casts.append(cast)
+                origins = sorted(
+                    (p for p in cast.placements if p.kind == abilities.KIND_PROJECTILE),
+                    key=lambda p: (p.t_ms, p.actor_id),
+                )
+                landings = sorted(
+                    (p for p in cast.placements if p.kind in abilities.PLACED_KINDS),
+                    key=lambda p: (p.t_ms, p.actor_id),
+                )
+                if origins and len(origins) == len(landings):
+                    deltas += [
+                        landing.t_ms - origin.t_ms
+                        for origin, landing in zip(origins, landings, strict=True)
+                    ]
+                found = cast.flights
+                if found:
+                    with_flight += 1
+                spans += [
+                    math.hypot(f.landing.x - f.origin.x, f.landing.y - f.origin.y)
+                    for f in found
+                ]
+        if not deltas:
+            raise unittest.SkipTest("no cached decodes to measure a throw in")
+        cls.casts = casts
+        cls.deltas = deltas
+        cls.spans = spans
+        cls.with_flight = with_flight
+
+    def test_there_are_enough_pairs_to_conclude_anything(self):
+        """A handful of throws is not a distribution, and a cache holding one
+        capture must not be allowed to pass this file quietly."""
+        assert len(self.deltas) >= FLIGHT_PAIRED_CASTS, (
+            f"only {len(self.deltas)} pairs; too few to measure a population"
+        )
+
+    def test_a_throw_origin_opens_before_the_thing_it_becomes(self):
+        ordered = [d for d in self.deltas if d > 0]
+        share = len(ordered) / len(self.deltas)
+        assert share >= FLIGHT_ORDERED_SHARE, f"only {share:.1%} of pairs run forward"
+
+    def test_the_backwards_ones_are_a_population_and_not_jitter(self):
+        """
+        Every pair that lands before it is thrown does so by more than half a
+        second, so none of them is a millisecond of clock noise that a clamp
+        could reasonably absorb.  They are remote detonations -- the thing was
+        already standing and the projectile is what set it off -- and refusing
+        them is a statement about what a throw is rather than a tolerance.
+        """
+        backwards = [d for d in self.deltas if d <= 0 and d != 0]
+        assert backwards, "no backwards pairs at all; the refusal is untested"
+        assert all(d < -500 for d in backwards), f"nearest is {max(backwards)} ms"
+
+    def test_the_ceiling_sits_where_the_density_collapses(self):
+        """
+        The argument for `FLIGHT_MAX_MS`, re-run.
+
+        Not an empty band -- there is no empty band, and an earlier reading of
+        this distribution wrongly found one.  What separates a throw from a
+        remote activation is how *often* each happens: below three seconds the
+        library produces 833 pairs per second of delta, and from three to nine
+        seconds it produces 3.3.  A factor of 250 is the boundary, and it has
+        to stay a factor of 250 rather than drifting toward a continuum, which
+        is what a ceiling raised until it stopped refusing anything would look
+        like from here.
+        """
+        forward = [d for d in self.deltas if d > 0]
+        dense = sum(1 for d in forward if d <= 3_000) / 3.0
+        sparse = sum(1 for d in forward if 3_000 < d < 9_000) / 6.0
+        assert sparse > 0, "no tail at all; the refusal is untested"
+        assert dense / sparse > 50, (
+            f"{dense:.0f}/s against {sparse:.1f}/s is not a split"
+        )
+
+    def test_the_ceiling_holds_almost_every_real_throw(self):
+        forward = [d for d in self.deltas if d > 0]
+        kept = sum(1 for d in forward if d <= abilities_mod().FLIGHT_MAX_MS)
+        assert kept / len(forward) >= 0.95, (
+            f"the ceiling drops {1 - kept / len(forward):.1%}"
+        )
+
+    def test_every_flight_it_reports_is_forward_and_under_the_ceiling(self):
+        ceiling = abilities_mod().FLIGHT_MAX_MS
+        for cast in self.casts:
+            for flight in cast.flights:
+                assert flight.duration_ms > 0, f"{cast.codename} {cast.slot}"
+                assert flight.duration_ms <= ceiling
+
+    def test_a_flight_covers_a_real_distance(self):
+        """
+        The geometry rather than the clock.  A throw origin sits inside the
+        caster's own capsule and the landing is where the thing came to rest,
+        so a flight has to span something -- a median near zero would mean
+        `flights` was pairing a projectile with itself.
+        """
+        assert statistics.median(self.spans) > FLIGHT_SPAN_FLOOR_UU
+
+    def test_most_casts_cannot_be_paired_at_all_and_that_is_the_answer(self):
+        """
+        A band from both sides.  Under-claiming is the safe direction here and
+        has to stay visible: nearly three quarters of casts have no
+        unambiguous throw and draw no line at all.  A sudden rise would mean
+        the pairing had started guessing.
+        """
+        share = self.with_flight / len(self.casts)
+        low, high = FLIGHT_CAST_SHARE
+        assert low <= share <= high, f"{share:.1%} of casts have a flight"
+
+
+# What the wall measurement is scored against.  Every figure was measured over
+# the 23 cached decodes: 126 Sage barriers, 125 of them four segments and one
+# three, all of them collinear to the last decimal place.
+WALL_SEGMENT_SPACING_UU = 260.0
+WALL_STRAIGHTNESS_UU = 1.0
+WALL_LENGTH_UU = (700.0, 1100.0)
+WALL_COUNT_FLOOR = 100
+
+
+class SagesWallIsFourSegmentsAndTheyAreStraight(unittest.TestCase):
+    """
+    That a wall is decoded geometry rather than a looked-up length.
+
+    `abilityfacts` refuses a radius for a wall on the grounds that a cast gives
+    one point and no orientation, and that is right for Phoenix's Blaze and
+    Harbor's High Tide.  It is not right for Sage's Barrier Orb, which opens
+    one `Wall_Fortifying` manager channel and one `Wall_Segment_Fortifying`
+    channel per segment at the same millisecond, each carrying its own spawn
+    transform -- so the line, its length and its orientation are all read.
+    That was on disk in every sidecar and nothing had looked at it.
+
+    Measured here over the whole library: **126 barriers, 125 with four
+    segments and one with three; every one exactly collinear**, at a maximum
+    perpendicular deviation of 0.0 uu; segments a uniform 260 uu apart; and a
+    drawn extent of 1,040 uu once each end reaches half a segment past the
+    outermost centre.
+
+    The failure this catches is the one that would look right: a wall drawn
+    through segments taken in *spawn* order rather than positional order is a
+    zigzag across the doorway, and at four points a zigzag and a line are the
+    same length.
+    """
+
+    walls: ClassVar[list] = []
+    bends: ClassVar[list] = []
+
+    @classmethod
+    def setUpClass(cls):
+        from vrfview import pipeline
+
+        paths = sorted(Path("Demos").glob("*.vrf"))
+        if not paths:
+            raise unittest.SkipTest("no captures in Demos/")
+        walls = []
+        bends = []
+        for path in paths:
+            replay = pipeline.open_replay(path)
+            if not replay.positions:
+                continue
+            for cast in replay.ability_casts:
+                for wall in cast.walls:
+                    walls.append(wall)
+                    # Every segment's distance from the line the wall claims.
+                    dx = wall.x2 - wall.x1
+                    dy = wall.y2 - wall.y1
+                    span = math.hypot(dx, dy)
+                    if span <= 0:
+                        continue
+                    for place in cast.placements:
+                        if place.t_ms != wall.t_ms or "Segment" not in place.name:
+                            continue
+                        off = (
+                            abs(
+                                (place.x - wall.x1) * dy - (place.y - wall.y1) * dx,
+                            )
+                            / span
+                        )
+                        bends.append(off)
+        cls.walls = walls
+        cls.bends = bends
+
+    def setUp(self):
+        if not self.walls:
+            self.skipTest("no decoded captures with a wall in them")
+
+    def test_the_library_is_full_of_them(self):
+        assert len(self.walls) >= WALL_COUNT_FLOOR, f"only {len(self.walls)} walls"
+
+    def test_every_segment_sits_on_the_line_the_wall_claims(self):
+        """
+        The check that a segment order is a line and not a zigzag.  Nothing
+        about the drawing is worth anything if the ends are the wrong two
+        points, and at four segments a wrong order is still a plausible shape.
+        """
+        worst = max(self.bends)
+        assert worst <= WALL_STRAIGHTNESS_UU, (
+            f"a segment is {worst:.2f} uu off the line"
+        )
+
+    def test_the_extent_is_the_span_plus_one_segment(self):
+        low, high = WALL_LENGTH_UU
+        for wall in self.walls:
+            assert low <= wall.length_uu <= high, f"{wall.length_uu:.0f} uu wall"
+
+    def test_the_segments_are_evenly_spaced(self):
+        """
+        Which is what makes the half-segment reach at each end arithmetic
+        rather than a guess: the gap between two segment centres is a
+        segment's own width.
+        """
+        spacings = [
+            wall.length_uu / wall.segments for wall in self.walls if wall.segments > 1
+        ]
+        median = statistics.median(spacings)
+        assert abs(median - WALL_SEGMENT_SPACING_UU) < 1.0, f"{median:.1f} uu apart"

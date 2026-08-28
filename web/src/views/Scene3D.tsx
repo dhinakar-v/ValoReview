@@ -73,6 +73,7 @@ import { sideOf } from "../model/synthetic";
 import { palette, sideColour, useImages } from "./images";
 import { teamShown, usePlayback } from "./playback";
 import { SIGHT_RASTER, paintCones, sightCones, smokesAt } from "./sightlayer";
+import { tracersAt } from "./tracers";
 
 /** Marker sizes, in scene units — which are fractions of the radar's side. */
 const BODY_RADIUS = 0.006;
@@ -104,6 +105,48 @@ function signedPitch(degrees: number): number {
   const wrapped = mod(degrees, 360);
   return wrapped > 180 ? wrapped - 360 : wrapped;
 }
+
+/*
+ * Tracers, in scene units -- and the scene is the map, one unit across.
+ *
+ * `MAX_TRACERS` is a ceiling on how many can be alive at once.  Ten is the
+ * whole server: a tracer lives `TRACER_LIFE_MS` and a round has ten players in
+ * it, so an eleventh would need somebody to die twice.
+ *
+ * `TRACER_DASH_UV` is the length of one dash-and-gap along the beam, which the
+ * texture repeat is derived from -- so a dash is a fixed size in the *world*
+ * rather than stretching with the length of the shot.  A quarter of it is ink,
+ * which is what reads as dashed rather than as dotted or as solid.
+ */
+const MAX_TRACERS = 10;
+const TRACER_DASH_UV = 0.01;
+
+/**
+ * How wide the beam is, and how big the bullet at its head is.
+ *
+ * A `THREE.Line` is **one pixel wide in WebGL whatever `linewidth` says** --
+ * the widths in the spec were never implemented by the ANGLE backends -- so a
+ * line here cannot be made either thick or soft, and the tracer was a hairline
+ * that was genuinely hard to find in a scene.  The beam is a camera-facing quad
+ * instead, and once it is geometry it can carry a texture that fades at its
+ * edges, which is the glow.
+ */
+const TRACER_HALF_WIDTH = 0.0035;
+const TRACER_HEAD_SIZE = 0.024;
+
+/** The stripe and the bullet, drawn once into textures the beams share. */
+const TRACER_TEXTURE_PX = 64;
+
+/**
+ * Below this the beam is not drawn at all, in scene units.
+ *
+ * A quad needs a direction to be built along, and at the muzzle flash there is
+ * not one yet: the cross product of a zero-length vector with anything is zero,
+ * and normalising that is NaN in every component -- which three.js hands
+ * straight to the GPU as a triangle that disappears or covers the screen. The
+ * bullet is drawn on its own for that one frame.
+ */
+const MIN_BEAM_LENGTH = 1e-6;
 
 /** Just off the ground, so a flat wedge does not fight the plane for pixels. */
 const SIGHT_LIFT = 0.0015;
@@ -140,6 +183,7 @@ export function Scene3D(props: SceneProps) {
       <Trails {...props} colours={colours} />
       <Actors {...props} colours={colours} />
       <Spike {...props} colours={colours} />
+      <Tracers {...props} colours={colours} />
       <SightOverlay {...props} colours={colours} />
       <Callouts art={props.art} />
     </Canvas>
@@ -513,21 +557,234 @@ function Spike({
 
 
 /**
+ * The fatal shot: a glowing beam with a bullet travelling along it.
+ *
+ * The same two decoded endpoints and the same invented line between them that
+ * `MinimapCanvas.drawTracers` draws -- `views/tracers.ts` holds the geometry,
+ * the argument, and the reason the flight is on screen before the kill it ends
+ * at.  What the scene adds is the half the minimap has nowhere to put: a shot
+ * from a heaven spot to a player on the floor below is a line that slopes, and
+ * both z values are decoded.
+ *
+ * **This was a `THREE.Line`, and a line here can be neither wide nor soft.**
+ * WebGL draws every line one pixel across whatever `linewidth` says -- the
+ * widths in the spec were never implemented by the platform backends -- so the
+ * tracer was a hairline in a scene full of lit capsules, which is the "hard to
+ * see" half of why this was rewritten.  The beam is a **camera-facing quad**
+ * instead: four vertices per slot, rebuilt each frame from the shot's own
+ * direction crossed with the direction to the camera, so it keeps its width
+ * from any bearing the orbit controls reach rather than vanishing edge-on.
+ *
+ * Once it is geometry it can carry a picture, and that is where both the glow
+ * and the dash now live -- a stripe bright along its centre line and
+ * transparent at its edges, with a gap in every repeat.  **The dash had to
+ * survive the move**: it is the token that says this line was generated, it was
+ * a `LineDashedMaterial` property, and it is a texture property now.  The
+ * repeat is derived from the beam's own world length, so a dash stays a fixed
+ * size on the map rather than stretching with the distance of the shot.
+ *
+ * `AdditiveBlending`, and the rule that forbids it next door does not apply.
+ * `SightOverlay` may not blend additively because a wash is meant to *shade*
+ * the radar and adding would brighten the map instead.  A tracer is a light:
+ * adding is what it is for, and it is what makes two shots crossing read as two
+ * lights rather than as one flat overlap.
+ *
+ * One object per slot rather than one per side, because colour and opacity are
+ * material properties and two tracers of one side a quarter of a second apart
+ * have to fade independently.  Ten of each is nothing.
+ */
+
+/** The beam's stripe: bright down the middle, out at the edges, with a gap. */
+function beamTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = TRACER_TEXTURE_PX;
+  canvas.height = TRACER_TEXTURE_PX;
+  const context = canvas.getContext("2d")!;
+  // Across the beam: a soft falloff, so its edge is a glow and not a cut.
+  const across = context.createLinearGradient(0, 0, 0, TRACER_TEXTURE_PX);
+  across.addColorStop(0, "rgba(255,255,255,0)");
+  across.addColorStop(0.5, "rgba(255,255,255,1)");
+  across.addColorStop(1, "rgba(255,255,255,0)");
+  context.fillStyle = across;
+  // Along it: a quarter of every repeat is a gap. This is the dash, and it is
+  // the only thing on this mark that says it was not decoded.
+  context.fillRect(0, 0, Math.round(TRACER_TEXTURE_PX * 0.75), TRACER_TEXTURE_PX);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  return texture;
+}
+
+/** The bullet: a radial falloff, which is a glow with nothing else in it. */
+function headTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = TRACER_TEXTURE_PX;
+  canvas.height = TRACER_TEXTURE_PX;
+  const context = canvas.getContext("2d")!;
+  const half = TRACER_TEXTURE_PX / 2;
+  const glow = context.createRadialGradient(half, half, 0, half, half, half);
+  glow.addColorStop(0, "rgba(255,255,255,1)");
+  glow.addColorStop(0.25, "rgba(255,255,255,0.85)");
+  glow.addColorStop(1, "rgba(255,255,255,0)");
+  context.fillStyle = glow;
+  context.fillRect(0, 0, TRACER_TEXTURE_PX, TRACER_TEXTURE_PX);
+  return new THREE.CanvasTexture(canvas);
+}
+
+function Tracers({
+  model,
+  art,
+  colours,
+}: SceneProps & { colours: Record<string, string> }) {
+  const reference = useMemo(() => floorZ(model), [model]);
+
+  const built = useMemo(() => {
+    const group = new THREE.Group();
+    // One texture each, shared by every slot: they differ only in colour, and
+    // colour is a material tint over a white picture.
+    const beam = beamTexture();
+    const bullet = headTexture();
+    const slots: Array<{ mesh: THREE.Mesh; head: THREE.Sprite }> = [];
+    for (let i = 0; i < MAX_TRACERS; i += 1) {
+      const geometry = new THREE.BufferGeometry();
+      /*
+        Four corners, two triangles: muzzle-left, muzzle-right, head-left,
+        head-right. V runs across the beam, so the gradient is its width; U
+        runs along it and is rewritten per frame from the real world length.
+      */
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(12), 3));
+      geometry.setAttribute(
+        "uv",
+        new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 1, 0, 1, 1]), 2),
+      );
+      geometry.setIndex([0, 1, 2, 2, 1, 3]);
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+          map: beam,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      const head = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: bullet,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      head.scale.setScalar(TRACER_HEAD_SIZE);
+      mesh.visible = false;
+      head.visible = false;
+      /*
+        A bounding sphere is computed once, from the buffer as it stood the
+        first time something asked -- four points at the origin -- and nothing
+        here recomputes it. Left culled, every beam would be discarded as
+        off-screen the moment the camera looked anywhere but the map's corner.
+      */
+      mesh.frustumCulled = false;
+      // Over the ground, and over the sight quad, which is `renderOrder = 1`.
+      mesh.renderOrder = 2;
+      head.renderOrder = 2;
+      group.add(mesh);
+      group.add(head);
+      slots.push({ mesh, head });
+    }
+    return { group, slots };
+  }, []);
+
+  useFrame((frame) => {
+    const state = usePlayback.getState();
+    const drawn = state.layers.tracers ? tracersAt(model, stateAt(model, state.tMs)) : [];
+    // Chest height, the same lift `Actors` stands a body at, so a shot leaves
+    // the shooter and lands on the victim rather than crossing the floor
+    // between their feet.
+    const lift = (z: number) => (z - reference) * art.transform.vertical_scale + BODY_HEIGHT;
+
+    built.slots.forEach((slot, i) => {
+      const tracer = drawn[i];
+      if (tracer === undefined) {
+        slot.mesh.visible = false;
+        slot.head.visible = false;
+        return;
+      }
+      const [u1, v1] = applyTransform(art.transform, tracer.from.x, tracer.from.y);
+      const [u2, v2] = applyTransform(art.transform, tracer.to.x, tracer.to.y);
+      const muzzle = new THREE.Vector3(u1, lift(tracer.from.z), v1);
+      const impact = new THREE.Vector3(u2, lift(tracer.to.z), v2);
+      // The beam reaches only as far as the bullet has flown, so a reader
+      // follows a head with a line behind it rather than a line with a dot on
+      // it.
+      const at = new THREE.Vector3().lerpVectors(muzzle, impact, tracer.progress);
+
+      const along = new THREE.Vector3().subVectors(at, muzzle);
+      const length = along.length();
+      const colour = sideColour(colours, tracer.side ?? "");
+
+      if (length < MIN_BEAM_LENGTH) {
+        // The instant of the muzzle flash: there is no direction to face a
+        // quad along yet, and a degenerate cross product would be NaN.
+        slot.mesh.visible = false;
+      } else {
+        const toCamera = new THREE.Vector3().subVectors(frame.camera.position, muzzle);
+        const wide = new THREE.Vector3()
+          .crossVectors(along, toCamera)
+          .normalize()
+          .multiplyScalar(TRACER_HALF_WIDTH);
+        const points = slot.mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
+        points.setXYZ(0, muzzle.x - wide.x, muzzle.y - wide.y, muzzle.z - wide.z);
+        points.setXYZ(1, muzzle.x + wide.x, muzzle.y + wide.y, muzzle.z + wide.z);
+        points.setXYZ(2, at.x - wide.x, at.y - wide.y, at.z - wide.z);
+        points.setXYZ(3, at.x + wide.x, at.y + wide.y, at.z + wide.z);
+        points.needsUpdate = true;
+
+        // The dash, held to a fixed size on the map rather than stretched
+        // across however far this particular shot happened to travel.
+        const uv = slot.mesh.geometry.getAttribute("uv") as THREE.BufferAttribute;
+        const repeats = Math.max(1, Math.round(length / TRACER_DASH_UV));
+        uv.setXY(2, repeats, 0);
+        uv.setXY(3, repeats, 1);
+        uv.needsUpdate = true;
+
+        const material = slot.mesh.material as THREE.MeshBasicMaterial;
+        material.color.set(colour);
+        material.opacity = tracer.alpha;
+        slot.mesh.visible = true;
+      }
+
+      const headMaterial = slot.head.material as THREE.SpriteMaterial;
+      headMaterial.color.set(colour);
+      headMaterial.opacity = tracer.alpha;
+      slot.head.position.copy(at);
+      slot.head.visible = true;
+    });
+  });
+
+  return <primitive object={built.group} />;
+}
+
+/**
  * Every living player's sight cone, as one overlay lying on the ground plane.
  *
  * It is a two-dimensional claim about a silhouette; extruding it into a frustum
  * would be inventing the geometry this project does not have.
  *
  * One quad rather than one mesh per player, and that is what makes this view
- * agree with the minimap instead of merely resembling it.  The overlap opacity
- * this layer is built on -- k cones over a point reading as exactly `k/N` --
- * cannot be had from k separate transparent meshes: fixed-function alpha
- * blending stacks them to `1-(1-a)^k`, so five cones at 20% would come out at
- * 67% rather than 100%, and an additive blend would brighten the radar instead
- * of shading it.  Coverage has to be accumulated somewhere that is not the
- * framebuffer.  So `sightlayer` rasterises the cones exactly as it does for the
- * 2D canvas, and the result arrives here as a texture -- same selection, same
- * gates, same colours, same arithmetic, one implementation.
+ * agree with the minimap instead of merely resembling it.  The flat wash this
+ * layer is built on -- one cone and five overlapping ones reading identically
+ * -- cannot be had from k separate transparent meshes: fixed-function alpha
+ * blending composites them against each other, so at `SIGHT_ALPHA`'s quarter
+ * two overlapping cones would come out at 43.75% and three at 57.8% instead of
+ * the flat quarter a side's wash is, and an additive blend would brighten the
+ * radar instead of shading it -- which is the opposite of what a wash is for,
+ * and is exactly why `Tracers` above *may* blend additively where this may not:
+ * a tracer is a light, and a wash is a shadow.  The union has to be accumulated
+ * somewhere that is not the framebuffer.
+ * So `sightlayer` rasterises the cones exactly as it does for the 2D canvas,
+ * and the result arrives here as a texture -- same selection, same gates, same
+ * colours, same arithmetic, one implementation.
  *
  * What is *not* the same is edge fidelity: the minimap rasterises in screen
  * space and stays crisp at any zoom, where this is a fixed `SIGHT_RASTER` grid
@@ -628,8 +885,9 @@ function SightOverlay({
       new THREE.MeshBasicMaterial({
         map: texture,
         transparent: true,
-        // The alpha is in the texture, one cone at a time. A material opacity
-        // here would scale the whole wash and break the `k/N` it encodes.
+        // The alpha is in the texture, put there once by `paintCones`. A
+        // material opacity here would be a second place the wash's strength
+        // lived, and the two canvases would drift the day one of them moved.
         opacity: 1,
         side: THREE.DoubleSide,
         depthWrite: false,

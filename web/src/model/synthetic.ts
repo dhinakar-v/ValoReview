@@ -38,8 +38,11 @@ import type { Snapshot } from "./state";
 export const SIMULATED_NOTE =
   "Health, armour, credits, the weapon held, ability charges and which side " +
   "attacked are not in a .vrf and are not decoded: these are simulated from " +
-  "the real kills, rounds, ability casts and side swap. Positions, deaths, " +
-  "rounds and ability casts are read.";
+  "the real kills, rounds, ability casts and side swap. A .vrf holds no shot " +
+  "either, so a tracer and its gunfire are drawn between two decoded positions " +
+  "rather than along a decoded path, and the bullet's flight is an animation at " +
+  "no measured speed, begun half a second before the kill it ends at. Positions, " +
+  "deaths, rounds and ability casts are read.";
 
 /** The short form, for a chip that has no room for the sentence. */
 export const SIMULATED_LABEL = "SIMULATED";

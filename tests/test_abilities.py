@@ -509,7 +509,9 @@ class TestNamingKeepsEveryOtherField(unittest.TestCase):
             spawns=2,
             kinds=("Ability", "GameObject"),
             pawns=(),
-            placements=(abilities.Placement(2, "GameObject", "Smoke", 1.0, 2.0, 3.0),),
+            placements=(
+                abilities.Placement(1200, 2, "GameObject", "Smoke", 1.0, 2.0, 3.0),
+            ),
         )
         replay = Replay(players=[Player(actor_id=7, codename="Wraith")])
         replay.ability_casts = [before]

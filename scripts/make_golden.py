@@ -290,12 +290,19 @@ def _ability_tracks() -> dict[int, Track]:
 
 def _spawns() -> list[abilities.AbilitySpawn]:
     """
-    Four ability actors: a drone that moves, and one smoke thrown across a map.
+    Five ability actors: a drone that moves, and one smoke thrown across a map.
 
     The smoke is the case the spawn transform was measured for.  Its
     `Ability_` actor opens at the caster's own feet and its `GameObject_` opens
     where the smoke came to rest, thousands of units away, so which of the two
     a marker uses is a decision -- and `AbilityCast.landed` is where it is made.
+
+    It also carries a `Projectile_`, which is the throw itself: that channel
+    opens at the caster and the `GameObject_` opens 900 ms later where the
+    smoke landed, so `AbilityCast.flights` has exactly one pair to find and
+    both languages have a flight to agree about.  The 900 ms is inside the
+    measured band -- the library's median is 822 ms -- and the pairing is
+    one-to-one, which is the only shape `flights` accepts.
     """
     raw = [
         (
@@ -326,12 +333,21 @@ def _spawns() -> list[abilities.AbilitySpawn]:
             (100.0, 100.0, 30.0),
         ),
         (
+            912,
+            (
+                "/Game/Characters/Wraith/S0/Ability_4/Projectile_Wraith_4_Smoke"
+                ".Default__Projectile_Wraith_4_Smoke_C"
+            ),
+            52_000,
+            (120.0, 130.0, 40.0),
+        ),
+        (
             911,
             (
                 "/Game/Characters/Wraith/S0/Ability_4/GameObject_Wraith_4_Smoke"
                 ".Default__GameObject_Wraith_4_Smoke_C"
             ),
-            52_100,
+            52_900,
             (4200.0, -1800.0, 45.0),
         ),
     ]

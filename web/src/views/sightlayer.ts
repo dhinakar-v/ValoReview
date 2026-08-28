@@ -18,18 +18,23 @@
  * canvas keeps its own `state.layers.sight` check and calls this with the
  * answer.
  *
- * Overlap is the message, so overlap is the opacity
- * -------------------------------------------------
- * This layer exists to say *which parts of the map nobody can see*, which is a
- * question about how many cones cover a point rather than about any one of
- * them.  A fixed per-cone alpha cannot answer it: ordinary source-over
- * compositing stacks k cones to `1-(1-a)^k`, which saturates, so three overlaps
- * and five overlaps converge on the same wash.
+ * The wash is flat, and overlap says nothing
+ * ------------------------------------------
+ * A side's cones are unioned into one shape and that shape is painted at
+ * `SIGHT_ALPHA`.  One cone and five overlapping cones read identically, so what
+ * the layer states is simply *where that side can see* -- a silhouette of
+ * vision, not a count of it.
  *
- * So the alpha counts.  Each cone is `1/N` and k of them read as exactly `k/N`
- * -- a crisp one-step jump wherever one cone's edge crosses another's interior.
- * See `coneAlpha` for what N is, and `paintCones` for how that arithmetic is
- * made exact.
+ * It used to weigh the count: each cone took `1/N` of its side's ink and the
+ * overlaps accumulated additively, so k cones over a point read as exactly
+ * `k/N` and a full side covering one lane painted it solid.  That answered a
+ * second question -- which parts of the map nobody can see -- and it is gone
+ * along with `coneAlpha` and its floored denominator.  A flat wash asks the
+ * reader to judge nothing, and the overlap gradient it replaces was the reason
+ * a lone survivor's cone and a five-man stack's could not be compared by eye.
+ *
+ * The offscreen buffer survives the change and is still mandatory; see
+ * `paintCones` for why, because the reason is no longer the one it was.
  */
 
 import type { MapArt } from "../api/types";
@@ -63,17 +68,24 @@ const PLACED_KINDS = new Set(["GameObject", "Zone", "Patch"]);
 export const SIGHT_RASTER = 1024;
 
 /**
- * The smallest denominator, which is one full side.
+ * How much ink one side's whole wash gets.
  *
- * Without it the wash gets heavier as people die -- N is the number of cones
- * actually drawn, so two survivors would be 50% each and the last player alive
- * would paint a solid, fully opaque wedge over the radar, in exactly the moment
- * somebody is watching a clutch most closely.  Flooring at five keeps a full
- * side reading 20% each and reaching 100% where all five overlap, which is the
- * behaviour asked for, and leaves a lone survivor at 20% rather than blanking
- * the map.
+ * One value and not a function of anything: the count of cones, who is alive
+ * and how many overlap all stop mattering here.  Deliberately not exported --
+ * it is a drawing constant with one call site, and `paintCones` needs a 2D
+ * context that jsdom does not provide, so there is nothing that could pin it
+ * below the Playwright tier anyway.
+ *
+ * A quarter and not a half.  At 0.5 a full team's wash took the radar with it:
+ * the callouts, the ramps and the site outlines under the shape were all but
+ * gone, and this layer is a claim *about* the map that has to be read against
+ * it.  What the number has to buy is only that the shape is unmistakable, and
+ * a quarter does that over Riot's greys while leaving the map underneath
+ * legible.  The pixel suite measures it as a *changed* pixel rather than as a
+ * strong one, so its detector moved with this -- see `minimap.spec.ts` and
+ * `scene.spec.ts`.
  */
-export const SIGHT_MIN_DENOM = 5;
+const SIGHT_ALPHA = 0.25;
 
 /**
  * The order the side layers are composited in.
@@ -92,11 +104,6 @@ export interface DrawnCone {
   polygon: Array<[number, number]>;
 }
 
-/** How much ink one cone gets, given how many its side is drawing. */
-export function coneAlpha(count: number): number {
-  return 1 / Math.max(count, SIGHT_MIN_DENOM);
-}
-
 /**
  * The round smokes standing at this instant, as uv circles.
  *
@@ -106,11 +113,18 @@ export function coneAlpha(count: number): number {
  * made-up width standing for a made-up time is exactly the plausible wrong
  * answer this project refuses.
  *
- * `cast.t_ms` is when the ability was *cast*, and a thrown smoke lands about a
- * second later; the wire carries no time on a placement, so a smoke starts
- * blocking slightly early.  Expiry is computed here rather than in
- * `abilitiesAt`, which keeps a cast until the round ends on purpose and is
- * parity-tested in both languages.
+ * **Each smoke runs from its own arrival, not from the cast.**  This used to
+ * age every placement from `cast.t_ms`, with a note that the wire carried no
+ * time on a placement so a thrown smoke started blocking slightly early.  It
+ * does now, and "slightly" was worth measuring: across the reference library a
+ * thrown thing lands a median 831 ms after the projectile leaves the hand and
+ * a p95 of 2.3 s, so a smoke was blocking sight for up to two seconds before
+ * it existed -- and a cast that drops several smokes started all of them on
+ * the first one's clock.  `place.t_ms` is the instant that channel opened,
+ * which is when the smoke is actually there.
+ *
+ * Expiry is computed here rather than in `abilitiesAt`, which keeps a cast
+ * until the round ends on purpose and is parity-tested in both languages.
  */
 export function smokesAt(art: MapArt, snap: Snapshot): Occluder[] {
   const out: Occluder[] = [];
@@ -119,15 +133,15 @@ export function smokesAt(art: MapArt, snap: Snapshot): Occluder[] {
     if (radiusUu === null || life === null) {
       continue;
     }
-    const age = snap.t_ms - cast.t_ms;
-    if (age < 0 || age > life) {
-      continue;
-    }
     const radius = uvRadius(art.transform, radiusUu);
     // Every placement, not just `landed`: two smokes from one agent in one
     // round are a single `AbilityCast`, and `landed` names only the first.
     for (const place of cast.placements) {
       if (!PLACED_KINDS.has(place.kind)) {
+        continue;
+      }
+      const age = snap.t_ms - place.t_ms;
+      if (age < 0 || age > life) {
         continue;
       }
       const [u, v] = applyTransform(art.transform, place.x, place.y);
@@ -190,6 +204,61 @@ export function sightCones(args: {
     }
     out.push({ side: sideOf(model.replay, player.team, snap.t_ms), polygon });
   }
+
+  /*
+    A drone sees, and its cone is as decoded as a player's.
+
+    An ability pawn has a real track, and that track carries a yaw that really
+    turns -- measured on Owl Drones, it sweeps across a flight (187 to 192
+    degrees, 78 to 44, 266 to 325) rather than sitting at whatever it spawned
+    at. So this is the same claim about the same map as a player's cone, drawn
+    from the same `sight.cone` through the same `forwardUv`, and it belongs
+    under the same switch rather than under one of its own.
+
+    *Which* pawns is looked up rather than guessed from the kind: a Boom Bot
+    and a Blast Pack are pawns too and neither of them looks at anything, so it
+    is `mechanics.sees` -- Sova's Owl Drone and Tejo's Stealth Drone, and
+    nothing else until somebody argues for more.
+
+    It costs the wash nothing. `paintCones` unions a side's cones on a scratch
+    at full alpha and stamps the union once, so one cone and six read
+    identically; a drone adds coverage and cannot darken anything. Under the
+    old `1/N` weighting it would have diluted every player's cone by joining
+    the denominator, which is one more thing the flat wash bought.
+  */
+  const teamByActor = new Map<number, string>();
+  for (const player of model.replay.players) {
+    teamByActor.set(player.actor_id, player.team);
+  }
+  for (const cast of snap.roundCasts) {
+    if (cast.mechanics?.sees !== true || cast.player_actor_id === null) {
+      continue;
+    }
+    const team = teamByActor.get(cast.player_actor_id);
+    // Unattributable: two players share the agent, so there is no side to draw
+    // it as. The same refusal every other claim about a caster makes here.
+    if (team === undefined || !shown(team)) {
+      continue;
+    }
+    for (const actorId of cast.pawns) {
+      const here = snap.abilityPositions.get(actorId);
+      if (here === undefined) {
+        continue;
+      }
+      const polygon = cone(
+        silhouette,
+        applyTransform(art.transform, here.x, here.y),
+        forwardUv(art.transform, here.x, here.y, here.yaw, settings.probe_uu),
+        reach,
+        settings,
+        smokes,
+      );
+      if (polygon.length < 3) {
+        continue;
+      }
+      out.push({ side: sideOf(model.replay, team, snap.t_ms), polygon });
+    }
+  }
   return out;
 }
 
@@ -220,28 +289,38 @@ function scratchFor(
 }
 
 /**
- * Paint every cone onto `target`: one solid colour per side, `k/N` per overlap.
+ * Paint every cone onto `target`: one side's whole union at one flat alpha.
  *
- * Why this needs a scratch canvas and two composite modes
- * ------------------------------------------------------
- * `source-over` cannot produce `k/N`.  `lighter` can -- it is the compositing
- * spec's `plus-lighter`, premultiplied per-channel addition with
- * `alpha = min(1, src + dst)`, and `globalAlpha` applies to the source *before*
- * the operator -- so k fills at `1/N` accumulate to exactly `k/N`.  What it
- * must not do is add to the radar underneath, which would brighten the map
- * rather than shade it; hence an offscreen buffer and a plain blit at the end.
+ * Why this still needs a scratch canvas and two composite modes
+ * ------------------------------------------------------------
+ * The alpha is on the **blit**, not on the fills, and that is the whole reason
+ * the buffer survives a flat wash.  Filling each cone onto the target at
+ * `SIGHT_ALPHA` directly would composite them against each other -- at a
+ * quarter, two cones over a point would read 43.75% and three 57.8%, the
+ * saturating curve that the old `1/N` arithmetic was built to escape -- so the
+ * union has to be accumulated somewhere that is not the picture, and stamped
+ * once.
+ *
+ * The fills therefore go on at `globalAlpha = 1`, and on `lighter` rather than
+ * `source-over`: at full alpha the two agree over a cone's interior, but a
+ * `lighter` fill also saturates the antialiased seam where two of one side's
+ * polygons abut, where `source-over` leaves a visible rim down the join.  What
+ * `lighter` must never touch is the target itself -- it would add to Riot's
+ * radar and brighten the map rather than shade it.
  *
  * The colour is then made solid **structurally** rather than arithmetically.
- * The cones are filled in white, so the scratch holds nothing but a coverage
- * count in its alpha channel, and one `source-in` rectangle stamps the side's
- * colour through it (`Ar = Ad`, `Cr = C`).  Filling in the colour directly
- * would also work today -- the floored denominator means `k/N` can never exceed
- * 1 -- but it would fail *silently*, whitening the wash, the day somebody
- * changes the denominator.  This way there is no arithmetic left to get wrong.
+ * The cones are filled in white, so the scratch holds nothing but coverage in
+ * its alpha channel, and one `source-in` rectangle stamps the side's colour
+ * through it (`Ar = Ad`, `Cr = C`).
+ *
+ * `target.globalAlpha` is restored afterwards, and that is load-bearing rather
+ * than tidy: `MinimapCanvas` draws markers, trails and the spike onto this same
+ * context after the cones, and a leaked alpha would half-fade every one of them
+ * -- a whole canvas quietly washed out by a layer that had finished drawing.
  *
  * A requirement rather than a preference: **no stroke.**  An outline is a
- * second ink whose weight counts nothing, and it would draw a hard line through
- * the middle of the very gradient this layer is made of.
+ * second ink whose weight counts nothing, and it would cut a hard line around
+ * the very shape this layer is made of.
  */
 export function paintCones(
   target: CanvasRenderingContext2D,
@@ -285,7 +364,7 @@ export function paintCones(
     context.setTransform(size.scale, 0, 0, size.scale, 0, 0);
     context.clearRect(0, 0, size.width, size.height);
     context.globalCompositeOperation = "lighter";
-    context.globalAlpha = coneAlpha(group.length);
+    context.globalAlpha = 1;
     context.fillStyle = "#ffffff";
     for (const { polygon } of group) {
       context.beginPath();
@@ -309,6 +388,8 @@ export function paintCones(
     // than clearing and this frame's ATK bleeds into its DEF.
     context.globalCompositeOperation = "source-over";
 
+    target.globalAlpha = SIGHT_ALPHA;
     target.drawImage(context.canvas, 0, 0, size.width, size.height);
+    target.globalAlpha = 1;
   }
 }

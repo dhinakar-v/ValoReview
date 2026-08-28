@@ -103,8 +103,16 @@ const HIT_PX = 6;
 /** Kept equal to `.rail-tip`'s width in `app.css`, which is what it clamps. */
 const TIP_W = 244;
 
-/** Which switch draws which kind. One table, read by the canvas and the hover. */
-const LAYER_FOR: Record<Exclude<Kind, "first">, LayerKey> = {
+/*
+  Which switch draws which kind. One table, read by the canvas and the hover.
+
+  A kind absent from it is drawn unconditionally, which today is the round-start
+  marker: that mark is the round's own structure rather than an overlay on it,
+  the way the planted spike on the map is deliberately ungated.  Every kind that
+  *is* here has a row in `LayersMenu`'s `EVENT_LAYERS`, which `LayersMenu.test`
+  proves by parsing this table -- so a new switch belongs in both or neither.
+*/
+const LAYER_FOR: Partial<Record<Kind, LayerKey>> = {
   kill: "kills",
   ability: "casts",
   ultimate: "ultimates",
@@ -183,7 +191,7 @@ export function Transport({
   const pick = useCallback(
     (next: Round) => {
       usePlayback.setState({ roundNo: next.number });
-      seek(clock, next.start_ms);
+      seek(clock, next.action_start_ms);
     },
     [clock],
   );
@@ -245,9 +253,14 @@ export function Transport({
     reference rather than two expressions that happen to agree today.  This is
     the fix for Home and End: they were absolute seeks in a round-scoped
     transport, and now they simply are these.
+
+    `toStart` is the barrier drop and not `start_ms`, which is the same instant
+    the round strip and `[` / `]` land on.  The rail still spans from `start_ms`
+    and so does `setBounds`, so the buy phase remains reachable by dragging --
+    it is not where the transport puts you, only somewhere it lets you go.
   */
   const toStart = useCallback(
-    () => seek(clock, round?.start_ms ?? 0),
+    () => seek(clock, round?.action_start_ms ?? 0),
     [clock, round],
   );
   const toEnd = useCallback(
@@ -460,7 +473,13 @@ function Rail({
         // The first-blood duplicate is dropped: it is a second mark on a
         // millisecond that already has one, and the tag it carries is the
         // modal's own way of surfacing that moment in a filtered list.
-        (event) => event.kind !== "first" && layers[LAYER_FOR[event.kind]],
+        (event) => {
+          if (event.kind === "first") {
+            return false;
+          }
+          const key = LAYER_FOR[event.kind];
+          return key === undefined || layers[key];
+        },
       ),
     [layers, replay, round, weapons],
   );
@@ -519,6 +538,23 @@ function Rail({
           markHeight,
         );
       };
+
+      /*
+        The round's own beginning, drawn under everything else.
+
+        Full height like the spike, because it is sideless -- there is no lane
+        for an instant nobody caused.  `--text-muted` and not an event colour:
+        it has to be unreadable as a spike (gold, green, orange), as a side (red,
+        blue), as an unattributed mark (`--team-unknown`) and as the hover ring
+        (magenta), and grey is what is left once this mark is about the round
+        rather than about anybody in it.  First in the order, so anything landing
+        on the same millisecond keeps the pixel.
+      */
+      for (const event of shown) {
+        if (event.kind === "start") {
+          mark(event.tMs, colours.muted!, 0, RAIL_HEIGHT, MARK_W);
+        }
+      }
 
       // Densest first and rarest last, so a spike that lands on the same
       // millisecond as a cast is the one still visible.

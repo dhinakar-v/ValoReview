@@ -80,6 +80,8 @@
       "start_ms": 0,
       "end_ms": 40000,
       "duration_ms": 40000,
+      "buy_phase_ms": 45000,
+      "action_start_ms": 40000,
       "winner": "A",
       "reason": "wipe",
       "decided": true
@@ -90,6 +92,8 @@
       "start_ms": 40000,
       "end_ms": 80000,
       "duration_ms": 40000,
+      "buy_phase_ms": 30000,
+      "action_start_ms": 70000,
       "winner": "B",
       "reason": "explode",
       "decided": true
@@ -100,6 +104,8 @@
       "start_ms": 80000,
       "end_ms": 120000,
       "duration_ms": 40000,
+      "buy_phase_ms": 30000,
+      "action_start_ms": 110000,
       "winner": "A",
       "reason": "defuse",
       "decided": true
@@ -220,8 +226,35 @@
       "smoke_radius_uu": null,
       "smoke_duration_ms": null,
       "smoke_source": null,
+      "mechanics": {
+        "ability": "Owl Drone",
+        "keybind": "C",
+        "radius_uu": null,
+        "radius_source": null,
+        "detection_radius_uu": null,
+        "detection_radius_source": null,
+        "windup_ms": null,
+        "windup_source": null,
+        "activation_delay_ms": null,
+        "activation_delay_source": null,
+        "duration_ms": 7000.0,
+        "duration_source": "docs/Valorant Agent Ability Details.md (Sova), valorant.fandom.com/wiki/Sova -- flight uptime 7.0 s",
+        "cooldown_ms": null,
+        "cooldown_source": null,
+        "charges": 1.0,
+        "charges_source": "docs/Valorant Agent Ability Details.md (Sova), valorant.fandom.com/wiki/Sova -- max charges 1",
+        "deployable_hp": 100.0,
+        "deployable_hp_source": "docs/Valorant Agent Ability Details.md (Sova), valorant.fandom.com/wiki/Sova -- drone 100 HP",
+        "wall": null,
+        "wall_source": null,
+        "persists": false,
+        "destroyed_on_caster_death": false,
+        "sees": true,
+        "blocks_sight": false
+      },
       "placements": [
         {
+          "t_ms": 5900,
           "actor_id": 899,
           "kind": "Ability",
           "name": "Drone",
@@ -231,7 +264,9 @@
           "z": 90.0
         }
       ],
-      "landed": null
+      "landed": null,
+      "flights": [],
+      "walls": []
     },
     {
       "t_ms": 52000,
@@ -245,22 +280,50 @@
       "internal_name": "Smoke",
       "published_name": null,
       "icon_url": null,
-      "spawns": 2,
+      "spawns": 3,
       "kinds": [
         "Ability",
-        "GameObject"
+        "GameObject",
+        "Projectile"
       ],
       "pawns": [],
       "has_track": false,
       "travel_uu": null,
       "travel_note": "no position on wire",
       "range_uu": 410.0,
-      "range_source": "wiki.playvalorant.com/Dark_Cover: smoke radius 4.1 m",
+      "range_source": "valorant.fandom.com/wiki/Dark_Cover -- smoke radius 4.1 m",
       "smoke_radius_uu": 410.0,
       "smoke_duration_ms": 15000,
-      "smoke_source": "wiki.playvalorant.com/Dark_Cover: smoke radius 4.1 m; duration is a community figure and was NOT verified against a published source from this tree",
+      "smoke_source": "valorant.fandom.com/wiki/Dark_Cover -- smoke radius 4.1 m; docs/Valorant Agent Ability Details.md (Omen), valorant.fandom.com/wiki/Omen -- active duration 15.0 s",
+      "mechanics": {
+        "ability": "Dark Cover",
+        "keybind": "E",
+        "radius_uu": 410.0,
+        "radius_source": "valorant.fandom.com/wiki/Dark_Cover -- smoke radius 4.1 m",
+        "detection_radius_uu": null,
+        "detection_radius_source": null,
+        "windup_ms": null,
+        "windup_source": null,
+        "activation_delay_ms": null,
+        "activation_delay_source": null,
+        "duration_ms": 15000.0,
+        "duration_source": "docs/Valorant Agent Ability Details.md (Omen), valorant.fandom.com/wiki/Omen -- active duration 15.0 s",
+        "cooldown_ms": 40000.0,
+        "cooldown_source": "docs/Valorant Agent Ability Details.md (Omen), valorant.fandom.com/wiki/Omen -- cooldown 40 s",
+        "charges": 2.0,
+        "charges_source": "docs/Valorant Agent Ability Details.md (Omen), valorant.fandom.com/wiki/Omen -- max charges 2",
+        "deployable_hp": null,
+        "deployable_hp_source": null,
+        "wall": null,
+        "wall_source": null,
+        "persists": false,
+        "destroyed_on_caster_death": false,
+        "sees": false,
+        "blocks_sight": true
+      },
       "placements": [
         {
+          "t_ms": 52000,
           "actor_id": 910,
           "kind": "Ability",
           "name": "Smoke",
@@ -270,6 +333,17 @@
           "z": 30.0
         },
         {
+          "t_ms": 52000,
+          "actor_id": 912,
+          "kind": "Projectile",
+          "name": "Smoke",
+          "display": "Smoke",
+          "x": 120.0,
+          "y": 130.0,
+          "z": 40.0
+        },
+        {
+          "t_ms": 52900,
           "actor_id": 911,
           "kind": "GameObject",
           "name": "Smoke",
@@ -280,6 +354,7 @@
         }
       ],
       "landed": {
+        "t_ms": 52900,
         "actor_id": 911,
         "kind": "GameObject",
         "name": "Smoke",
@@ -287,11 +362,26 @@
         "x": 4200.0,
         "y": -1800.0,
         "z": 45.0
-      }
+      },
+      "flights": [
+        {
+          "start_ms": 52000,
+          "end_ms": 52900,
+          "duration_ms": 900,
+          "from_actor_id": 912,
+          "from_x": 120.0,
+          "from_y": 130.0,
+          "from_z": 40.0,
+          "to_actor_id": 911,
+          "to_x": 4200.0,
+          "to_y": -1800.0,
+          "to_z": 45.0
+        }
+      ],
+      "walls": []
     }
   ],
   "event_times": [
-    0,
     5000,
     5900,
     12500,

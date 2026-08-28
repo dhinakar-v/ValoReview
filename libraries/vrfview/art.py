@@ -65,12 +65,43 @@ def fetch_hint() -> str:
     return envfile.get(FETCH_HINT_ENV) or CHECKOUT_FETCH_HINT
 
 
-# Keybind -> the slot name valorant-api.com publishes.  Only the two that are
-# unambiguous appear; see AgentArt.ability for why Q and E cannot.
-SLOT_TO_MANIFEST = {"X": "Ultimate", "C": "Grenade"}
+# The internal slot -> the slot name valorant-api.com publishes.
+#
+# **Only X, and that is a correction.**  `C: "Grenade"` was here too, on the
+# reasoning that `Grenade` is C on every agent, and it is measurably not: over
+# the sixteen agents `abilityfacts` names, the internal C slot is the agent's
+# `Grenade` for eight of them and something else for the other eight.  Riot's
+# `Grenade` for Deadlock is Barrier Mesh where the internal C slot is GravNet;
+# for Brimstone it is Stim Beacon where internal C is Sky Smoke; for Omen it is
+# Shrouded Step where internal C is Dark Cover.  So this join was drawing the
+# *wrong ability's icon* on half the C-slot casts on the map, and silently --
+# one white glyph at fourteen pixels looks much like another.
+#
+# X is exact on all sixteen and stays.  What replaces the C half is
+# `ability_named` below, which joins on Riot's own published ability name.
+#
+# `Passive` is here for a different reason and is not a keybind join at all:
+# it is Riot's own internal slot token matched to Riot's own manifest slot key,
+# the same word on both sides, and the archetype path states it outright --
+# `Ability_Wushu_Passive_Glide`.  Two agents in the reference library state one
+# (Jett 66 spawns, Astra 4) and both publish a `Passive` entry with an icon
+# file, so it is exact for 2 of 2.  Without it the canvas printed the *word*
+# `Passive` beside a mark, which is neither a keybind nor an ability name.
+SLOT_TO_MANIFEST = {"X": "Ultimate", "Passive": "Passive"}
 
 # PNG stores width and height as big-endian uint32 at these offsets: an 8-byte
 # signature, then the IHDR chunk's 4-byte length and 4-byte type, then the two.
+
+
+def _fold(text: str) -> str:
+    """
+    A published name reduced to what two catalogues can agree on.
+
+    Case and punctuation only.  Riot writes `Not Dead Yet` and `Pick-me-up`
+    and `Hunter's Fury`, and a join that tripped over an apostrophe would fail
+    for a reason that has nothing to do with which ability it is.
+    """
+    return "".join(character for character in text.lower() if character.isalnum())
 
 
 @dataclass(frozen=True)
@@ -192,32 +223,68 @@ class AgentArt:
 
     def ability(self, key: str) -> AbilityArt | None:
         """
-        The published ability for a keybind read off a replay, where one joins.
+        The published ability for an internal slot, where one joins by slot.
 
-        Two of the four join and two do not, and this is the whole reason the
-        method exists rather than a dict lookup at the call site.
-        `Ultimate` is X and `Grenade` is C on every agent, so those are exact.
-        `Ability1` and `Ability2` are Q and E **in an order that varies by
-        agent** (docs/valorant-assets.md), so there is no way to tell which is
-        which, and returning either would be a coin flip wearing a display
-        name.  Q and E therefore resolve to nothing here, and the caller shows
-        the internal name it read out of the replication stream instead -- a
-        fact from the file, which needs no lookup to be true.
+        **Only X does, and the C half of this was wrong.**  It used to answer
+        for C as well, on the reasoning that Riot's `Grenade` is the C keybind
+        on every agent.  Measured against `abilityfacts`, which names the real
+        ability in each internal slot for sixteen agents, that is true for
+        eight of them and false for the other eight -- so this method was
+        handing back Stim Beacon's picture for Brimstone's Sky Smoke and
+        Shrouded Step's for Omen's Dark Cover, on the map, every round.
 
-        **This was re-examined when `abilityfacts` was written, and it stands.**
-        The obvious repair is a sourced table naming each agent's Q and E, and
-        two measurements say it would be a guess wearing a citation.  The
-        archetype path's letters are Riot's *internal* ones and do not track
-        the keybinds the game currently displays: the decode calls Sova's Recon
-        Bolt `Q` where the game binds it to E, and Brimstone's Stim Beacon `E`
-        where the game binds it to C.  And matching the decoded internal names
-        against these display names agrees on 3 of the 40 (agent, slot) pairs
-        the reference library produces -- one of which is wrong.  So
-        `abilityfacts` is keyed on (agent, internal name) and carries no slot
-        map, and this method goes on refusing.
+        Two separate things went wrong at once and both are worth keeping
+        straight.  The archetype path's letters are Riot's *internal* ones and
+        do not track the keybinds the game displays -- the decode calls Sova's
+        Recon Bolt `Q` where the game binds it to E.  And Riot's own
+        `Ability1`/`Ability2`/`Grenade` names do not track the keybinds either:
+        Phoenix's `Ability1` is Hot Hands, which the game binds to E, and his
+        `Ability2` is Curveball, bound to Q.  So the two namespaces are each
+        shuffled against the keybind, and shuffled differently, which is why no
+        arrangement of letters joins them.
+
+        `ability_named` is what joins them, and it does not use a letter at all.
         """
         slot = SLOT_TO_MANIFEST.get(key)
         return self.abilities.get(slot) if slot else None
+
+    def ability_named(self, published: str) -> AbilityArt | None:
+        """
+        The published ability with this name, joining on Riot's own text.
+
+        This is what retires the refusal the method above used to make for Q
+        and E, and it retires it with a measurement rather than an argument.
+        Every letter-based join fails because both namespaces are shuffled
+        against the keybind and against each other -- but the *name* is not a
+        letter.  `abilityfacts` names the real ability sitting in each internal
+        slot, this manifest names every ability Riot publishes for that agent,
+        and matching one to the other is an identity rather than a mapping.
+
+        Measured over all 68 entries in `abilityfacts`: **68 match exactly one
+        published ability each, none is ambiguous and none is missed.**  So an
+        agent in that table gets the right picture for all four slots, Q and E
+        included, and `tests/test_art.py` re-runs the census.
+
+        The comparison folds case and punctuation and accepts one arm of a
+        `/`-separated pair, because Riot publishes two of these as one entry --
+        `Nebula / Dissipate` and `Astral Form / Cosmic Divide` are a single
+        ability with a toggle and a single icon.
+
+        Returns None where nothing matches, which is the answer for the
+        thirteen agents `abilityfacts` does not name and for anything released
+        after it was written.  The caller then falls back to the slot the path
+        stated, which needs no lookup to be true.
+        """
+        want = _fold(published)
+        if not want:
+            return None
+        for art in self.abilities.values():
+            shown = art.name
+            if _fold(shown) == want:
+                return art
+            if any(_fold(part) == want for part in shown.split("/")):
+                return art
+        return None
 
 
 @dataclass(frozen=True)

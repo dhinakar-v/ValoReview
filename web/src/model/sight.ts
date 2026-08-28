@@ -137,12 +137,27 @@ export function uvRadius(transform: Transform, distanceUu: number): number {
 }
 
 /**
- * One ray, to the first blocked cell or to `radius`, whichever comes first.
+ * One ray, to the first thing that blocks it or to `radius`, whichever is
+ * nearer.  Exported so the parity test can march the directions Python marched.
  *
- * Exported so the parity test can march the directions Python marched.  Every
- * step of this is plain IEEE arithmetic -- multiply, add, floor, compare -- so
- * it is comparable across the two languages to the bit, which the directions
- * themselves are not.
+ * **The stopping distance is exact, not a whole number of cells.**  This used
+ * to step a fixed `1/size` at a time and return `(i - 1) * cell`, so every ray
+ * ended on a multiple of one cell whatever it had actually hit.  Two
+ * neighbouring rays glancing a near-parallel wall then stopped one whole cell
+ * apart, and the cone's rim came out as a sawtooth whose teeth were spaced at
+ * `ray_step_degrees` and one cell deep -- a drawing artefact of the sampling,
+ * not a fact about the map.
+ *
+ * So a wall is found by grid traversal (`wallEntry`), which visits cell
+ * boundaries in order and returns the distance to the face of the first
+ * blocked cell, and a smoke by solving the ray-circle quadratic
+ * (`smokeEntry`).  Both answers are the real intersection, so the rim traces
+ * the silhouette at the mask's own resolution instead of at the sampling's.
+ *
+ * Everything here is multiply, divide, add, compare, `floor` and `sqrt`, all
+ * of which IEEE-754 specifies exactly, so this agrees with Python by
+ * construction the way the old stepping did.  No `hypot` -- approximate by
+ * specification in both languages.
  */
 export function march(
   mask: SightMask,
@@ -154,40 +169,126 @@ export function march(
 ): [number, number] {
   const [u0, v0] = origin;
   const [du, dv] = direction;
-  const cell = 1 / mask.size;
-  const steps = Math.max(1, Math.trunc(radius / cell));
-  for (let i = 1; i <= steps; i += 1) {
-    const travelled = i * cell;
-    const u = u0 + du * travelled;
-    const v = v0 + dv * travelled;
-    if (i > seedCells && (blocked(mask, u, v) || inside(occluders, u, v))) {
-      // Stop on the last open cell, not inside the wall, so the polygon traces
-      // the silhouette rather than overlapping it.
-      const back = (i - 1) * cell;
-      return [u0 + du * back, v0 + dv * back];
-    }
-  }
-  return [u0 + du * radius, v0 + dv * radius];
+  const seedT = seedCells / mask.size;
+  const limit = smokeEntry(occluders, origin, direction, radius, seedT);
+  const travelled = wallEntry(mask, origin, direction, limit, seedT);
+  return [u0 + du * travelled, v0 + dv * travelled];
 }
 
 /**
- * Whether this step has walked into a smoke.
+ * How far the ray travels before it enters a blocked cell, capped at `limit`.
  *
- * Squared distance, and that is about parity rather than about speed. `hypot`
- * is approximate by specification in both languages and `sqrt` would be a
- * needless rounding besides; multiply, subtract and compare are exactly
- * specified in IEEE-754, so this agrees with Python by construction and
- * `tests/golden/cone.json` compares the two to the bit.
+ * Amanatides-Woo traversal: hold the distance to the next boundary on each
+ * axis, always cross the nearer one, and the cell index steps by one.  The
+ * cell is then an *integer* pair rather than a `Math.floor` of a sampled
+ * point, which is what makes landing exactly on a boundary well defined
+ * instead of a rounding question -- and the returned distance is the boundary
+ * itself, so the polygon meets the wall's face.
+ *
+ * `seedT` is `seed_cells` cells' worth of distance, ignored the way the
+ * stepped version ignored its first few samples: a player against a wall or in
+ * a doorway sits on a transparent cell often enough that refusing there would
+ * blink the cone off exactly when it matters.  As a distance rather than a
+ * count of crossings, because a diagonal ray crosses two boundaries per cell
+ * and the seed must not shrink with the angle.
  */
-function inside(occluders: readonly Occluder[], u: number, v: number): boolean {
-  for (const smoke of occluders) {
-    const du = u - smoke.u;
-    const dv = v - smoke.v;
-    if (du * du + dv * dv <= smoke.radius * smoke.radius) {
-      return true;
+function wallEntry(
+  mask: SightMask,
+  origin: [number, number],
+  direction: [number, number],
+  limit: number,
+  seedT: number,
+): number {
+  const [u0, v0] = origin;
+  const [du, dv] = direction;
+  const size = mask.size;
+  const cell = 1 / size;
+
+  let col = Math.floor(u0 * size);
+  let row = Math.floor(v0 * size);
+  const stepCol = du > 0 ? 1 : du < 0 ? -1 : 0;
+  const stepRow = dv > 0 ? 1 : dv < 0 ? -1 : 0;
+  if (stepCol === 0 && stepRow === 0) {
+    return limit;
+  }
+
+  const nextU = stepCol > 0 ? (col + 1) * cell : col * cell;
+  const nextV = stepRow > 0 ? (row + 1) * cell : row * cell;
+  let tU = stepCol === 0 ? Infinity : (nextU - u0) / du;
+  let tV = stepRow === 0 ? Infinity : (nextV - v0) / dv;
+  const deltaU = stepCol === 0 ? Infinity : cell / Math.abs(du);
+  const deltaV = stepRow === 0 ? Infinity : cell / Math.abs(dv);
+
+  for (;;) {
+    let travelled: number;
+    if (tU < tV) {
+      travelled = tU;
+      col += stepCol;
+      tU += deltaU;
+    } else {
+      travelled = tV;
+      row += stepRow;
+      tV += deltaV;
+    }
+    if (travelled >= limit) {
+      return limit;
+    }
+    if (travelled <= seedT) {
+      continue;
+    }
+    if (!(col >= 0 && col < size && row >= 0 && row < size)) {
+      return travelled;
+    }
+    if (!mask.cells[row * size + col]) {
+      return travelled;
     }
   }
-  return false;
+}
+
+/**
+ * How far the ray travels before it enters a smoke, capped at `radius`.
+ *
+ * The ray-circle quadratic, with `a` taken as 1 because the directions are
+ * `cos`/`sin` of one angle and are unit by construction -- and taken as 1 in
+ * both languages, which is what the parity fixture checks.  A ray that starts
+ * *inside* a smoke has a negative entry root and is stopped at `seedT`, which
+ * is what the stepped version did by walking into the circle on its first
+ * unseeded sample.
+ *
+ * `sqrt` is exactly specified by IEEE-754, so this is as portable as the
+ * squared-distance test it replaces; what it buys is a smoke rim that is a
+ * circle rather than a staircase at the sampling interval.
+ */
+function smokeEntry(
+  occluders: readonly Occluder[],
+  origin: [number, number],
+  direction: [number, number],
+  radius: number,
+  seedT: number,
+): number {
+  const [u0, v0] = origin;
+  const [du, dv] = direction;
+  let nearest = radius;
+  for (const smoke of occluders) {
+    const fu = u0 - smoke.u;
+    const fv = v0 - smoke.v;
+    const halfB = fu * du + fv * dv;
+    const c = fu * fu + fv * fv - smoke.radius * smoke.radius;
+    const discriminant = halfB * halfB - c;
+    if (discriminant < 0) {
+      continue;
+    }
+    const root = Math.sqrt(discriminant);
+    if (-halfB + root < seedT) {
+      continue;
+    }
+    const entry = -halfB - root;
+    const travelled = entry > seedT ? entry : seedT;
+    if (travelled < nearest) {
+      nearest = travelled;
+    }
+  }
+  return nearest;
 }
 
 /**

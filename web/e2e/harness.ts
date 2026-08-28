@@ -151,7 +151,7 @@ export async function waitForArt(page: Page): Promise<void> {
 export interface Moment {
   /** The round to pick first, 1-based as `infer` numbers them. */
   roundNo: number;
-  /** How many times `>>` reaches the moment from that round's start. */
+  /** How many times `>>` reaches the moment from where picking the round lands. */
   presses: number;
   tMs: number;
 }
@@ -160,21 +160,50 @@ export interface Moment {
  * An event time, as the two presses that reach it.
  *
  * Which round it falls in, and how far into that round's own event list -- the
- * list `>>` walks once a chip has been pressed. An event sitting exactly on a
- * round's first millisecond needs no presses at all, because picking the chip
- * already seeks there.
+ * list `>>` walks once a chip has been pressed. An event sitting exactly where
+ * the chip lands needs no presses at all, because picking it already seeks
+ * there.
+ *
+ * That landing place is `action_start_ms`, the barrier drop, and not `start_ms`:
+ * a chip seeks past the buy phase, so the buy phase's own start is behind the
+ * playhead and `>>` never offers it.  The two have to agree -- this filter and
+ * where `Transport.pick` seeks -- or every count here is one out.
  */
 export function momentAt(model: ReplayModel, tMs: number): Moment {
   const replay = model.replay;
+  const round = roundHolding(model, tMs);
+  if (tMs < round.action_start_ms) {
+    /*
+      Inside the buy phase, and therefore behind the playhead the moment a chip
+      is pressed.  `>>` only walks forward, so no number of presses reaches it.
+
+      This is reachable by hand -- the rail spans the whole round and scrubbing
+      back into the buy phase works -- so it is a limit of this helper and not
+      of the interface.  It throws rather than returning a count that would land
+      somewhere else, because a spec that then photographed the wrong instant
+      would fail with a pixel count nobody could trace back to here.
+    */
+    throw new Error(
+      `${tMs}ms is inside round ${round.number}'s buy phase (barrier drops at ` +
+        `${round.action_start_ms}ms); pressing forward cannot reach it`,
+    );
+  }
+  const inside = replay.event_times.filter(
+    (t) => t > round.action_start_ms && t < round.end_ms,
+  );
+  const at = inside.indexOf(tMs);
+  return { roundNo: round.number, presses: at < 0 ? 0 : at + 1, tMs };
+}
+
+/** The round an instant falls in, or the first where it falls before them all. */
+function roundHolding(model: ReplayModel, tMs: number) {
   const round =
-    replay.rounds.find((entry) => tMs >= entry.start_ms && tMs < entry.end_ms) ??
-    replay.rounds[0];
+    model.replay.rounds.find((entry) => tMs >= entry.start_ms && tMs < entry.end_ms) ??
+    model.replay.rounds[0];
   if (round === undefined) {
     throw new Error("the capture records no rounds");
   }
-  const inside = replay.event_times.filter((t) => t > round.start_ms && t < round.end_ms);
-  const at = inside.indexOf(tMs);
-  return { roundNo: round.number, presses: at < 0 ? 0 : at + 1, tMs };
+  return round;
 }
 
 export function firstCrowdedEvent(model: ReplayModel, wanted = 8, after = 0): Moment {
@@ -182,6 +211,12 @@ export function firstCrowdedEvent(model: ReplayModel, wanted = 8, after = 0): Mo
   const from = after * replay.length_ms;
   for (const tMs of replay.event_times) {
     if (tMs < from) {
+      continue;
+    }
+    // Skipped rather than counted: a crowded instant inside a buy phase is a
+    // real one -- everybody is alive and nobody has moved -- and simply not one
+    // the transport lands on, so pick the next.
+    if (tMs < roundHolding(model, tMs).action_start_ms) {
       continue;
     }
     const snap = stateAt(model, tMs);
@@ -195,7 +230,7 @@ export function firstCrowdedEvent(model: ReplayModel, wanted = 8, after = 0): Mo
   throw new Error(`no event time has ${wanted} players on the map`);
 }
 
-/** Pick a round by its chip, which seeks to that round's first millisecond. */
+/** Pick a round by its chip, which seeks to that round's barrier drop. */
 export async function pickRound(page: Page, roundNo: number): Promise<void> {
   await page.locator(".round-chip").nth(roundNo - 1).click();
 }

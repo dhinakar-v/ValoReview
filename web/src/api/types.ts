@@ -178,9 +178,20 @@ export interface Loadout {
 export interface Round {
   number: number;
   index: number;
+  /** When `roundStarted` fired, which is the start of the buy phase. */
   start_ms: number;
   end_ms: number;
   duration_ms: number;
+  buy_phase_ms: number;
+  /**
+   * When the barrier drops and the round becomes playable.
+   *
+   * Looked up rather than read -- nothing in a capture states a buy phase --
+   * and computed once in `vrfview.roundrules` so the browser does no arithmetic
+   * of its own.  Clamped to `end_ms`, where it means the round was shorter than
+   * its own buy phase and there is no such instant in it.
+   */
+  action_start_ms: number;
   winner: string;
   reason: string;
   decided: boolean;
@@ -220,6 +231,16 @@ export interface SpikeEvent {
 }
 
 export interface Placement {
+  /**
+   * When this actor's channel opened.
+   *
+   * Never moving is what makes one instant worth carrying: anything that moves
+   * has a track and its position is a question about now, where this has one
+   * position for ever. So the only thing left to know about it in time is when
+   * it arrived -- which is how long the throw that delivered it took, and how
+   * long it has been standing since. Both were decoded.
+   */
+  t_ms: number;
   actor_id: number;
   kind: string;
   name: string;
@@ -296,6 +317,156 @@ export interface AbilityCast {
   smoke_radius_uu: number | null;
   smoke_duration_ms: number | null;
   smoke_source: string | null;
+  /**
+   * Everything published about this ability, or null where nothing is.
+   *
+   * Looked up in `vrfview.abilityfacts` on (codename, slot), so every figure
+   * here is *simulated* in exactly the way `range_uu` is -- community research
+   * about a game that rebalances every few weeks. Each figure carries its own
+   * source, because one citation covering ten numbers stands behind numbers it
+   * never backed.
+   */
+  mechanics: AbilityMechanics | null;
+  /**
+   * Every throw in this cast whose two ends are both decoded.
+   *
+   * Empty for most casts, and that is the answer rather than a gap: a cast is
+   * one agent, one slot, one round, so pairing k throw origins to j landings is
+   * a guess as soon as the two disagree, and most casts disagree. See
+   * `abilities.AbilityCast.flights` for all four refusals and the measurement
+   * behind each.
+   */
+  flights: Flight[];
+  /**
+   * Every wall this cast built out of its own segment actors.
+   *
+   * Empty for all but Sage's Barrier Orb, which is the one ability in the
+   * library that opens a channel per segment -- so its line, its length and
+   * its orientation are decoded rather than looked up, and it is drawn solid
+   * where a facing-derived wall is dashed.
+   */
+  walls: Wall[];
+}
+
+/** A wall, as the two ends of the line its own segment actors describe. */
+export interface Wall {
+  t_ms: number;
+  segments: number;
+  /** Unreal units, the same frame as a Position. */
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  length_uu: number;
+}
+
+/**
+ * One throw: two decoded coordinates and the decoded interval between them.
+ *
+ * A `Projectile_` channel opens where the caster is standing and a placed
+ * channel opens where the thing came to rest, and `Placement.t_ms` says when
+ * each of them did. So a throw is entirely decoded except for one thing: the
+ * path. Only `Pawn_` actors emit movement, so nothing states where a thrown
+ * thing was halfway, and **no consumer may draw a curve**. A straight dashed
+ * line between two decoded points is the same claim a kill tracer makes.
+ */
+export interface Flight {
+  start_ms: number;
+  end_ms: number;
+  /** Always positive: a non-positive span is refused rather than built. */
+  duration_ms: number;
+  from_actor_id: number;
+  from_x: number;
+  from_y: number;
+  from_z: number;
+  to_actor_id: number;
+  to_x: number;
+  to_y: number;
+  to_z: number;
+}
+
+/**
+ * What is published about one ability, and where each figure came from.
+ *
+ * None of this is read from the capture and none of it is measured. Every
+ * figure is optional and a null must be drawn as **nothing** -- there is no
+ * default radius and no default duration, because a ring at a made-up size is
+ * worse than no ring: the absent one is visibly absent.
+ */
+export interface AbilityMechanics {
+  /** Riot's published name, e.g. "Recon Bolt". */
+  ability: string;
+  /**
+   * The key the *game* binds, which is **not** `AbilityCast.slot`.
+   *
+   * The slot is Riot's internal letter, read from the archetype path, and the
+   * two disagree for six of the sixteen agents in the table -- Sova's slot `C`
+   * is the Shock Bolt the game binds to Q. Both travel; nothing may join them
+   * by letter.
+   */
+  keybind: string;
+  radius_uu: number | null;
+  radius_source: string | null;
+  /**
+   * A trigger range rather than an area of effect, and drawn as its own ring
+   * for that reason: Chamber's Trademark publishes both a 10 m search and a
+   * 6 m slow, and they are different claims about different things.
+   */
+  detection_radius_uu: number | null;
+  detection_radius_source: string | null;
+  windup_ms: number | null;
+  windup_source: string | null;
+  activation_delay_ms: number | null;
+  activation_delay_source: string | null;
+  duration_ms: number | null;
+  duration_source: string | null;
+  cooldown_ms: number | null;
+  cooldown_source: string | null;
+  charges: number | null;
+  charges_source: string | null;
+  deployable_hp: number | null;
+  deployable_hp_source: string | null;
+  /**
+   * Whether this ability's own placements are a wall: `"segments"`, or null
+   * for everything else.
+   *
+   * Sage's Barrier Orb is the only one: it opens a channel per segment and the
+   * whole line is decoded, so it is drawn solid like every other stroke on
+   * this canvas around something that was read out of the capture.
+   *
+   * There were two other values, for a wall drawn along the caster's facing at
+   * a looked-up length, and the premise was wrong twice over. Phoenix's Blaze
+   * and Harbor's High Tide follow a steerable missile's path and rise along
+   * it, so each cast is a polyline of a different length and there is no
+   * figure to look up; and Vyse's Shear is placed on vertical terrain, so its
+   * axis belongs to the wall she was looking at rather than to the way her
+   * body faced. The yaw was a weak predictor regardless -- on the one wall
+   * whose axis is decoded it is parallel 66.4% of the time and perpendicular
+   * 28.8%, because a player can rotate that one while placing it.
+   */
+  wall: string | null;
+  wall_source: string | null;
+  /**
+   * Whether the thing stands until destroyed, triggered or the round ends.
+   *
+   * A different question from `duration_ms`, which is how long its *effect*
+   * lasts. A Trademark publishes a 4-second slow and waits on the floor all
+   * round; a Turret publishes no duration and stands until it is shot. An
+   * ability with neither is a moment -- a flash pops, a dart detonates.
+   */
+  persists: boolean;
+  /**
+   * Whether the thing goes when the player who left it there dies.
+   *
+   * Narrower than `persists` and meaningful only beside it: Chamber's
+   * Trademark and Rendezvous and Cypher's Trapwire and Spycam are removed the
+   * moment their owner dies, and Killjoy's utility is not. A published rule of
+   * the game, joined to a death the capture states outright.
+   */
+  destroyed_on_caster_death: boolean;
+  /** Whether the ability looks at the map: a drone, a camera. */
+  sees: boolean;
+  blocks_sight: boolean;
 }
 
 export interface SightMaskDoc {

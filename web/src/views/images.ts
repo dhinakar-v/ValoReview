@@ -16,35 +16,48 @@ import { useEffect, useState } from "react";
  * A URL that fails is simply absent from the map, which is the same state as
  * one that has not arrived yet -- and both are states every caller already has
  * to draw, because a fresh checkout has no `assets/` at all.
+ *
+ * **The list is deduplicated and each picture lands on its own**, and both
+ * halves of that were a real fault rather than an optimisation.  Callers hand
+ * this a URL *per drawn thing*, not per file: `MinimapCanvas` passes one entry
+ * per ability cast, which on a full match is over six thousand entries naming
+ * about forty distinct icons.  Without the dedupe that was six thousand
+ * `Image` objects and six thousand callbacks for forty files; and because the
+ * map was published only once the last of them had settled, a browser holding
+ * six connections open meant the canvas drew *no* icons at all for as long as
+ * that queue took -- so every ability marker fell back to its blank form for a
+ * picture that had been on disk and correct all along.  One slow or hanging
+ * request was enough to keep every other icon off the map indefinitely.
+ *
+ * So each image is published as it arrives.  That is a handful of renders for
+ * a handful of files rather than one render after everything, and it is also
+ * what makes a partial `assets/` behave the way the note above claims: the
+ * pictures that exist are drawn, and the ones that do not are simply absent.
  */
 export function useImages(urls: Array<string | null | undefined>): Map<string, HTMLImageElement> {
-  const key = urls.filter(Boolean).sort().join("\n");
+  // Unique, so the key names the files rather than the things being drawn with
+  // them, and sorted so it is stable however the caller ordered them.
+  const key = [...new Set(urls.filter((url): url is string => Boolean(url)))].sort().join("\n");
   const [loaded, setLoaded] = useState<Map<string, HTMLImageElement>>(new Map());
 
   useEffect(() => {
     let live = true;
     const wanted = key ? key.split("\n") : [];
-    if (wanted.length === 0) {
-      setLoaded(new Map());
-      return () => {
-        live = false;
-      };
-    }
-    const found = new Map<string, HTMLImageElement>();
-    let outstanding = wanted.length;
-    const done = () => {
-      outstanding -= 1;
-      if (outstanding === 0 && live) {
-        setLoaded(found);
-      }
-    };
+    setLoaded(new Map());
     for (const url of wanted) {
       const image = new Image();
       image.onload = () => {
-        found.set(url, image);
-        done();
+        if (!live) {
+          return;
+        }
+        // A fresh map rather than a mutation: the canvas re-renders off this
+        // value, so mutating one React has already handed out would leave the
+        // picture in the map and nothing on screen until something else moved.
+        setLoaded((was) => new Map(was).set(url, image));
       };
-      image.onerror = done;
+      // No `onerror` handler: a picture that fails is a picture that is absent,
+      // which is the same state as one that has not arrived, and every caller
+      // already draws it.
       image.src = url;
     }
     return () => {

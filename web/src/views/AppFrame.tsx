@@ -14,9 +14,12 @@
  *     page, including the twenty-odd where nothing could be decoded.  Where it
  *     actually decides something -- the DECODE POSITIONS button in `MapStage`'s
  *     empty state -- the server's own sentence is already shown.
- *   * **the sound toggle**, and the whole `sound` module with it.  It was off
- *     by default, so removing the only control that could turn it on would have
- *     left a module nothing could reach.
+ *   * **the sound toggle.**  It was off by default and it was the only control
+ *     that could turn sound on, so the `sound` module went with it rather than
+ *     staying as something nothing could reach.  There is a voice again -- one,
+ *     the shot a kill makes -- and its mute is on the stage head beside the
+ *     thing it is about, not up here on every page including the ones that make
+ *     no noise.
  *   * **the wordmark and breadcrumb, on the viewer only.**  Two steps of
  *     breadcrumb over a back arrow is the same navigation twice.
  *

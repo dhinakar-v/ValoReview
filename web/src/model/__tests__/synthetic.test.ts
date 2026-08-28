@@ -39,6 +39,8 @@ function player(actorId: number, team: string): Player {
   };
 }
 
+const buyMs = (number: number) => ([1, 13, 25].includes(number) ? 45_000 : 30_000);
+
 function round(number: number, startMs: number, winner: string): Round {
   return {
     number,
@@ -46,6 +48,8 @@ function round(number: number, startMs: number, winner: string): Round {
     start_ms: startMs,
     end_ms: startMs + 60_000,
     duration_ms: 60_000,
+    buy_phase_ms: buyMs(number),
+    action_start_ms: startMs + buyMs(number),
     winner,
     reason: winner === "?" ? "undetermined" : "wipe",
     decided: winner !== "?",

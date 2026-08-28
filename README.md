@@ -81,16 +81,22 @@ strip, and a transport scoped to one round. Nothing on this page scrolls.
 
 ### The radar, on its own
 
-Markers are agent portraits and the heading is decoded, not assumed. The amber
-marker is the spike, which has a real coordinate: a plant spawns a `TimedBomb`
-actor, and over 21 captures its 274 spawns pair one-to-one with the 274
-`spikePlanted` events and all 274 land inside the map's playable silhouette.
+Markers are agent portraits and the heading is decoded, not assumed. The dashed
+ring and the diamond inside it are a placed ability — where it came to rest is
+decoded, the radius is a published figure looked up in
+`vrfview/abilityfacts.py`, and the dash is this canvas's token for *generated*,
+because every other stroke on it is around something decoded. Where a round has
+a plant, the spike's own mark is drawn in amber at a real coordinate: a plant
+spawns a `TimedBomb` actor, and over 21 captures its 274 spawns pair one-to-one
+with the 274 `spikePlanted` events and all 274 land inside the map's playable
+silhouette.
 
 ![The radar](docs/images/ui/03-radar.png)
 
 ### Layers
 
-Nine switches. A layer that cannot do anything in the current view is **shown
+Twelve switches — eight for the stage and four for the timeline rail. A layer
+that cannot do anything in the current view is **shown
 disabled with the reason** rather than dropped from the menu — a missing row
 reads as a feature that does not exist.
 
@@ -105,12 +111,24 @@ reads as a feature that does not exist.
 The sight cone is raycast against the **radar image's own alpha channel** — 57–72%
 of every published `minimap.png` is transparent void — so it is an approximation
 of a silhouette rather than a line of sight. There is no collision, navmesh
-or height data anywhere in this project. One cone is drawn per living player in
-both views, and the opacity counts rather than being fixed: each is `1/N` of its
-side's ink, so k cones over a point read as exactly `k/N` and a full side
-covering one lane paints it solid. The trail splits wherever the position
-lookup would refuse to interpolate, so it never draws a line through a wall the
-model would not cross.
+or height data anywhere in this project. A cone is drawn for every living player
+in both views, and for the ability pawns that *see* — Sova's Owl Drone and
+Tejo's Stealth Drone, looked up in `abilityfacts` rather than guessed from the
+kind, since a Boom Bot is a pawn too and looks at nothing. Their yaw is decoded
+and really turns, sweeping across a flight.
+
+**The wash is flat and overlap says nothing.** A side's cones are unioned on a
+scratch canvas and the union is stamped once at a quarter opacity, so one cone
+and six read identically and the layer states simply *where that side can see*.
+It used to weight each cone at `1/N` of its side's ink, which answered a second
+question — which parts of the map *nobody* can see — and made every cone a
+judgement about a gradient; a drone joining the denominator would have diluted
+every player's cone. A smoke stops a ray as a circle, and each one now ages from
+its **own arrival** rather than from the cast, which is a median 831 ms and a
+p95 of 2.3 s of a smoke that used to block sight before it existed.
+
+The trail splits wherever the position lookup would refuse to interpolate, so it
+never draws a line through a wall the model would not cross.
 
 ### The round timeline
 
@@ -126,23 +144,36 @@ by kind and by side, each row seeking the playhead to it.
 | **Container** | `.vrf` header, chunk table and all seven event groups from plain chunks — no decompression, no DLL (`vrf_reader.py`, `vrf_to_json.py`) |
 | **Positions** | Player movement at 10 Hz with heading and pitch, decoded out of the obfuscated replication stream by a C# helper in about four seconds (`csharp/VrfPositions`, `vrfview/tracks.py`) |
 | **Inference** | Teams by bipartite two-colouring of the kill graph, round outcomes, sides, halftime swap, reconnect merges — each one appended to `Replay.notes` as a claim you can read (`vrfview/infer.py`) |
-| **Ability casts** | No `.vrf` holds an ability event; casts are reconstructed from the actors they spawn, with the agent, the keybind and where the ability came to rest (`vrfview/abilities.py`) |
+| **Ability casts** | No `.vrf` holds an ability event; casts are reconstructed from the actors they spawn, with the agent, the published ability name, the keybind and where the ability came to rest — all 6,304 casts in the reference library carry a name and Riot's own icon (`vrfview/abilities.py`, `vrfview/abilityfacts.py`) |
+| **Ability mechanics** | A thrown ability crossing to where it landed over its own decoded interval, then arming, standing and expiring on a looked-up lifetime; Sage's wall drawn from its four segments' own decoded coordinates (`web/src/views/castlayer.ts`) |
 | **The spike** | A plant's coordinate, recovered from the `TimedBomb` actor it spawns. The planter is still not attributable |
 | **Match list** | A whole library described headlessly and cached by `(path, mtime, size)`, with the ten agents who played and a measured team split behind them, and a background worker decoding ahead of you (`vrfhome/`) |
 | **Server** | Ten routes and no more, deciding nothing: the model reads, infers, looks up and decodes, and a handler that started deciding would be a fourth place a claim could come from (`vrfserve/`) |
 | **2D and 3D** | The playback model is ported to TypeScript and runs in the browser, because `state_at` is 0.127 ms and a round trip is not (`web/src/model/`) |
-| **Sight** | A cone per living player in 2D and 3D alike, raycast against the radar's silhouette and the wall lines drawn on it, and stopped by smokes; on by default, needing no selection, with overlap carried by the opacity (`vrfview/sight.py`, `web/src/views/sightlayer.ts`) |
+| **Sight** | A cone per living player and per seeing drone, in 2D and 3D alike, raycast against the radar's silhouette and the wall lines drawn on it, and stopped by smokes; on by default, needing no selection, unioned per side and stamped once so overlap claims nothing (`vrfview/sight.py`, `web/src/views/sightlayer.ts`) |
 | **Catalogue** | Map, agent, role and weapon art and Riot's own callouts, cached locally from `valorant-api.com` (`scripts/fetch_assets.py`, `vrfview/art.py`) |
 
 ### What is read and what is generated
 
-A roster card is half read and half generated, and the page says which.
+A roster card is half read and half generated, and the page says which — and on
+the map there is a third category between them, looked up.
 
 **Read or decoded:** the agent and its portrait, the four ability icons, whether
 a player is alive, the score, every position, every kill, every round boundary,
 every ability cast, and the spike plant. A match-list card's ten agents are read
 too, from the loadout's own UUIDs — no decoder, no Oodle and no supported build
 needed for that one.
+
+**Looked up:** an ability's published name, keybind, radius and lifetime, and
+whether it sees, persists or dies with its caster. Nobody who ships data here
+publishes an ability's extent — not the replay, not `val-content-v1`, not the
+manifest — so `vrfview/abilityfacts.py` is a hand-written table of community
+figures, one source string per figure, 106 entries over 28 agents, in the shape
+`names.AGENT_CODENAMES` already sets for external knowledge. An ability the
+table cannot source keeps its icon and draws no ring: there is no default
+radius, and half a smoke is drawn as no smoke. Everything the table drives is
+drawn **dashed**, which is this interface's token for a figure it did not
+decode.
 
 **Generated:** health, armour, credits, the weapon held, and ATK/DEF itself. None
 of those is replicated to a spectator recording. They come from
@@ -506,6 +537,75 @@ narrows the set. The art is Riot Games' intellectual property and the cache is
 gitignored; nothing here redistributes it. `docs/valorant-assets.md` documents the
 folder, the manifest schema and the measured world-to-minimap transform.
 
+### Ability figures
+
+There is no ability event in a `.vrf` at all. A cast is reconstructed from the
+actors it spawns — `/Game/Characters/<Codename>/S0/Ability_<SLOT>/<Kind>_...`
+gives the agent, the internal slot and the kind — and everything a reader wants
+beside that is looked up.
+
+`libraries/vrfview/abilityfacts.py` is that lookup: 106 entries over 28 agents,
+keyed on **`(codename, slot)`** and carrying a published name, a keybind, and
+where a source exists a radius, a lifetime, a charge count and whether the thing
+sees, persists or dies with its caster. Every figure carries its own source
+string, led by `wiki.playvalorant.com`, which tags each row of its stats tables
+with how the figure was established. A missing row is evidence rather than an
+invitation: an ability nobody publishes a radius for stays ringless.
+
+The key was measured rather than chosen. An ability's *internal* name splits —
+Clove's smoke arrives as `Post Death` and as `New Smoke` for one ability — where
+across the 23 cached decodes every `(codename, slot)` maps to exactly one real
+ability, and no slot in the library hosts two. **The slot is not the keybind**
+either: the archetype path's letters are Riot's internal ones, so the decode
+calls Sova's Recon Bolt `Q` where the game binds it to E, and six of the agents
+are shuffled. So `keybind` is a looked-up field beside every entry, never
+something joined by letter.
+
+That distinction fixed a bug that had shipped. `art.SLOT_TO_MANIFEST` mapped
+internal C onto Riot's `Grenade` on the reasoning that `Grenade` is C on every
+agent — it is C for eight of the sixteen agents the table then named and
+something else for the other eight, so the map drew Stim Beacon's icon on
+Brimstone's Sky Smoke and Owl Drone's on Sova's Shock Bolt, every round,
+silently, because one white glyph at fourteen pixels looks much like another.
+**A name is not a letter**: `art.AgentArt.ability_named` joins the table's
+published name against the manifest's, 106 of 106 matching exactly one ability
+with none ambiguous, and `tests/test_abilityfacts.py` asserts the join is a
+bijection per agent — four slots, four distinct names, four distinct pictures.
+All 6,304 casts the reference library states now carry a name and Riot's own
+picture.
+
+What the layer draws is a lifecycle, and each phase's standing is different.
+A `Projectile_` channel opens where the caster stands and a placed channel opens
+where the thing came to rest, so a **flight** has two decoded ends and a decoded
+interval and only the straight line between them is invented — 2,509 flights
+across 1,704 casts (27.0%), a median 831 ms and 1,485 uu, with four measured
+refusals: unequal counts of projectiles and landings are never paired, a zero
+interval is no flight, a backwards one is a remote detonation, and anything
+above `FLIGHT_MAX_MS` (3,000 ms) is refused on a density collapse of 250× rather
+than on an empty band. There is still **no arc**: only `Pawn_` actors move.
+
+What happens at the end is decided by two published facts and not one, because
+conflating them got both ends wrong: `duration_ms` is how long an effect lasts
+and `persists` is whether the thing itself is still there. A Trademark publishes
+a four-second slow and then waits on the floor all round; a Turret publishes no
+duration and stands until it is shot. So a persisting thing stands, a published
+duration runs out, and an ability the table names with neither — a flash, a
+dart — is a *moment*, shown briefly and let go. An ability the table does not
+name changes nothing, which is the rule the whole table keeps.
+
+Sage's Barrier Orb is the one wall drawn from its own geometry: it opens one
+segment channel per segment at the same millisecond, each with its own spawn
+transform, and over 126 barriers 125 spawn four segments, every one exactly
+collinear at 0.0 uu deviation and a uniform 260 uu spacing, so the drawn extent
+is arithmetic over decoded coordinates and no figure from anywhere. The other
+three walls are refused: Phoenix's Blaze and Harbor's High Tide have *no length*
+— each is a path a steerable missile left on the ground — and Vyse's Shear is
+placed on vertical terrain, so its axis belongs to the surface rather than to
+the way she faced.
+
+Viper is refused outright: she has zero casts in the library, so nothing says
+which internal letter each of her abilities occupies.
+
 ### Spawn barriers
 
 `libraries/vrfview/barriers.json` holds the round-start spawn barriers for nine
@@ -659,6 +759,8 @@ to be made and two places to drift.
 | [`docs/vrf-decoding-findings.md`](docs/vrf-decoding-findings.md) | Measured truth about the container. Supersedes `vrf-decoding-research.md`, which is a literature review and partly wrong for this title |
 | [`docs/039f3991_summary.md`](docs/039f3991_summary.md) | The reference capture, key by key. §6 lists all seven event groups; §8 is what is *not* in the file |
 | [`docs/valorant-replay-parser-features.md`](docs/valorant-replay-parser-features.md) | What the vendored parser can and cannot do, cross-referenced against this repo |
+| [`docs/ability-figures-resolved.md`](docs/ability-figures-resolved.md) | Where an ability figure's provenance lives when the research corrected a *premise* rather than a number — Aftershock's two pulses, and the two walls that turned out to have no length |
+| [`docs/Valorant Agent Ability Details.md`](docs/Valorant%20Agent%20Ability%20Details.md) | The first round of ability research the table is authored from, cited per agent |
 | [`docs/map-barriers.md`](docs/map-barriers.md) | Where the spawn barriers are, and how they were measured off somebody else's screenshots — the palette, the alignment search, and the 76-of-76 ground truth |
 | [`docs/valorant-assets.md`](docs/valorant-assets.md) | The art cache: folder layout, manifest schema, and the measured world-to-minimap transform |
 | [`docs/webapp-03-map-viewers.md`](docs/webapp-03-map-viewers.md) | How the 2D radar and the 3D scene were planned |

@@ -264,11 +264,22 @@ class LoadoutDoc(BaseModel):
 
 
 class RoundDoc(BaseModel):
+    """
+    One round, buy phase included.
+
+    `start_ms` is when `roundStarted` fired, which is the start of
+    the buy phase; `action_start_ms` is when the barrier drops and the round
+    becomes playable, which is looked up rather than read -- see
+    `vrfview.roundrules` for the rule and the measurement behind it.
+    """
+
     number: int
     index: int
     start_ms: int
     end_ms: int
     duration_ms: int
+    buy_phase_ms: int
+    action_start_ms: int
     winner: str
     reason: str
     decided: bool
@@ -301,16 +312,131 @@ class SpikeDoc(BaseModel):
     z: float | None = None
 
 
+class AbilityMechanicsDoc(BaseModel):
+    """
+    What is published about one ability, and where each figure came from.
+
+    None of this is read from the capture and none of it is measured: it is
+    looked up in `vrfview.abilityfacts`, which is community research about a
+    game that rebalances every few weeks.  Every figure is optional and a null
+    must be drawn as nothing -- there is no default radius and no default
+    duration, because a ring at a made-up size is worse than no ring.
+
+    A source travels beside every figure rather than one per ability, since a
+    single citation covering ten numbers stands behind numbers it never
+    backed.
+
+    `keybind` is the key the **game** binds.  `AbilityCast.slot` is the letter
+    the archetype path states, and the two disagree for six of the sixteen
+    agents in the table -- Sova's slot `C` is the Shock Bolt the game binds to
+    Q.  Both travel; nothing may join them by letter.
+    """
+
+    ability: str
+    keybind: str
+    radius_uu: float | None = None
+    radius_source: str | None = None
+    # A trigger range rather than an area of effect, and drawn as a separate
+    # ring for that reason: Chamber's Trademark publishes both a 10 m search
+    # and a 6 m slow, and they are different claims.
+    detection_radius_uu: float | None = None
+    detection_radius_source: str | None = None
+    windup_ms: float | None = None
+    windup_source: str | None = None
+    activation_delay_ms: float | None = None
+    activation_delay_source: str | None = None
+    duration_ms: float | None = None
+    duration_source: str | None = None
+    cooldown_ms: float | None = None
+    cooldown_source: str | None = None
+    charges: float | None = None
+    charges_source: str | None = None
+    deployable_hp: float | None = None
+    deployable_hp_source: str | None = None
+    # Whether this ability's own placements are a wall: `"segments"`, or null
+    # for everything else.  Sage's Barrier Orb is the only one, and its whole
+    # line is decoded -- see `AbilityCastDoc.walls`, which carries it.
+    wall: str | None = None
+    wall_source: str | None = None
+    # Whether the thing stands until destroyed, triggered or the round ends --
+    # a different question from `duration_ms`, which is how long its effect
+    # lasts. An ability with neither is a moment: a flash pops, a dart
+    # detonates. See `vrfview.abilityfacts.AbilityMechanics.persists`.
+    persists: bool = False
+    # Whether the thing goes when the player who left it there dies.  Narrower
+    # than `persists` and meaningful only beside it: Chamber's Trademark and
+    # Rendezvous and Cypher's Trapwire and Spycam are removed on his death, and
+    # Killjoy's utility is not.  A published rule, joined to a decoded death.
+    destroyed_on_caster_death: bool = False
+    # Whether the ability looks at the map: a drone, a camera.  A pawn with
+    # this set gets the view cone a living player gets, from its own decoded
+    # position and yaw.
+    sees: bool = False
+    blocks_sight: bool = False
+
+
+class FlightDoc(BaseModel):
+    """
+    One throw: two decoded coordinates and the decoded interval between them.
+
+    Both ends are placements, so both the where and the when were read out of
+    the capture.  What is **not** here is the path: only `Pawn_` actors emit
+    movement, so nothing states where a thrown thing was halfway, and a client
+    draws a straight line and labels it as one.
+    """
+
+    start_ms: int
+    end_ms: int
+    duration_ms: int
+    from_actor_id: int
+    from_x: float
+    from_y: float
+    from_z: float
+    to_actor_id: int
+    to_x: float
+    to_y: float
+    to_z: float
+
+
+class WallDoc(BaseModel):
+    """
+    A wall, as the two ends of the line its own segment actors describe.
+
+    Entirely decoded, unlike every other extent an ability has here: Sage's
+    Barrier Orb opens one channel per segment at one instant and each carries
+    its own spawn transform, so the line, its length and its orientation are
+    all read.  Nothing about this is looked up, which is why it travels as
+    geometry -- a client that had only a length would have to decide the
+    direction, and deciding it is the thing that could not be done.
+
+    Unreal units, in the same frame as a `Position` and a `PlacementDoc`.
+    """
+
+    t_ms: int
+    segments: int
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    length_uu: float
+
+
 class PlacementDoc(BaseModel):
     """
     One actor a cast put in the world, at the coordinate it appeared at.
 
     Unreal units, in the same frame as a `Position`, so it goes through the
-    map transform exactly as a player does.  There is no `t_ms`: the thing
-    spawned once and never moves, which is why it has a spawn point at all --
-    anything that moves has a track instead.
+    map transform exactly as a player does.
+
+    `t_ms` is the instant its channel opened, and *never moving* is exactly
+    what makes that instant worth carrying rather than a reason to drop it.
+    Anything that moves has a track, and its position is a question about now;
+    this thing has one position for ever, so the only thing left to know about
+    it in time is when it arrived -- which is what says how long the throw that
+    delivered it took, and how long it has been standing since.
     """
 
+    t_ms: int
     actor_id: int
     kind: str
     name: str
@@ -367,12 +493,25 @@ class AbilityCastDoc(BaseModel):
     smoke_radius_uu: float | None = None
     smoke_duration_ms: int | None = None
     smoke_source: str | None = None
+    # Everything published about this ability, or null where nothing is.
+    # Looked up in `vrfview.abilityfacts` on (codename, slot), so every figure
+    # here is *simulated* in exactly the way `range_uu` is, and each carries
+    # its own source string.
+    mechanics: AbilityMechanicsDoc | None = None
     # Every non-moving actor this cast spawned, at the coordinate its channel
     # opened at.
     placements: list[PlacementDoc]
     # Which of them says where the cast ended up.  Null for a cast whose pawn
     # has a track, and for one decoded before the spawn transform was read.
     landed: PlacementDoc | None
+    # Every throw in this cast whose two ends are both decoded.  Empty for
+    # most casts: see `abilities.AbilityCast.flights` for the four refusals
+    # and the measurement behind each.
+    flights: list[FlightDoc] = []
+    # Every wall this cast built out of its own segment actors, decoded end to
+    # end.  Empty for all but Sage's Barrier Orb, which is the one ability in
+    # the library that opens a channel per segment.
+    walls: list[WallDoc] = []
 
 
 class ReplayDoc(BaseModel):

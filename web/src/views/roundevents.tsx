@@ -40,11 +40,21 @@
  * one thing the modal says and a tooltip does not.
  */
 
-import type { Replay, Round, Weapon } from "../api/types";
+import type { AbilityCast, Replay, Round, Weapon } from "../api/types";
 import type { Side } from "../model/synthetic";
 import { sideOf, weaponArt, weaponInRound } from "../model/synthetic";
 
-export type Kind = "kill" | "ability" | "ultimate" | "spike" | "first";
+/**
+ * A metre, in Unreal units.
+ *
+ * Riot's own arithmetic rather than a convention: their patch note for Sky
+ * Smoke reads "Radius increased 410 >>> 415" for an ability the wiki gives
+ * as 4.15 m. Mirrors `abilityfacts.UU_PER_METRE`, which is where the
+ * argument is written down.
+ */
+const UU_PER_METRE = 100;
+
+export type Kind = "kill" | "ability" | "ultimate" | "spike" | "first" | "start";
 
 export interface RoundEvent {
   key: string;
@@ -203,7 +213,10 @@ export function roundEvents(
               internal.  "(internal)" was a note to whoever built the decoder;
               to somebody watching a replay it labels the ability as a piece of
               plumbing rather than naming it. */}
-          <span className="ev-thing">{cast.published_name ?? cast.internal_name}</span>
+          <span className="ev-thing">
+            {cast.mechanics?.ability ?? cast.published_name ?? cast.internal_name}
+          </span>
+          {castFigures(cast)}
         </>
       ),
     });
@@ -226,6 +239,27 @@ export function roundEvents(
     });
   }
 
+  /*
+    The round's own beginning.
+
+    `round.start_ms` is when `roundStarted` fired, which is the start of the buy
+    phase; `action_start_ms` is when the barrier drops, and it is the moment a
+    reader means by "the round".  It is skipped where the two are equal, which
+    is `roundrules`' clamp saying the round was shorter than its own buy phase
+    and there is no such instant inside it.
+  */
+  if (round !== null && round.action_start_ms > round.start_ms) {
+    rows.push({
+      key: `start-${round.action_start_ms}`,
+      tMs: round.action_start_ms,
+      kind: "start",
+      // Sideless, like the spike: it is the round beginning, not somebody acting.
+      side: null,
+      spikeKind: null,
+      body: <span className="ev-thing">Round starts</span>,
+    });
+  }
+
   for (const event of replay.spike.filter((s) => inRound(s.t_ms))) {
     rows.push({
       key: `spike-${event.t_ms}-${event.kind}`,
@@ -243,6 +277,9 @@ export function roundEvents(
   // millisecond, and sorting by key alphabetically put `first-` above `kill-`
   // so the round opened with a tag for an event that had not been listed yet.
   const rank: Record<Kind, number> = {
+    // Ahead of everything: where anything shares the millisecond, the round
+    // beginning is the line to read first.
+    start: -1,
     spike: 0,
     ability: 1,
     ultimate: 2,
@@ -250,4 +287,52 @@ export function roundEvents(
     first: 4,
   };
   return rows.sort((a, b) => a.tMs - b.tMs || rank[a.kind] - rank[b.kind]);
+}
+
+/**
+ * What is known about the ability beside the name of it, and on whose word.
+ *
+ * Two different kinds of number sit here and the row has to keep them apart,
+ * because they are the difference between a reading and a citation:
+ *
+ *   * the **flight** is decoded at both ends -- a projectile channel opened
+ *     where the caster stood and a placed channel opened where the thing came
+ *     to rest, and the capture states both instants. It carries no marking.
+ *   * the **radius** and the **lifetime** are looked up in
+ *     `vrfview.abilityfacts`, which is community research about a game that
+ *     rebalances every few weeks. Each is drawn as a `.ev-figure`, which is
+ *     the row's dashed-ring equivalent, and each carries its own source in a
+ *     `title` so the page can be asked where the number came from.
+ *
+ * Every clause is refusable and most casts show none of them. A figure the
+ * table does not publish is simply absent -- there is no "about" and no
+ * nearest-ability fallback.
+ *
+ * Nothing here names a player and a damage figure in one sentence. A published
+ * debuff is a property of the ability; saying it happened *to* somebody would
+ * be a claim the file does not support.
+ */
+function castFigures(cast: AbilityCast) {
+  const facts = cast.mechanics;
+  const thrown = cast.flights.length === 1 ? cast.flights[0] : undefined;
+  if (!facts && !thrown) {
+    return null;
+  }
+  return (
+    <>
+      {thrown ? (
+        <span className="ev-decoded">thrown {(thrown.duration_ms / 1000).toFixed(1)}s</span>
+      ) : null}
+      {facts?.radius_uu !== null && facts?.radius_uu !== undefined ? (
+        <span className="ev-figure" title={facts.radius_source ?? undefined}>
+          {(facts.radius_uu / UU_PER_METRE).toFixed(1)}m
+        </span>
+      ) : null}
+      {facts?.duration_ms !== null && facts?.duration_ms !== undefined ? (
+        <span className="ev-figure" title={facts.duration_source ?? undefined}>
+          lasts {(facts.duration_ms / 1000).toFixed(1)}s
+        </span>
+      ) : null}
+    </>
+  );
 }
